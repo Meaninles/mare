@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.npm-cache/
+.cargo/
+.rustup/
+.vs/
+.tools/
+src-tauri/target/
+rustup-init.exe
+*.log
+backend/*.exe
+backend/tmp/
+.cache/
+backend/data/cache/

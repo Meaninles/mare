@@ -1,0 +1,28 @@
+root = "."
+tmp_dir = "tmp"
+testdata_dir = "testdata"
+
+[build]
+cmd = "..\\.tools\\go\\bin\\go.exe build -o .\\tmp\\server.exe .\\cmd\\server"
+entrypoint = [".\\tmp\\server.exe"]
+include_ext = ["go"]
+exclude_dir = ["data", "tmp", "tools"]
+exclude_regex = ["_test\\.go"]
+exclude_unchanged = true
+delay = 100
+stop_on_error = true
+send_interrupt = true
+kill_delay = 100
+log = "air-build-errors.log"
+
+[log]
+time = true
+
+[color]
+main = "cyan"
+watcher = "yellow"
+build = "green"
+runner = "magenta"
+
+[misc]
+clean_on_exit = true
