@@ -1,0 +1,282 @@
+Mare 技术架构设计说明书
+
+一、文档说明
+
+本文档描述 Mare 当前项目的技术架构、模块划分、数据流与开发运行方式。所有内容以当前仓库代码结构为准。
+
+二、总体技术选型
+
+当前项目主要技术栈如下：
+
+1. 桌面客户端壳层：Tauri
+2. 前端界面：React + TypeScript + Vite
+3. 状态与数据请求：React Router、TanStack Query、Zustand
+4. 后端服务：Go
+5. 本地数据库：SQLite
+6. 媒体处理：
+   图片缩略图由 Go 原生图像处理完成
+   视频封面依赖 FFmpeg
+   音频元数据读取使用 Go 库与 ffprobe 回退组合
+
+三、当前目录级技术结构
+
+1. src
+   前端客户端代码，包含页面、组件、布局、hooks、服务和类型定义。
+
+2. backend
+   Go 后端代码，包含应用启动、HTTP 服务、Catalog 服务、存储接入、数据库读写、平台能力与配置。
+
+3. src-tauri
+   Tauri 宿主工程，负责桌面端宿主能力与客户端打包运行。
+
+4. .tools
+   工作区内工具链与辅助程序。
+
+5. .cache
+   本地构建缓存和开发态缓存目录。
+
+四、前端客户端架构
+
+4.1 角色
+
+前端负责：
+
+1. 统一桌面界面结构
+2. 页面路由切换
+3. 主题切换
+4. 调用本地 Go 后端接口
+5. 渲染资产列表、资产详情、设置、存储管理等页面
+
+4.2 主要模块
+
+按当前代码，可归纳为：
+
+1. layouts
+   应用主壳层，例如 AppShell。
+
+2. pages
+   LibraryPage、AssetDetailPage、StoragePage、SyncCenterPage、ImportCenterPage、SettingsPage 等。
+
+3. components
+   包括 Logo、侧边导航、主题提供器以及媒体预览组件。
+
+4. services
+   与本地后端接口通讯，承接 Catalog、桌面能力和连接器测试相关请求。
+
+5. hooks
+   以数据读取为主，如应用启动信息读取、Catalog 读取等。
+
+4.3 主题系统
+
+当前前端已实现双主题体系：
+
+1. 默认浅色主题
+2. 对应深色主题
+
+二者保持相同信息架构与交互方式，仅在视觉变量上切换。
+
+五、Go 后端架构
+
+5.1 启动入口
+
+入口位于：
+
+backend/cmd/server/main.go
+
+其主要职责：
+
+1. 创建应用上下文
+2. 加载配置
+3. 初始化应用
+4. 启动 HTTP 服务
+5. 响应系统退出信号并执行优雅关闭
+
+5.2 应用装配
+
+核心装配位于：
+
+backend/internal/app/app.go
+
+当前装配内容包括：
+
+1. 配置加载
+2. 日志初始化
+3. SQLite Store 初始化
+4. 平台状态初始化
+5. Catalog Service 初始化
+6. HTTP Server 初始化
+
+5.3 HTTP 服务
+
+当前 HTTP 服务主要负责向本地桌面端提供接口，位于：
+
+backend/internal/httpserver
+
+当前已体现出的接口方向包括：
+
+1. 系统健康与基础信息
+2. 端点列表与注册
+3. 资产列表读取
+4. 任务列表读取
+5. 全量扫描
+6. 单端点重扫
+7. 资产 poster 资源
+8. 资产 preview 资源
+
+5.4 Catalog 服务
+
+Catalog 服务位于：
+
+backend/internal/catalog
+
+当前职责包括：
+
+1. 路径归一化与 logical_path_key 计算
+2. 资产与副本归并
+3. 资产列表与详情组织
+4. 派生媒体任务调度
+5. poster 与 preview 资源解析
+6. 音频元数据组织
+
+5.5 Store 层
+
+数据访问位于：
+
+backend/internal/store
+
+当前已经形成的主要实体包括：
+
+1. storage_endpoints
+2. assets
+3. replicas
+4. replica_versions
+5. tasks
+6. asset_previews
+7. asset_media_metadata
+
+并通过 migration 保持数据库结构可演进。
+
+5.6 Connector 层
+
+连接器位于：
+
+backend/internal/connectors
+
+当前已存在或已规划对接的端点类型包括：
+
+1. Local
+2. QNAP
+3. 115
+4. Removable
+
+连接器抽象目标是统一：
+
+1. 健康检查
+2. 目录枚举
+3. 文件元数据读取
+4. 文件流读取
+5. 文件复制与删除
+
+5.7 平台与基础设施层
+
+位于：
+
+backend/internal/platform
+
+当前主要负责：
+
+1. 日志
+2. 模块快照
+3. 依赖快照
+4. 系统状态
+
+六、媒体处理架构
+
+6.1 图片缩略图
+
+链路如下：
+
+1. 扫描或资产读取发现图片资产
+2. 判断是否需要生成缩略图
+3. 选择一个可读副本作为源
+4. 如源不是本地文件，则先临时物化到本地缓存
+5. 生成 PNG 缩略图
+6. 写入本地缓存目录
+7. 写入 asset_previews 并更新资产主缩略图引用
+
+6.2 视频封面
+
+链路如下：
+
+1. 选择一个可读副本作为源
+2. 如有需要先物化到本地
+3. 调用 FFmpeg 提取封面图
+4. 写入缓存目录
+5. 写入 asset_previews 并更新资产主缩略图引用
+
+6.3 音频元数据
+
+链路如下：
+
+1. 选择一个可读副本作为源
+2. 通过 ffprobe 或 fallback 库读取基础元数据
+3. 提取时长、编码、采样率、声道等字段
+4. 尝试提取内嵌封面
+5. 将结果写入 asset_media_metadata 与 asset_previews
+
+七、当前副本读取优先级
+
+当前代码中，派生媒体和预览资源的可读副本选择遵循固定优先级：
+
+1. Local
+2. Removable
+3. QNAP
+4. 115
+
+也就是说，当同一资产在三端或多端都存在可读副本时，系统当前会优先使用本地副本作为缩略图、封面、音频元数据和原始预览的来源。
+
+八、本地缓存结构
+
+根据当前代码，媒体缓存根目录位于 Catalog 数据库目录旁的：
+
+cache/media
+
+并进一步按类型细分：
+
+1. cache/media/images
+2. cache/media/videos
+3. cache/media/audio
+4. cache/media/temp
+
+九、开发运行方式
+
+9.1 前端 / Tauri 客户端
+
+项目根目录 package.json 中定义了：
+
+1. npm run dev
+   启动 Vite 前端开发服务器
+
+2. npm run tauri
+   启动 Tauri 桌面客户端开发模式
+
+当前 Tauri 开发脚本已显式指定 CARGO_TARGET_DIR，以规避磁盘与构建路径问题。
+
+9.2 Go 后端
+
+项目根目录 package.json 中定义了：
+
+1. npm run backend:dev
+   通过 backend/dev-air.ps1 启动 Air 热重载
+
+Air 配置文件位于：
+
+backend/.air.toml
+
+十、当前技术事实
+
+当前项目的关键技术事实如下：
+
+1. 前端是 Tauri 桌面客户端程序，不是普通网页程序。
+2. 后端主实现语言是 Go。
+3. 媒体处理、预览、任务与扫描链路已经形成基础闭环。
