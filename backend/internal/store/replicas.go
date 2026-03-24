@@ -143,16 +143,23 @@ func (store *Store) ListReplicasByEndpointID(ctx context.Context, endpointID str
 	return replicas, rows.Err()
 }
 
+func (store *Store) DeleteReplicasByEndpointID(ctx context.Context, endpointID string) error {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM replicas WHERE endpoint_id = ?`, endpointID); err != nil {
+		return fmt.Errorf("delete replicas by endpoint: %w", err)
+	}
+	return nil
+}
+
 func scanReplicaVersion(scanner rowScanner) (ReplicaVersion, error) {
 	var (
-		version          ReplicaVersion
-		mtimeText        sql.NullString
-		ctimeText        sql.NullString
-		checksumQuick    sql.NullString
-		checksumFull     sql.NullString
-		mediaSignature   sql.NullString
-		scanRevision     sql.NullString
-		createdAtText    string
+		version        ReplicaVersion
+		mtimeText      sql.NullString
+		ctimeText      sql.NullString
+		checksumQuick  sql.NullString
+		checksumFull   sql.NullString
+		mediaSignature sql.NullString
+		scanRevision   sql.NullString
+		createdAtText  string
 	)
 
 	if err := scanner.Scan(

@@ -302,13 +302,18 @@ func (connector *LocalConnector) resolvePath(path string) (string, error) {
 		return connector.descriptor.RootPath, nil
 	}
 
-	resolvedPath := filepath.Join(connector.descriptor.RootPath, filepath.Clean(relativePath))
 	rootPath := filepath.Clean(connector.descriptor.RootPath)
+	var resolvedPath string
+	if filepath.IsAbs(relativePath) {
+		resolvedPath = filepath.Clean(relativePath)
+	} else {
+		resolvedPath = filepath.Join(rootPath, filepath.Clean(relativePath))
+	}
 	relativeToRoot, err := filepath.Rel(rootPath, resolvedPath)
 	if err != nil {
 		return "", newConnectorError(EndpointTypeLocal, "resolve_path", ErrorCodeInvalidConfig, "unable to resolve path", false, err)
 	}
-	if strings.HasPrefix(relativeToRoot, "..") {
+	if relativeToRoot == ".." || strings.HasPrefix(relativeToRoot, ".."+string(os.PathSeparator)) {
 		return "", newConnectorError(EndpointTypeLocal, "resolve_path", ErrorCodeAccessDenied, "path escapes connector root", false, nil)
 	}
 

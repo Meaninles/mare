@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,8 +23,6 @@ import (
 const (
 	defaultRoleMode           = "MANAGED"
 	defaultAvailabilityStatus = "AVAILABLE"
-	replicaStatusActive       = "ACTIVE"
-	replicaStatusMissing      = "MISSING"
 	scanBatchSize             = 256
 )
 
@@ -33,10 +32,12 @@ type scanExecutionStats struct {
 }
 
 type Service struct {
-	store            *store.Store
-	connectorFactory func(endpoint store.StorageEndpoint) (connectors.Connector, error)
-	mediaConfig      MediaConfig
-	mediaJobKeys     sync.Map
+	store                *store.Store
+	connectorFactory     func(endpoint store.StorageEndpoint) (connectors.Connector, error)
+	removableEnumerator  connectors.DeviceEnumerator
+	mediaConfig          MediaConfig
+	mediaJobKeys         sync.Map
+	deviceRoleSelections sync.Map
 }
 
 func NewService(
@@ -54,9 +55,10 @@ func NewService(
 	}
 
 	return &Service{
-		store:            dataStore,
-		connectorFactory: factory,
-		mediaConfig:      normalizeMediaConfig(mediaConfig),
+		store:               dataStore,
+		connectorFactory:    factory,
+		removableEnumerator: connectors.NewWindowsUSBEnumerator(),
+		mediaConfig:         normalizeMediaConfig(mediaConfig),
 	}
 }
 
@@ -102,6 +104,7 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 	endpoint := store.StorageEndpoint{
 		ID:                 uuid.NewString(),
 		Name:               defaultString(strings.TrimSpace(request.Name), defaultEndpointName(endpointType)),
+		Note:               strings.TrimSpace(request.Note),
 		EndpointType:       endpointType,
 		RootPath:           rootPath,
 		RoleMode:           roleMode,
@@ -131,6 +134,13 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 		}
 	}
 
+	slog.Info(
+		"storage endpoint saved",
+		"endpointId", endpoint.ID,
+		"endpointType", endpoint.EndpointType,
+		"rootPath", endpoint.RootPath,
+		"updated", existing != nil,
+	)
 	return toEndpointRecord(endpoint), nil
 }
 
@@ -153,6 +163,11 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 		return nil, err
 	}
 
+	expectedEndpoints, _, err := service.listManagedEnabledEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	records := make([]AssetRecord, 0, len(assets))
 	for _, asset := range assets {
 		replicas, replicaErr := service.store.ListReplicasByAssetID(ctx, asset.ID)
@@ -160,42 +175,13 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 			return nil, replicaErr
 		}
 
-		replicaRecords := make([]ReplicaRecord, 0, len(replicas))
-		availableReplicaCount := 0
-		missingReplicaCount := 0
-		for _, replica := range replicas {
-			if replica.ExistsFlag {
-				availableReplicaCount++
-			} else {
-				missingReplicaCount++
-			}
-
-			var versionRecord *AssetVersionRecord
-			if replica.VersionID != nil {
-				version, versionErr := service.store.GetReplicaVersionByID(ctx, *replica.VersionID)
-				if versionErr != nil && !errors.Is(versionErr, sql.ErrNoRows) {
-					return nil, versionErr
-				}
-				if versionErr == nil {
-					versionRecord = &AssetVersionRecord{
-						ID:           version.ID,
-						Size:         version.Size,
-						MTime:        version.MTime,
-						CreatedAt:    version.CreatedAt,
-						ScanRevision: version.ScanRevision,
-					}
-				}
-			}
-
-			replicaRecords = append(replicaRecords, ReplicaRecord{
-				ID:            replica.ID,
-				EndpointID:    replica.EndpointID,
-				PhysicalPath:  replica.PhysicalPath,
-				ReplicaStatus: replica.ReplicaStatus,
-				ExistsFlag:    replica.ExistsFlag,
-				LastSeenAt:    replica.LastSeenAt,
-				Version:       versionRecord,
-			})
+		replicaRecords, availableReplicaCount, missingReplicaCount, err := service.buildAssetReplicaRecords(
+			ctx,
+			replicas,
+			expectedEndpoints,
+		)
+		if err != nil {
+			return nil, err
 		}
 
 		posterRecord, err := service.buildPosterRecord(ctx, asset)
@@ -288,6 +274,8 @@ func (service *Service) RescanEndpoint(ctx context.Context, endpointID string) (
 		StartedAt:    startedAt,
 	}
 
+	slog.Info("endpoint scan started", "taskId", task.ID, "endpointId", endpoint.ID, "endpointType", endpoint.EndpointType)
+
 	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
 		Status:     "running",
 		RetryCount: task.RetryCount,
@@ -357,6 +345,15 @@ func (service *Service) RescanEndpoint(ctx context.Context, endpointID string) (
 		return summary, err
 	}
 
+	slog.Info(
+		"endpoint scan completed",
+		"taskId", task.ID,
+		"endpointId", endpoint.ID,
+		"filesScanned", summary.FilesScanned,
+		"assetsCreated", summary.AssetsCreated,
+		"assetsUpdated", summary.AssetsUpdated,
+		"missingReplicas", summary.MissingReplicas,
+	)
 	return summary, nil
 }
 
@@ -506,7 +503,7 @@ func (service *Service) upsertAsset(ctx context.Context, result ScanResult) (sto
 			LogicalPathKey:   result.LogicalPathKey,
 			DisplayName:      path.Base(result.LogicalPathKey),
 			MediaType:        result.MediaType,
-			AssetStatus:      "ready",
+			AssetStatus:      string(AssetStatusReady),
 			PrimaryTimestamp: cloneTimePointer(result.MTime),
 			CreatedAt:        now,
 			UpdatedAt:        now,
@@ -532,11 +529,6 @@ func (service *Service) upsertAsset(ctx context.Context, result ScanResult) (sto
 	nextPrimaryTimestamp := selectPrimaryTimestamp(asset.PrimaryTimestamp, result.MTime)
 	if !sameTimePointer(asset.PrimaryTimestamp, nextPrimaryTimestamp) {
 		asset.PrimaryTimestamp = cloneTimePointer(nextPrimaryTimestamp)
-		updated = true
-	}
-
-	if asset.AssetStatus != "ready" {
-		asset.AssetStatus = "ready"
 		updated = true
 	}
 
@@ -576,7 +568,7 @@ func (service *Service) upsertReplica(
 			AssetID:       asset.ID,
 			EndpointID:    result.EndpointID,
 			PhysicalPath:  result.PhysicalPath,
-			ReplicaStatus: replicaStatusActive,
+			ReplicaStatus: string(ReplicaStatusActive),
 			ExistsFlag:    true,
 			VersionID:     versionID,
 			LastSeenAt:    &lastSeenAt,
@@ -592,7 +584,7 @@ func (service *Service) upsertReplica(
 	replica.AssetID = asset.ID
 	replica.EndpointID = result.EndpointID
 	replica.PhysicalPath = result.PhysicalPath
-	replica.ReplicaStatus = replicaStatusActive
+	replica.ReplicaStatus = string(ReplicaStatusActive)
 	replica.ExistsFlag = true
 	replica.VersionID = versionID
 	replica.LastSeenAt = &lastSeenAt
@@ -653,12 +645,12 @@ func (service *Service) markMissingReplicas(
 		if _, ok := seenPhysicalPaths[replica.PhysicalPath]; ok {
 			continue
 		}
-		if !replica.ExistsFlag && strings.EqualFold(replica.ReplicaStatus, replicaStatusMissing) {
+		if !replica.ExistsFlag && strings.EqualFold(replica.ReplicaStatus, string(ReplicaStatusMissing)) {
 			continue
 		}
 
 		replica.ExistsFlag = false
-		replica.ReplicaStatus = replicaStatusMissing
+		replica.ReplicaStatus = string(ReplicaStatusMissing)
 		replica.UpdatedAt = now
 		if err := service.store.UpdateReplica(ctx, replica); err != nil {
 			return missingCount, err
@@ -688,29 +680,49 @@ func (service *Service) syncAssetStatus(ctx context.Context, assetID string) err
 		return err
 	}
 
-	hasExisting := false
-	hasMissing := false
+	statusInputs := make([]ReplicaStatusSnapshot, 0, len(replicas))
+	diffInputs := make([]ReplicaDiffInput, 0, len(replicas))
 	for _, replica := range replicas {
-		if replica.ExistsFlag {
-			hasExisting = true
-		} else {
-			hasMissing = true
+		statusInputs = append(statusInputs, ReplicaStatusSnapshot{
+			ReplicaStatus: replica.ReplicaStatus,
+			ExistsFlag:    replica.ExistsFlag,
+		})
+
+		var size *int64
+		var mtime *time.Time
+		if replica.VersionID != nil {
+			version, versionErr := service.store.GetReplicaVersionByID(ctx, *replica.VersionID)
+			if versionErr != nil && !errors.Is(versionErr, sql.ErrNoRows) {
+				return versionErr
+			}
+			if versionErr == nil {
+				size = &version.Size
+				mtime = cloneTimePointer(version.MTime)
+			}
 		}
+
+		diffInputs = append(diffInputs, ReplicaDiffInput{
+			ReplicaID:     replica.ID,
+			EndpointID:    replica.EndpointID,
+			ReplicaStatus: replica.ReplicaStatus,
+			ExistsFlag:    replica.ExistsFlag,
+			Size:          size,
+			MTime:         mtime,
+		})
 	}
 
-	nextStatus := "missing"
-	switch {
-	case hasExisting && hasMissing:
-		nextStatus = "partial"
-	case hasExisting:
-		nextStatus = "ready"
+	nextStatus := AggregateAssetStatus(statusInputs)
+	diffResult := AnalyzeReplicaDifferences(nil, diffInputs)
+	if len(diffResult.ConflictEndpointIDs) > 0 && nextStatus != AssetStatusDeleted && nextStatus != AssetStatusPendingDelete {
+		nextStatus = AssetStatusConflict
 	}
 
-	if asset.AssetStatus == nextStatus {
+	nextStatusText := string(nextStatus)
+	if asset.AssetStatus == nextStatusText {
 		return nil
 	}
 
-	asset.AssetStatus = nextStatus
+	asset.AssetStatus = nextStatusText
 	asset.UpdatedAt = time.Now().UTC()
 	return service.store.UpdateAsset(ctx, asset)
 }
@@ -770,6 +782,13 @@ func (service *Service) failTask(
 		return summary, updateErr
 	}
 
+	slog.Error(
+		"endpoint scan failed",
+		"taskId", task.ID,
+		"endpointId", summary.EndpointID,
+		"endpointType", summary.EndpointType,
+		"error", failure,
+	)
 	return summary, failure
 }
 
@@ -948,6 +967,7 @@ func toEndpointRecord(endpoint store.StorageEndpoint) EndpointRecord {
 	return EndpointRecord{
 		ID:                 endpoint.ID,
 		Name:               endpoint.Name,
+		Note:               endpoint.Note,
 		EndpointType:       endpoint.EndpointType,
 		RootPath:           endpoint.RootPath,
 		RoleMode:           endpoint.RoleMode,

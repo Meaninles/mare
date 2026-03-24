@@ -53,6 +53,18 @@ type FullScanSummary struct {
 
 type RegisterEndpointRequest struct {
 	Name               string          `json:"name"`
+	Note               string          `json:"note"`
+	EndpointType       string          `json:"endpointType"`
+	RootPath           string          `json:"rootPath"`
+	RoleMode           string          `json:"roleMode"`
+	AvailabilityStatus string          `json:"availabilityStatus"`
+	IdentitySignature  string          `json:"identitySignature"`
+	ConnectionConfig   json.RawMessage `json:"connectionConfig"`
+}
+
+type UpdateEndpointRequest struct {
+	Name               string          `json:"name"`
+	Note               string          `json:"note"`
 	EndpointType       string          `json:"endpointType"`
 	RootPath           string          `json:"rootPath"`
 	RoleMode           string          `json:"roleMode"`
@@ -64,6 +76,7 @@ type RegisterEndpointRequest struct {
 type EndpointRecord struct {
 	ID                 string          `json:"id"`
 	Name               string          `json:"name"`
+	Note               string          `json:"note"`
 	EndpointType       string          `json:"endpointType"`
 	RootPath           string          `json:"rootPath"`
 	RoleMode           string          `json:"roleMode"`
@@ -72,6 +85,17 @@ type EndpointRecord struct {
 	ConnectionConfig   json.RawMessage `json:"connectionConfig"`
 	CreatedAt          time.Time       `json:"createdAt"`
 	UpdatedAt          time.Time       `json:"updatedAt"`
+}
+
+type DeleteEndpointSummary struct {
+	EndpointID             string    `json:"endpointId"`
+	EndpointName           string    `json:"endpointName"`
+	EndpointType           string    `json:"endpointType"`
+	RemovedReplicaCount    int       `json:"removedReplicaCount"`
+	AffectedAssetCount     int       `json:"affectedAssetCount"`
+	DeletedAssetCount      int       `json:"deletedAssetCount"`
+	UpdatedImportRuleCount int       `json:"updatedImportRuleCount"`
+	DeletedAt              time.Time `json:"deletedAt"`
 }
 
 type AssetVersionRecord struct {
@@ -111,20 +135,20 @@ type ReplicaRecord struct {
 }
 
 type AssetRecord struct {
-	ID                    string          `json:"id"`
-	LogicalPathKey        string          `json:"logicalPathKey"`
-	DisplayName           string          `json:"displayName"`
-	MediaType             string          `json:"mediaType"`
-	AssetStatus           string          `json:"assetStatus"`
-	PrimaryTimestamp      *time.Time      `json:"primaryTimestamp,omitempty"`
-	Poster                *AssetPreviewRecord `json:"poster,omitempty"`
-	PreviewURL            *string         `json:"previewUrl,omitempty"`
+	ID                    string                    `json:"id"`
+	LogicalPathKey        string                    `json:"logicalPathKey"`
+	DisplayName           string                    `json:"displayName"`
+	MediaType             string                    `json:"mediaType"`
+	AssetStatus           string                    `json:"assetStatus"`
+	PrimaryTimestamp      *time.Time                `json:"primaryTimestamp,omitempty"`
+	Poster                *AssetPreviewRecord       `json:"poster,omitempty"`
+	PreviewURL            *string                   `json:"previewUrl,omitempty"`
 	AudioMetadata         *AssetAudioMetadataRecord `json:"audioMetadata,omitempty"`
-	CreatedAt             time.Time       `json:"createdAt"`
-	UpdatedAt             time.Time       `json:"updatedAt"`
-	AvailableReplicaCount int             `json:"availableReplicaCount"`
-	MissingReplicaCount   int             `json:"missingReplicaCount"`
-	Replicas              []ReplicaRecord `json:"replicas"`
+	CreatedAt             time.Time                 `json:"createdAt"`
+	UpdatedAt             time.Time                 `json:"updatedAt"`
+	AvailableReplicaCount int                       `json:"availableReplicaCount"`
+	MissingReplicaCount   int                       `json:"missingReplicaCount"`
+	Replicas              []ReplicaRecord           `json:"replicas"`
 }
 
 type TaskRecord = store.Task

@@ -66,8 +66,8 @@ export function AudioPreview({
       <div className="media-preview-empty">
         <AudioLines size={28} />
         <div>
-          <h4>音频预览暂不可用</h4>
-          <p>当前没有可读取的音频副本，或浏览器暂时无法载入该音频流。</p>
+          <h4>音频不可用</h4>
+          <p>当前没有可播放的音频源。</p>
         </div>
       </div>
     );
@@ -97,9 +97,9 @@ export function AudioPreview({
         )}
 
         <div className="audio-preview-copy">
-          <span className="eyebrow">Audio Preview</span>
+          <span className="eyebrow">音频</span>
           <h4>{title}</h4>
-          <p>保持基础但完整的试听体验，支持播放、暂停和进度拖动。</p>
+          <p>播放与基础信息</p>
         </div>
       </div>
 
@@ -116,7 +116,7 @@ export function AudioPreview({
           step={0.1}
           value={Math.min(currentTime, duration || currentTime)}
           onChange={(event) => handleSeek(Number(event.target.value))}
-          aria-label="Audio progress"
+          aria-label="音频播放进度"
         />
       </div>
 
@@ -132,11 +132,11 @@ export function AudioPreview({
         </div>
         <div className="audio-metadata-pill">
           <span>编码</span>
-          <strong>{metadata?.codecName ?? "待解析"}</strong>
+          <strong>{metadata?.codecName ?? "待分析"}</strong>
         </div>
         <div className="audio-metadata-pill">
           <span>采样率</span>
-          <strong>{metadata?.sampleRateHz ? `${metadata.sampleRateHz} Hz` : "待解析"}</strong>
+          <strong>{metadata?.sampleRateHz ? `${metadata.sampleRateHz} Hz` : "待分析"}</strong>
         </div>
       </div>
     </div>

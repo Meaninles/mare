@@ -13,16 +13,16 @@ import (
 )
 
 type Server struct {
-	config config.Config
-	system platform.SystemState
+	config  config.Config
+	system  platform.SystemState
 	catalog *catalog.Service
-	http   *http.Server
+	http    *http.Server
 }
 
 func New(cfg config.Config, system platform.SystemState, catalogService *catalog.Service) *Server {
 	server := &Server{
-		config: cfg,
-		system: system,
+		config:  cfg,
+		system:  system,
 		catalog: catalogService,
 	}
 
@@ -30,12 +30,29 @@ func New(cfg config.Config, system platform.SystemState, catalogService *catalog
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.HandleFunc("/readyz", server.handleReady)
 	mux.HandleFunc("/api/v1/system/bootstrap", server.handleBootstrap)
+	mux.HandleFunc("/api/v1/system/logs", server.handleSystemLogs)
+	mux.HandleFunc("/api/v1/settings/backup/export", server.handleSettingsBackupExport)
+	mux.HandleFunc("/api/v1/settings/backup/import", server.handleSettingsBackupImport)
 	mux.HandleFunc("/api/v1/catalog/endpoints", server.handleCatalogEndpoints)
+	mux.HandleFunc("/api/v1/catalog/endpoints/", server.handleCatalogEndpointResource)
 	mux.HandleFunc("/api/v1/catalog/assets", server.handleCatalogAssets)
 	mux.HandleFunc("/api/v1/catalog/assets/", server.handleCatalogAssetResource)
+	mux.HandleFunc("/api/v1/catalog/replicas/delete", server.handleCatalogDeleteReplica)
 	mux.HandleFunc("/api/v1/catalog/tasks", server.handleCatalogTasks)
 	mux.HandleFunc("/api/v1/catalog/scans/full", server.handleCatalogFullScan)
 	mux.HandleFunc("/api/v1/catalog/scans/endpoint", server.handleCatalogEndpointScan)
+	mux.HandleFunc("/api/v1/catalog/sync/overview", server.handleCatalogSyncOverview)
+	mux.HandleFunc("/api/v1/catalog/sync/restore", server.handleCatalogRestoreAsset)
+	mux.HandleFunc("/api/v1/catalog/sync/restore/batch", server.handleCatalogRestoreBatch)
+	mux.HandleFunc("/api/v1/catalog/tasks/retry", server.handleCatalogRetryTask)
+	mux.HandleFunc("/api/v1/catalog/sync/tasks/retry", server.handleCatalogRetrySyncTask)
+	mux.HandleFunc("/api/v1/import/devices", server.handleImportDevices)
+	mux.HandleFunc("/api/v1/import/devices/role", server.handleImportDeviceRoleSelection)
+	mux.HandleFunc("/api/v1/import/sources/browse", server.handleImportSourceBrowse)
+	mux.HandleFunc("/api/v1/import/rules", server.handleImportRules)
+	mux.HandleFunc("/api/v1/import/execute", server.handleImportExecute)
+	mux.HandleFunc("/api/v1/tools/media/video/analyze", server.handleVideoMediaToolAnalyze)
+	mux.HandleFunc("/api/v1/tools/media/audio/analyze", server.handleAudioMediaToolAnalyze)
 	mux.HandleFunc("/api/v1/tools/connectors/qnap/test", server.handleQNAPTest)
 	mux.HandleFunc("/api/v1/tools/connectors/cloud115/test", server.handleCloud115Test)
 	mux.HandleFunc("/api/v1/tools/connectors/cloud115/qrcode/start", server.handleCloud115QRCodeStart)
@@ -75,15 +92,21 @@ func (server *Server) Shutdown(ctx context.Context) error {
 func (server *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
-		next.ServeHTTP(w, r)
-		slog.Info("http request served", "method", r.Method, "path", r.URL.Path, "duration", time.Since(startedAt).String())
+		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		slog.Info("http request served",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.statusCode,
+			"duration", time.Since(startedAt).String(),
+		)
 	})
 }
 
 func (server *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
@@ -93,4 +116,14 @@ func (server *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (recorder *statusRecorder) WriteHeader(statusCode int) {
+	recorder.statusCode = statusCode
+	recorder.ResponseWriter.WriteHeader(statusCode)
 }

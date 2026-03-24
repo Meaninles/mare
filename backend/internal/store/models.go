@@ -5,6 +5,7 @@ import "time"
 type StorageEndpoint struct {
 	ID                 string
 	Name               string
+	Note               string
 	EndpointType       string
 	RootPath           string
 	RoleMode           string
@@ -41,14 +42,14 @@ type AssetPreview struct {
 }
 
 type AssetMediaMetadata struct {
-	AssetID          string
-	DurationSeconds  *float64
-	CodecName        *string
-	SampleRateHz     *int
-	ChannelCount     *int
-	SourceVersionID  *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	AssetID         string
+	DurationSeconds *float64
+	CodecName       *string
+	SampleRateHz    *int
+	ChannelCount    *int
+	SourceVersionID *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type ReplicaVersion struct {
@@ -77,17 +78,17 @@ type Replica struct {
 }
 
 type Task struct {
-	ID            string
-	TaskType      string
-	Status        string
-	Payload       string
-	ResultSummary *string
-	ErrorMessage  *string
-	RetryCount    int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
+	ID            string     `json:"id"`
+	TaskType      string     `json:"taskType"`
+	Status        string     `json:"status"`
+	Payload       string     `json:"payload"`
+	ResultSummary *string    `json:"resultSummary,omitempty"`
+	ErrorMessage  *string    `json:"errorMessage,omitempty"`
+	RetryCount    int        `json:"retryCount"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 }
 
 type TaskStatusUpdate struct {
@@ -98,4 +99,13 @@ type TaskStatusUpdate struct {
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
 	UpdatedAt     time.Time
+}
+
+type ImportRule struct {
+	ID                string
+	RuleType          string
+	MatchValue        string
+	TargetEndpointIDs string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }

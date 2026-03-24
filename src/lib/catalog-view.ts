@@ -1,7 +1,15 @@
 import type { CatalogAsset, CatalogReplica } from "../types/catalog";
 
 export type AssetTone = "success" | "warning" | "danger" | "neutral";
-export type AssetStatusFilter = "all" | "ready" | "partial" | "single" | "missing";
+export type AssetStatusFilter =
+  | "all"
+  | "ready"
+  | "partial"
+  | "processing"
+  | "conflict"
+  | "pending_delete"
+  | "single"
+  | "deleted";
 
 export function getAvailableReplicas(asset: CatalogAsset): CatalogReplica[] {
   return asset.replicas.filter((replica) => replica.existsFlag);
@@ -20,16 +28,23 @@ export function getMissingReplicaCount(asset: CatalogAsset): number {
 }
 
 export function getAssetStatusFilterValue(asset: CatalogAsset): Exclude<AssetStatusFilter, "all"> {
-  if (asset.assetStatus === "missing") {
-    return "missing";
+  switch (safeLower(asset.assetStatus)) {
+    case "processing":
+      return "processing";
+    case "conflict":
+      return "conflict";
+    case "pending_delete":
+      return "pending_delete";
+    case "deleted":
+      return "deleted";
+    case "partial":
+      return "partial";
+    default:
+      break;
   }
 
   if (getAvailableReplicaCount(asset) === 1) {
     return "single";
-  }
-
-  if (asset.assetStatus === "partial") {
-    return "partial";
   }
 
   return "ready";
@@ -41,10 +56,16 @@ export function getAssetStatusLabel(asset: CatalogAsset): string {
       return "完整可用";
     case "partial":
       return "部分缺失";
+    case "processing":
+      return "处理中";
+    case "conflict":
+      return "冲突候选";
+    case "pending_delete":
+      return "待删除";
     case "single":
-      return "单端留存";
-    case "missing":
-      return "全部缺失";
+      return "仅单端存在";
+    case "deleted":
+      return "已删除";
   }
 }
 
@@ -54,8 +75,12 @@ export function getAssetTone(asset: CatalogAsset): AssetTone {
       return "success";
     case "partial":
     case "single":
+    case "processing":
       return "warning";
-    case "missing":
+    case "conflict":
+    case "pending_delete":
+      return "neutral";
+    case "deleted":
       return "danger";
   }
 }
@@ -65,15 +90,22 @@ export function getReplicaTone(replica: CatalogReplica): AssetTone {
     return "danger";
   }
 
-  if (replica.replicaStatus.toLowerCase() === "active") {
-    return "success";
+  switch (safeLower(replica.replicaStatus)) {
+    case "active":
+      return "success";
+    case "processing":
+    case "restoring":
+    case "pending_delete":
+      return "warning";
+    case "conflict":
+      return "neutral";
+    default:
+      return "neutral";
   }
-
-  return "neutral";
 }
 
 export function normalizeMediaType(mediaType: string): string {
-  return mediaType.trim().toLowerCase();
+  return safeLower(mediaType).trim();
 }
 
 export function getMediaTypeLabel(mediaType: string): string {
@@ -94,7 +126,12 @@ export function formatCatalogDate(value?: string): string {
     return "未记录";
   }
 
-  return new Date(value).toLocaleString("zh-CN", {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "未记录";
+  }
+
+  return parsed.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -105,7 +142,7 @@ export function formatCatalogDate(value?: string): string {
 
 export function formatFileSize(size?: number): string {
   if (!size || size <= 0) {
-    return "未知大小";
+    return "大小未知";
   }
 
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -123,7 +160,7 @@ export function formatFileSize(size?: number): string {
 
 export function formatDurationSeconds(value?: number): string {
   if (!value || value <= 0) {
-    return "未解析";
+    return "待分析";
   }
 
   const totalSeconds = Math.round(value);
@@ -136,4 +173,8 @@ export function formatDurationSeconds(value?: number): string {
   }
 
   return [minutes, seconds].map((item) => item.toString().padStart(2, "0")).join(":");
+}
+
+function safeLower(value?: string) {
+  return typeof value === "string" ? value.toLowerCase() : "";
 }

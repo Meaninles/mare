@@ -1,16 +1,25 @@
-import { AlertCircle, LoaderCircle, Search } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BellRing, LoaderCircle, Search, Sparkles } from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav, getRouteMeta } from "../components/SidebarNav";
+import { TaskCenterDrawer } from "../components/TaskCenterDrawer";
 import { useTheme } from "../components/ThemeProvider";
 import { useAppBootstrap } from "../hooks/useAppBootstrap";
+import { useCatalogTasks } from "../hooks/useCatalog";
+import { useImportDevices } from "../hooks/useImport";
+import { useRemovableNoticeState } from "../hooks/useRemovableNoticeState";
+import { getTaskSummary } from "../lib/task-center";
 
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const bootstrapQuery = useAppBootstrap();
+  const tasksQuery = useCatalogTasks(20);
+  const devicesQuery = useImportDevices();
   const { theme } = useTheme();
   const [searchValue, setSearchValue] = useState("");
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -22,12 +31,16 @@ export function AppShell() {
     if (location.pathname === "/library" && params.has("assetId")) {
       return {
         label: "资产详情",
-        description: "查看单个资产的基础信息、逻辑路径与全部副本状态。"
+        description: "预览资产、查看副本状态，并执行恢复或删除操作。"
       };
     }
 
     return getRouteMeta(location.pathname);
   }, [location.pathname, location.search]);
+
+  const taskSummary = useMemo(() => getTaskSummary(tasksQuery.data ?? []), [tasksQuery.data]);
+  const removableNotices = useRemovableNoticeState(devicesQuery.data ?? []);
+  const notificationCount = taskSummary.failed + removableNotices.unreadCount;
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -52,52 +65,70 @@ export function AppShell() {
       <SidebarNav />
 
       <div className="content-shell">
-        <header className="topbar">
-          <div className="topbar-main">
-            <div className="topbar-copy">
-              <p className="eyebrow">Desktop Client</p>
+        <header className="topbar topbar-refined">
+          <div className="shell-header-row">
+            <div className="topbar-copy compact">
+              <p className="eyebrow">{routeMeta.label}</p>
               <h2>{routeMeta.label}</h2>
               <p>{routeMeta.description}</p>
             </div>
 
-            <form className="shell-search" onSubmit={handleSearchSubmit}>
+            <div className="shell-actions">
+              <button
+                type="button"
+                className={`ghost-button task-center-trigger${notificationCount > 0 || taskSummary.failed > 0 ? " has-alert" : ""}`}
+                onClick={() => setTaskCenterOpen(true)}
+              >
+                <BellRing size={16} />
+                通知中心
+                <span className={`status-pill ${notificationCount > 0 || taskSummary.failed > 0 ? "danger" : taskSummary.running > 0 ? "warning" : "subtle"}`}>
+                  {notificationCount > 0
+                    ? `${notificationCount} 条提醒`
+                    : taskSummary.running > 0
+                      ? `${taskSummary.running} 个进行中`
+                      : "已读"}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="topbar-main topbar-main-wide">
+            <form className="shell-search shell-search-wide" onSubmit={handleSearchSubmit}>
               <Search size={18} strokeWidth={1.8} />
               <input
                 value={searchValue}
                 onChange={(event) => setSearchValue(event.target.value)}
-                placeholder="搜索资产名称、逻辑路径或存储端点"
-                aria-label="Global asset search"
+                placeholder="搜索名称、路径、描述或后续语义结果"
+                aria-label="全局目录搜索"
               />
             </form>
-          </div>
 
-          <div className="status-strip">
-            <span className="status-pill subtle">主题 {theme === "light" ? "浅色" : "深色"}</span>
+            <div className="status-strip status-strip-rich">
+              <span className="status-pill subtle">{theme === "light" ? "浅色" : "深色"}</span>
 
-            {bootstrapQuery.isLoading ? (
-              <span className="status-pill subtle">
-                <LoaderCircle size={14} className="spin" />
-                正在连接 Catalog 与客户端运行模块
-              </span>
-            ) : null}
-
-            {bootstrapQuery.isError ? (
-              <span className="status-pill danger">
-                <AlertCircle size={14} />
-                客户端状态读取失败
-              </span>
-            ) : null}
-
-            {bootstrapQuery.data ? (
-              <>
-                <span className={`status-pill ${bootstrapQuery.data.database.ready ? "success" : "warning"}`}>
-                  Catalog {bootstrapQuery.data.database.ready ? "已就绪" : "待检查"}
-                </span>
+              {bootstrapQuery.isLoading ? (
                 <span className="status-pill subtle">
-                  模块 {readyModuleCount}/{totalModuleCount}
+                  <LoaderCircle size={14} className="spin" />
+                  启动中
                 </span>
-              </>
-            ) : null}
+              ) : null}
+
+              {bootstrapQuery.data ? (
+                <>
+                  <span className={`status-pill ${bootstrapQuery.data.database.ready ? "success" : "warning"}`}>
+                    目录数据库 {bootstrapQuery.data.database.ready ? "就绪" : "检查中"}
+                  </span>
+                  <span className="status-pill subtle">
+                    模块 {readyModuleCount}/{totalModuleCount}
+                  </span>
+                </>
+              ) : null}
+
+              <span className="status-pill subtle">
+                <Sparkles size={14} />
+                桌面客户端
+              </span>
+            </div>
           </div>
         </header>
 
@@ -105,6 +136,8 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      <TaskCenterDrawer open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} />
     </div>
   );
 }

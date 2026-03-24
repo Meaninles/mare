@@ -52,6 +52,16 @@ func (store *Store) UpdateTaskStatus(ctx context.Context, id string, update Task
 	return nil
 }
 
+func (store *Store) GetTaskByID(ctx context.Context, id string) (Task, error) {
+	row := store.db.QueryRowContext(
+		ctx,
+		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
+		 FROM tasks WHERE id = ?`,
+		id,
+	)
+	return scanTask(row)
+}
+
 func (store *Store) ListTasks(ctx context.Context, limit, offset int) ([]Task, error) {
 	rows, err := store.db.QueryContext(
 		ctx,

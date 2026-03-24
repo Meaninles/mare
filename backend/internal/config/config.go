@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -25,9 +26,11 @@ type Config struct {
 	MinIOBucket         string
 	FFmpegPath          string
 	AIServiceURL        string
+	LogFilePath         string
 }
 
 func Load() (Config, error) {
+	catalogDBPath := getString("CATALOG_DB_PATH", "./data/mam.db")
 	httpPort, err := getInt("HTTP_PORT", 8080)
 	if err != nil {
 		return Config{}, err
@@ -62,7 +65,7 @@ func Load() (Config, error) {
 		HTTPWriteTimeout:    writeTimeout,
 		HTTPIdleTimeout:     idleTimeout,
 		HTTPShutdownTimeout: shutdownTimeout,
-		CatalogDBPath:       getString("CATALOG_DB_PATH", "./data/mam.db"),
+		CatalogDBPath:       catalogDBPath,
 		PostgresDSN:         getString("POSTGRES_DSN", ""),
 		RedisAddr:           getString("REDIS_ADDR", ""),
 		OpenSearchURL:       getString("OPENSEARCH_URL", ""),
@@ -71,6 +74,7 @@ func Load() (Config, error) {
 		MinIOBucket:         getString("MINIO_BUCKET", ""),
 		FFmpegPath:          getString("FFMPEG_PATH", "ffmpeg"),
 		AIServiceURL:        getString("AI_SERVICE_URL", ""),
+		LogFilePath:         getString("LOG_FILE_PATH", filepath.Join(filepath.Dir(catalogDBPath), "logs", "backend.log")),
 	}, nil
 }
 

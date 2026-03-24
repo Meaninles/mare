@@ -62,6 +62,15 @@ func (store *Store) runMigrations(ctx context.Context) error {
 		return fmt.Errorf("enable sqlite foreign keys: %w", err)
 	}
 
+	if _, err := store.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("ensure schema_migrations table: %w", err)
+	}
+
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations: %w", err)
@@ -77,7 +86,17 @@ func (store *Store) runMigrations(ctx context.Context) error {
 
 	sort.Strings(names)
 
+	appliedVersions, err := store.listAppliedMigrationVersions(ctx)
+	if err != nil {
+		return err
+	}
+
 	for _, name := range names {
+		if _, alreadyApplied := appliedVersions[name]; alreadyApplied {
+			store.migrationVersion = name
+			continue
+		}
+
 		contents, readErr := migrationFS.ReadFile("migrations/" + name)
 		if readErr != nil {
 			return fmt.Errorf("read migration %s: %w", name, readErr)
@@ -115,4 +134,27 @@ func (store *Store) runMigrations(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (store *Store) listAppliedMigrationVersions(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("list applied migrations: %w", err)
+	}
+	defer rows.Close()
+
+	appliedVersions := make(map[string]struct{})
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, fmt.Errorf("scan applied migration version: %w", err)
+		}
+		appliedVersions[version] = struct{}{}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate applied migrations: %w", err)
+	}
+
+	return appliedVersions, nil
 }

@@ -27,8 +27,8 @@ export function AssetPreview({ asset }: { asset: CatalogAsset }) {
         <div className="media-preview-empty">
           <MediaIcon mediaType={asset.mediaType} />
           <div>
-            <h4>当前媒体类型暂无预览</h4>
-            <p>这条资产还没有接入可视化预览组件，后续会继续扩展支持范围。</p>
+            <h4>暂不支持预览</h4>
+            <p>这个媒体类型目前还没有对应的预览组件。</p>
           </div>
         </div>
       );

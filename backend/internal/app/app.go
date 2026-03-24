@@ -25,7 +25,7 @@ func New(_ context.Context) (*App, error) {
 		return nil, err
 	}
 
-	logger := platform.NewLogger(cfg.AppEnv)
+	logger := platform.NewLogger(cfg.AppEnv, cfg.LogFilePath)
 	slog.SetDefault(logger)
 
 	dataStore, err := store.NewSQLiteStore(cfg.CatalogDBPath)

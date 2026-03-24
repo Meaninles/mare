@@ -10,8 +10,8 @@ export function ImagePreview({ src, alt }: { src?: string; alt: string }) {
       <div className="media-preview-empty">
         <ImageOff size={28} />
         <div>
-          <h4>预览暂不可用</h4>
-          <p>当前没有可读取的图片副本，或图片内容暂时无法加载。</p>
+          <h4>预览不可用</h4>
+          <p>没有可显示的图像。</p>
         </div>
       </div>
     );
@@ -23,16 +23,16 @@ export function ImagePreview({ src, alt }: { src?: string; alt: string }) {
         <img src={src} alt={alt} className="media-image" onError={() => setHasError(true)} />
         <span className="image-preview-hint">
           <Expand size={14} />
-          放大预览
+          放大
         </span>
       </button>
 
       {isOpen ? (
-        <div className="media-lightbox" role="dialog" aria-modal="true" aria-label={`${alt} preview`} onClick={() => setIsOpen(false)}>
+        <div className="media-lightbox" role="dialog" aria-modal="true" aria-label={`${alt} 预览`} onClick={() => setIsOpen(false)}>
           <button
             type="button"
             className="media-lightbox-close"
-            aria-label="Close image preview"
+            aria-label="关闭图片预览"
             onClick={() => setIsOpen(false)}
           >
             <X size={18} />

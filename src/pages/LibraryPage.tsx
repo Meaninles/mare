@@ -38,8 +38,7 @@ const statusFilters = [
   { value: "all", label: "全部状态" },
   { value: "ready", label: "完整可用" },
   { value: "partial", label: "部分缺失" },
-  { value: "single", label: "单端留存" },
-  { value: "missing", label: "全部缺失" }
+  { value: "single", label: "仅单端存在" }
 ] as const;
 
 const sortOptions = [
@@ -140,31 +139,28 @@ function LibraryCatalogView() {
     <section className="page-stack">
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
-          <p className="eyebrow">Unified Asset Catalog</p>
-          <h3>把分散在本地、NAS 与网盘中的媒体资产，收束成一张清晰、统一、可恢复的目录视图。</h3>
-          <p>
-            当前阶段已经接入本地 Catalog 数据读取。你可以在这里浏览资产、查看副本状态、按媒体类型和状态筛选，
-            也可以从顶部搜索入口联动当前列表。
-          </p>
+          <p className="eyebrow">统一资产库</p>
+          <h3>把分散在本地磁盘、NAS 和云端端点里的媒体收束进一套统一视图。</h3>
+          <p>搜索放在全局入口，这里专注于浏览、筛选，以及更快地打开正确的资产。</p>
         </div>
 
         <div className="hero-metrics">
           <MetricCard label="资产总数" value={summary.totalAssets} tone="neutral" />
           <MetricCard label="完整可用" value={summary.readyAssets} tone="success" />
           <MetricCard label="部分缺失" value={summary.partialAssets} tone="warning" />
-          <MetricCard label="单端留存" value={summary.singleAssets} tone="neutral" />
+          <MetricCard label="仅单端存在" value={summary.singleAssets} tone="neutral" />
         </div>
       </article>
 
       <article className="detail-card catalog-toolbar">
         <div className="catalog-toolbar-head">
           <div>
-            <p className="eyebrow">Browse</p>
-            <h4>轻量筛选与排序</h4>
+            <p className="eyebrow">浏览</p>
+            <h4>轻量筛选与时间排序</h4>
           </div>
 
           <div className="toolbar-search-state">
-            {searchQuery ? <span>当前搜索：{searchQuery}</span> : <span>可从顶部搜索框快速定位名称与路径。</span>}
+            {searchQuery ? <span>当前搜索：{searchQuery}</span> : <span>可通过顶部全局搜索进一步缩小范围。</span>}
           </div>
         </div>
 
@@ -196,7 +192,7 @@ function LibraryCatalogView() {
           </div>
 
           <label className="field catalog-sort-field">
-            <span>时间排序</span>
+            <span>排序</span>
             <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
               {sortOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -212,8 +208,8 @@ function LibraryCatalogView() {
         <article className="detail-card empty-state">
           <SearchX size={28} />
           <div>
-            <h4>资产列表暂时无法读取</h4>
-            <p>{assetsQuery.error instanceof Error ? assetsQuery.error.message : "请检查 Go 后端与 Catalog 服务状态。"}</p>
+            <h4>暂时无法读取资产库</h4>
+            <p>{assetsQuery.error instanceof Error ? assetsQuery.error.message : "请检查 Catalog 服务后再试。"}</p>
           </div>
         </article>
       ) : null}
@@ -238,7 +234,7 @@ function LibraryCatalogView() {
           <SearchX size={28} />
           <div>
             <h4>当前条件下没有匹配资产</h4>
-            <p>可以尝试放宽筛选条件，或者先在存储管理里执行一次全量扫描，把更多资产纳入 Catalog。</p>
+            <p>可以放宽筛选条件，或者先去存储管理执行一次扫描。</p>
           </div>
         </article>
       ) : null}
@@ -246,7 +242,7 @@ function LibraryCatalogView() {
       {!assetsQuery.isLoading && !assetsQuery.isError && filteredAssets.length > 0 ? (
         <>
           <div className="catalog-result-meta">
-            <span>共找到 {filteredAssets.length} 条资产</span>
+            <span>共 {filteredAssets.length} 条结果</span>
             <span>
               第 {currentPage} / {totalPages} 页
             </span>
@@ -334,7 +330,7 @@ function AssetCard({
         </div>
 
         <div className="asset-meta-row">
-          <span>时间 {formatCatalogDate(asset.primaryTimestamp)}</span>
+          <span>{formatCatalogDate(asset.primaryTimestamp)}</span>
           <span>可用副本 {availableReplicaCount}</span>
           <span>缺失副本 {missingReplicaCount}</span>
         </div>

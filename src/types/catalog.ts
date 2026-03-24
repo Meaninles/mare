@@ -1,6 +1,7 @@
 export interface CatalogEndpoint {
   id: string;
   name: string;
+  note: string;
   endpointType: string;
   rootPath: string;
   roleMode: string;
@@ -9,6 +10,16 @@ export interface CatalogEndpoint {
   connectionConfig: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CatalogEndpointPayload {
+  name: string;
+  note: string;
+  endpointType: string;
+  rootPath: string;
+  roleMode: string;
+  availabilityStatus: string;
+  connectionConfig: Record<string, unknown>;
 }
 
 export interface CatalogVersion {
@@ -78,6 +89,117 @@ export interface CatalogTask {
   finishedAt?: string;
 }
 
+export interface CatalogDeleteReplicaSummary {
+  taskId: string;
+  assetId: string;
+  displayName: string;
+  targetEndpointId: string;
+  targetEndpointName: string;
+  targetPhysicalPath: string;
+  status: string;
+  replicaDeleted: boolean;
+  assetRemoved: boolean;
+  remainingAvailableCopies: number;
+  assetStatus: string;
+  startedAt: string;
+  finishedAt: string;
+  error?: string;
+}
+
+export interface CatalogSyncEndpointRef {
+  id: string;
+  name: string;
+  endpointType: string;
+}
+
+export interface CatalogSyncReplica {
+  id: string;
+  endpointId: string;
+  endpointName: string;
+  physicalPath: string;
+  replicaStatus: string;
+  existsFlag: boolean;
+  lastSeenAt?: string;
+  version?: CatalogVersion;
+}
+
+export interface CatalogSyncAsset {
+  id: string;
+  displayName: string;
+  logicalPathKey: string;
+  mediaType: string;
+  assetStatus: string;
+  primaryTimestamp?: string;
+  poster?: CatalogAssetPoster;
+  availableReplicaCount: number;
+  missingReplicaCount: number;
+  missingEndpoints: CatalogSyncEndpointRef[];
+  consistentEndpoints: CatalogSyncEndpointRef[];
+  updatedEndpoints: CatalogSyncEndpointRef[];
+  conflictEndpoints: CatalogSyncEndpointRef[];
+  recommendedSource?: CatalogSyncEndpointRef;
+  replicas: CatalogSyncReplica[];
+}
+
+export interface CatalogSyncOverview {
+  generatedAt: string;
+  recoverableAssets: CatalogSyncAsset[];
+  conflictAssets: CatalogSyncAsset[];
+  runningTasks: CatalogTask[];
+  failedTasks: CatalogTask[];
+}
+
+export interface CatalogRestoreAssetSummary {
+  taskId: string;
+  assetId: string;
+  displayName: string;
+  sourceEndpointId: string;
+  sourceEndpointName: string;
+  targetEndpointId: string;
+  targetEndpointName: string;
+  targetPhysicalPath?: string;
+  status: string;
+  createdReplica: boolean;
+  updatedReplica: boolean;
+  skipped: boolean;
+  startedAt: string;
+  finishedAt: string;
+  error?: string;
+}
+
+export interface CatalogBatchRestoreItem {
+  assetId: string;
+  displayName: string;
+  sourceEndpointId?: string;
+  targetEndpointId: string;
+  status: string;
+  skipped: boolean;
+  error?: string;
+}
+
+export interface CatalogBatchRestoreSummary {
+  taskId: string;
+  targetEndpointId: string;
+  targetEndpointName: string;
+  status: string;
+  totalAssets: number;
+  successCount: number;
+  failedCount: number;
+  skippedCount: number;
+  items: CatalogBatchRestoreItem[];
+  startedAt: string;
+  finishedAt: string;
+  error?: string;
+}
+
+export interface CatalogRetrySyncTaskSummary {
+  originalTaskId: string;
+  newTaskId?: string;
+  taskType: string;
+  status: string;
+  message: string;
+}
+
 export interface EndpointScanSummary {
   taskId: string;
   endpointId: string;
@@ -112,6 +234,23 @@ export interface CatalogEndpointsResponse {
   error?: string;
 }
 
+export interface CatalogDeleteEndpointSummary {
+  endpointId: string;
+  endpointName: string;
+  endpointType: string;
+  removedReplicaCount: number;
+  affectedAssetCount: number;
+  deletedAssetCount: number;
+  updatedImportRuleCount: number;
+  deletedAt: string;
+}
+
+export interface CatalogDeleteEndpointResponse {
+  success: boolean;
+  summary?: CatalogDeleteEndpointSummary;
+  error?: string;
+}
+
 export interface CatalogAssetsResponse {
   success: boolean;
   assets?: CatalogAsset[];
@@ -127,5 +266,41 @@ export interface CatalogTasksResponse {
 export interface CatalogScanResponse {
   success: boolean;
   summary?: FullScanSummary | EndpointScanSummary;
+  error?: string;
+}
+
+export interface CatalogSyncOverviewResponse {
+  success: boolean;
+  overview?: CatalogSyncOverview;
+  error?: string;
+}
+
+export interface CatalogRestoreResponse {
+  success: boolean;
+  summary?: CatalogRestoreAssetSummary | CatalogBatchRestoreSummary;
+  error?: string;
+}
+
+export interface CatalogRetryResponse {
+  success: boolean;
+  summary?: CatalogRetrySyncTaskSummary;
+  error?: string;
+}
+
+export interface CatalogRestoreAssetResponse {
+  success: boolean;
+  summary?: CatalogRestoreAssetSummary;
+  error?: string;
+}
+
+export interface CatalogBatchRestoreResponse {
+  success: boolean;
+  summary?: CatalogBatchRestoreSummary;
+  error?: string;
+}
+
+export interface CatalogDeleteReplicaResponse {
+  success: boolean;
+  summary?: CatalogDeleteReplicaSummary;
   error?: string;
 }

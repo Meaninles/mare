@@ -17,8 +17,8 @@ export function VideoPreview({
       <div className="media-preview-empty">
         <Clapperboard size={28} />
         <div>
-          <h4>视频预览暂不可用</h4>
-          <p>当前没有可读取的视频副本，或浏览器暂时无法加载该视频流。</p>
+          <h4>视频不可用</h4>
+          <p>当前没有可播放的视频源。</p>
         </div>
       </div>
     );

@@ -53,7 +53,7 @@ export function RemovableTesterPage() {
     setIsLoading(true);
     try {
       const response = await testRemovableConnector(backendUrl, selectedDevice, {
-        name: selectedDevice.volumeLabel || "Removable Drive",
+        name: selectedDevice.volumeLabel || "移动设备",
         operation,
         path,
         destinationPath,
@@ -76,10 +76,10 @@ export function RemovableTesterPage() {
     <section className="page-stack">
       <article className="hero-card">
         <p className="eyebrow">移动设备验证</p>
-        <h3>检测已插入的 U 盘 / 移动硬盘，并验证文件操作是否正常。</h3>
+        <h3>检测已插入的 U 盘与移动硬盘，并验证可移动连接器的基础文件操作。</h3>
         <p>
-          这个页面会调用 Go 后端里的 Windows 可移动设备识别器，让你直接执行连接、列目录、读取信息、上传、
-          下载、删除等检查。
+          这个页面会调用 Go 后端里的 Windows 可移动设备识别器，方便直接执行连接检查、目录枚举、
+          元数据读取、上传、下载与删除等诊断操作。
         </p>
       </article>
 
@@ -90,7 +90,7 @@ export function RemovableTesterPage() {
         </label>
         <div className="action-row">
           <button onClick={() => void refreshDevices()} disabled={isLoading}>
-            检测移动设备
+            检测设备
           </button>
         </div>
       </article>
@@ -100,12 +100,12 @@ export function RemovableTesterPage() {
           <div className="tester-header">
             <div>
               <p className="eyebrow">已识别设备</p>
-              <h4>Windows USB / 外接设备</h4>
+              <h4>Windows USB / 外接存储</h4>
             </div>
           </div>
           <div className="device-list">
             {detectError ? <p className="error-copy">{detectError}</p> : null}
-            {devices.length === 0 ? <p>暂时还没有识别到设备。</p> : null}
+            {devices.length === 0 ? <p>暂未识别到可移动设备。</p> : null}
             {devices.map((device) => (
               <label key={`${device.mountPoint}-${device.volumeSerialNumber}`} className="device-item">
                 <input
@@ -162,7 +162,7 @@ export function RemovableTesterPage() {
           </form>
           <div className="action-row">
             <button onClick={() => void runOperation("health_check")} disabled={!selectedDevice || isLoading}>
-              连接检测
+              连接检查
             </button>
             <button onClick={() => void runOperation("list_entries")} disabled={!selectedDevice || isLoading}>
               列目录

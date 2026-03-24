@@ -10,10 +10,11 @@ func (store *Store) CreateStorageEndpoint(ctx context.Context, endpoint StorageE
 	_, err := store.db.ExecContext(
 		ctx,
 		`INSERT INTO storage_endpoints
-		(id, name, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		endpoint.ID,
 		endpoint.Name,
+		endpoint.Note,
 		endpoint.EndpointType,
 		endpoint.RootPath,
 		endpoint.RoleMode,
@@ -32,7 +33,7 @@ func (store *Store) CreateStorageEndpoint(ctx context.Context, endpoint StorageE
 func (store *Store) GetStorageEndpointByID(ctx context.Context, id string) (StorageEndpoint, error) {
 	row := store.db.QueryRowContext(
 		ctx,
-		`SELECT id, name, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
 		 FROM storage_endpoints WHERE id = ?`,
 		id,
 	)
@@ -42,7 +43,7 @@ func (store *Store) GetStorageEndpointByID(ctx context.Context, id string) (Stor
 func (store *Store) ListStorageEndpoints(ctx context.Context) ([]StorageEndpoint, error) {
 	rows, err := store.db.QueryContext(
 		ctx,
-		`SELECT id, name, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
 		 FROM storage_endpoints ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -65,7 +66,7 @@ func (store *Store) ListStorageEndpoints(ctx context.Context) ([]StorageEndpoint
 func (store *Store) ListEnabledStorageEndpoints(ctx context.Context) ([]StorageEndpoint, error) {
 	rows, err := store.db.QueryContext(
 		ctx,
-		`SELECT id, name, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
 		 FROM storage_endpoints
 		 WHERE UPPER(availability_status) != 'DISABLED'
 		 ORDER BY created_at DESC`,
@@ -91,9 +92,10 @@ func (store *Store) UpdateStorageEndpoint(ctx context.Context, endpoint StorageE
 	_, err := store.db.ExecContext(
 		ctx,
 		`UPDATE storage_endpoints
-		 SET name = ?, endpoint_type = ?, root_path = ?, role_mode = ?, identity_signature = ?, availability_status = ?, connection_config = ?, updated_at = ?
+		 SET name = ?, note = ?, endpoint_type = ?, root_path = ?, role_mode = ?, identity_signature = ?, availability_status = ?, connection_config = ?, updated_at = ?
 		 WHERE id = ?`,
 		endpoint.Name,
+		endpoint.Note,
 		endpoint.EndpointType,
 		endpoint.RootPath,
 		endpoint.RoleMode,
@@ -126,6 +128,7 @@ func scanStorageEndpoint(scanner rowScanner) (StorageEndpoint, error) {
 	if err := scanner.Scan(
 		&endpoint.ID,
 		&endpoint.Name,
+		&endpoint.Note,
 		&endpoint.EndpointType,
 		&endpoint.RootPath,
 		&endpoint.RoleMode,

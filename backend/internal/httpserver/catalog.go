@@ -15,6 +15,10 @@ type endpointScanRequest struct {
 	EndpointID string `json:"endpointId"`
 }
 
+type retrySyncTaskRequest struct {
+	TaskID string `json:"taskId"`
+}
+
 func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -59,6 +63,56 @@ func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *http.Request) {
+	endpointID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/v1/catalog/endpoints/"))
+	if endpointID == "" || strings.Contains(endpointID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var request catalog.UpdateEndpointRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			server.writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   "invalid JSON payload",
+			})
+			return
+		}
+
+		record, err := server.catalog.UpdateEndpoint(r.Context(), endpointID, request)
+		if err != nil {
+			server.writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		server.writeJSON(w, http.StatusOK, map[string]any{
+			"success":  true,
+			"endpoint": record,
+		})
+	case http.MethodDelete:
+		summary, err := server.catalog.DeleteEndpoint(r.Context(), endpointID)
+		if err != nil {
+			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		server.writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"summary": summary,
+		})
+	default:
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	}
+}
+
 func (server *Server) handleCatalogAssets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -80,6 +134,37 @@ func (server *Server) handleCatalogAssets(w http.ResponseWriter, r *http.Request
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"assets":  records,
+	})
+}
+
+func (server *Server) handleCatalogDeleteReplica(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	var request catalog.DeleteReplicaRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+
+	summary, err := server.catalog.DeleteReplica(r.Context(), request)
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"summary": summary,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"summary": summary,
 	})
 }
 
@@ -161,6 +246,119 @@ func (server *Server) handleCatalogTasks(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (server *Server) handleCatalogSyncOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	overview, err := server.catalog.GetSyncOverview(r.Context())
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"overview": overview,
+	})
+}
+
+func (server *Server) handleCatalogRestoreAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	var request catalog.RestoreAssetRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+
+	summary, err := server.catalog.RestoreAsset(r.Context(), request)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, strconv.ErrSyntax) {
+			statusCode = http.StatusBadRequest
+		}
+		server.writeJSON(w, statusCode, map[string]any{
+			"success": false,
+			"summary": summary,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"summary": summary,
+	})
+}
+
+func (server *Server) handleCatalogRestoreBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	var request catalog.BatchRestoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+
+	summary, err := server.catalog.RestoreAssetsToEndpoint(r.Context(), request)
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": err == nil,
+		"summary": summary,
+		"error":   errorText(err),
+	})
+}
+
+func (server *Server) handleCatalogRetrySyncTask(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogRetryTask(w, r)
+}
+
+func (server *Server) handleCatalogRetryTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	var request retrySyncTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+	if strings.TrimSpace(request.TaskID) == "" {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "taskId is required",
+		})
+		return
+	}
+
+	summary, err := server.catalog.RetryTask(r.Context(), request.TaskID)
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": err == nil,
+		"summary": summary,
+		"error":   errorText(err),
+	})
+}
+
 func (server *Server) handleCatalogFullScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -235,6 +433,13 @@ func queryInt(r *http.Request, key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (server *Server) serveMediaFile(w http.ResponseWriter, r *http.Request, resource catalog.AssetMediaResource) {

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,13 @@ const (
 	mediaTaskAudioMetadata = "audio_metadata"
 
 	thumbnailMaxDimension = 640
+)
+
+var (
+	ffmpegDurationPattern     = regexp.MustCompile(`Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)`)
+	ffmpegDimensionPattern    = regexp.MustCompile(`(\d{2,5})x(\d{2,5})`)
+	ffmpegSampleRatePattern   = regexp.MustCompile(`(\d{4,6})\s*Hz`)
+	ffmpegChannelCountPattern = regexp.MustCompile(`(\d+)\s*channels?`)
 )
 
 type MediaConfig struct {
@@ -292,18 +300,22 @@ func (service *Service) queueMediaJob(assetID, taskType string) {
 	go func() {
 		defer service.mediaJobKeys.Delete(jobKey)
 
-		if err := service.runMediaJob(context.Background(), assetID, taskType); err != nil {
+		if _, err := service.startMediaTask(context.Background(), assetID, taskType); err != nil {
 			slog.Warn("media job failed", "assetId", assetID, "taskType", taskType, "error", err)
 		}
 	}()
 }
 
-func (service *Service) runMediaJob(ctx context.Context, assetID, taskType string) error {
+func (service *Service) startMediaTask(ctx context.Context, assetID, taskType string) (store.Task, error) {
 	task, err := service.createMediaTask(ctx, assetID, taskType)
 	if err != nil {
-		return err
+		return store.Task{}, err
 	}
 
+	return task, service.runMediaTask(ctx, task, assetID, taskType)
+}
+
+func (service *Service) runMediaTask(ctx context.Context, task store.Task, assetID, taskType string) error {
 	startedAt := time.Now().UTC()
 	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
 		Status:     "running",
@@ -313,6 +325,8 @@ func (service *Service) runMediaJob(ctx context.Context, assetID, taskType strin
 	}); err != nil {
 		return err
 	}
+
+	slog.Info("media task started", "taskId", task.ID, "assetId", assetID, "taskType", taskType)
 
 	resultSummary, runErr := service.executeMediaTask(ctx, assetID, taskType)
 	finishedAt := time.Now().UTC()
@@ -332,6 +346,7 @@ func (service *Service) runMediaJob(ctx context.Context, assetID, taskType strin
 			return updateErr
 		}
 
+		slog.Error("media task failed", "taskId", task.ID, "assetId", assetID, "taskType", taskType, "error", runErr)
 		return runErr
 	}
 
@@ -346,6 +361,7 @@ func (service *Service) runMediaJob(ctx context.Context, assetID, taskType strin
 		return err
 	}
 
+	slog.Info("media task completed", "taskId", task.ID, "assetId", assetID, "taskType", taskType)
 	return nil
 }
 
@@ -533,7 +549,7 @@ func (service *Service) extractAudioMetadata(ctx context.Context, asset store.As
 		defer cleanup()
 	}
 
-	probeResult, probeErr := service.probeAudioMetadata(localPath)
+	probeResult, probeErr := service.probeAudioMetadata(ctx, localPath)
 	if probeErr != nil {
 		slog.Warn("audio metadata probe degraded", "assetId", asset.ID, "error", probeErr)
 	}
@@ -741,9 +757,16 @@ func (service *Service) materializeReplicaToLocalFile(
 	}, nil
 }
 
-func (service *Service) probeAudioMetadata(localPath string) (audioProbeResult, error) {
+func (service *Service) probeAudioMetadata(ctx context.Context, localPath string) (audioProbeResult, error) {
 	if ffprobePath, err := service.resolveFFprobeBinary(); err == nil {
 		result, probeErr := probeAudioWithFFprobe(ffprobePath, localPath)
+		if probeErr == nil {
+			return result, nil
+		}
+	}
+
+	if ffmpegPath, err := service.resolveFFmpegBinary(); err == nil {
+		result, probeErr := probeAudioWithFFmpeg(ctx, ffmpegPath, localPath)
 		if probeErr == nil {
 			return result, nil
 		}
@@ -860,12 +883,11 @@ func readEmbeddedArtwork(localPath string) (*embeddedArtwork, error) {
 }
 
 func (service *Service) resolveFFmpegBinary() (string, error) {
-	return resolveBinary(service.mediaConfig.FFmpegPath)
+	return resolveBinaryCandidates(ffmpegBinaryCandidates(service.mediaConfig.FFmpegPath), "ffmpeg")
 }
 
 func (service *Service) resolveFFprobeBinary() (string, error) {
-	ffprobeCandidate := deriveFFprobePath(service.mediaConfig.FFmpegPath)
-	return resolveBinary(ffprobeCandidate)
+	return resolveBinaryCandidates(ffprobeBinaryCandidates(service.mediaConfig.FFmpegPath), "ffprobe")
 }
 
 func resolveBinary(candidate string) (string, error) {
@@ -879,6 +901,41 @@ func resolveBinary(candidate string) (string, error) {
 		return "", fmt.Errorf("executable %q is not available: %w", binaryPath, err)
 	}
 	return resolved, nil
+}
+
+func resolveBinaryCandidates(candidates []string, binaryName string) (string, error) {
+	checked := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		checked = append(checked, trimmed)
+
+		resolved, err := exec.LookPath(trimmed)
+		if err != nil {
+			continue
+		}
+		return resolved, nil
+	}
+
+	if len(checked) == 0 {
+		return "", fmt.Errorf("executable %q is not available", binaryName)
+	}
+
+	return "", fmt.Errorf(
+		"executable %q is not available; searched: %s",
+		binaryName,
+		strings.Join(checked, "; "),
+	)
 }
 
 func deriveFFprobePath(ffmpegPath string) string {
@@ -896,6 +953,320 @@ func deriveFFprobePath(ffmpegPath string) string {
 	default:
 		return "ffprobe"
 	}
+}
+
+func ffmpegBinaryCandidates(configured string) []string {
+	candidates := []string{configured, "ffmpeg", "ffmpeg.exe"}
+	return append(candidates, discoverBinaryCandidates("ffmpeg")...)
+}
+
+func ffprobeBinaryCandidates(configuredFFmpeg string) []string {
+	candidates := []string{
+		deriveFFprobePath(configuredFFmpeg),
+		"ffprobe",
+		"ffprobe.exe",
+	}
+	for _, ffmpegCandidate := range ffmpegBinaryCandidates(configuredFFmpeg) {
+		trimmed := strings.TrimSpace(ffmpegCandidate)
+		if trimmed == "" {
+			continue
+		}
+		if strings.ContainsAny(trimmed, `\/`) {
+			candidates = append(candidates, deriveFFprobePath(trimmed))
+		}
+	}
+	return append(candidates, discoverBinaryCandidates("ffprobe")...)
+}
+
+func discoverBinaryCandidates(binaryName string) []string {
+	executableName := binaryName
+	if filepath.Ext(executableName) == "" {
+		executableName += ".exe"
+	}
+
+	candidates := make([]string, 0, 32)
+	candidates = append(candidates, projectBinaryCandidates(executableName)...)
+	candidates = append(candidates, windowsBinaryCandidates(executableName)...)
+	return candidates
+}
+
+func projectBinaryCandidates(executableName string) []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+
+	roots := []string{cwd, filepath.Dir(cwd)}
+	relativeDirs := []string{
+		filepath.Join(".tools", "ffmpeg", "bin"),
+		filepath.Join("tools", "ffmpeg", "bin"),
+		filepath.Join("ffmpeg", "bin"),
+		filepath.Join("vendor", "ffmpeg", "bin"),
+		filepath.Join("backend", ".tools", "ffmpeg", "bin"),
+		filepath.Join("backend", "tools", "ffmpeg", "bin"),
+		filepath.Join("backend", "ffmpeg", "bin"),
+	}
+
+	candidates := make([]string, 0, len(roots)*len(relativeDirs))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		for _, relativeDir := range relativeDirs {
+			candidates = append(candidates, filepath.Join(root, relativeDir, executableName))
+		}
+	}
+
+	return candidates
+}
+
+func windowsBinaryCandidates(executableName string) []string {
+	paths := make([]string, 0, 24)
+	directories := make([]string, 0, 9)
+	if programFiles := strings.TrimSpace(os.Getenv("ProgramFiles")); programFiles != "" {
+		directories = append(directories,
+			filepath.Join(programFiles, "ffmpeg", "bin"),
+			filepath.Join(programFiles, "FFmpeg", "bin"),
+		)
+	}
+	if programFilesX86 := strings.TrimSpace(os.Getenv("ProgramFiles(x86)")); programFilesX86 != "" {
+		directories = append(directories,
+			filepath.Join(programFilesX86, "ffmpeg", "bin"),
+			filepath.Join(programFilesX86, "FFmpeg", "bin"),
+		)
+	}
+	if chocolateyInstall := strings.TrimSpace(os.Getenv("ChocolateyInstall")); chocolateyInstall != "" {
+		directories = append(directories, filepath.Join(chocolateyInstall, "bin"))
+	}
+	if userProfile := strings.TrimSpace(os.Getenv("USERPROFILE")); userProfile != "" {
+		directories = append(directories, filepath.Join(userProfile, "scoop", "apps", "ffmpeg", "current", "bin"))
+	}
+	if localAppData := strings.TrimSpace(os.Getenv("LocalAppData")); localAppData != "" {
+		directories = append(directories, filepath.Join(localAppData, "Microsoft", "WinGet", "Links"))
+	}
+	directories = append(directories,
+		filepath.Join("C:\\", "ffmpeg", "bin"),
+		filepath.Join("C:\\", "ffmpeg"),
+	)
+	for _, directory := range directories {
+		directory = strings.TrimSpace(directory)
+		if directory == "" {
+			continue
+		}
+		paths = append(paths, filepath.Join(directory, executableName))
+	}
+
+	roots := []string{
+		os.Getenv("ProgramFiles"),
+		os.Getenv("ProgramFiles(x86)"),
+	}
+	patterns := []string{
+		filepath.Join("*", "ffmpeg", executableName),
+		filepath.Join("*", "*", "ffmpeg", executableName),
+		filepath.Join("*", "bin", executableName),
+		filepath.Join("*", "*", "bin", executableName),
+	}
+
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(filepath.Join(root, pattern))
+			if err != nil {
+				continue
+			}
+			paths = append(paths, matches...)
+		}
+	}
+
+	return paths
+}
+
+func probeVideoWithFFmpeg(ctx context.Context, ffmpegPath, localPath string) (videoProbeResult, error) {
+	output, err := readFFmpegProbeOutput(ctx, ffmpegPath, localPath)
+	if err != nil {
+		return videoProbeResult{}, err
+	}
+
+	result := videoProbeResult{
+		DurationSeconds: parseFFmpegDuration(output),
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "Video:") {
+			continue
+		}
+		videoLine := strings.TrimSpace(line)
+		if codecName := parseCodecNameFromFFmpegLine(videoLine, "Video:"); codecName != "" {
+			result.CodecName = stringPointer(codecName)
+		}
+		if width, height := parseFFmpegDimensions(videoLine); width != nil && height != nil {
+			result.Width = width
+			result.Height = height
+		}
+		break
+	}
+
+	if result.DurationSeconds == nil && result.CodecName == nil && result.Width == nil && result.Height == nil {
+		return videoProbeResult{}, fmt.Errorf("ffmpeg did not return usable video metadata")
+	}
+
+	return result, nil
+}
+
+func probeAudioWithFFmpeg(ctx context.Context, ffmpegPath, localPath string) (audioProbeResult, error) {
+	output, err := readFFmpegProbeOutput(ctx, ffmpegPath, localPath)
+	if err != nil {
+		return audioProbeResult{}, err
+	}
+
+	result := audioProbeResult{
+		DurationSeconds: parseFFmpegDuration(output),
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "Audio:") {
+			continue
+		}
+		audioLine := strings.TrimSpace(line)
+		if codecName := parseCodecNameFromFFmpegLine(audioLine, "Audio:"); codecName != "" {
+			result.CodecName = stringPointer(codecName)
+		}
+		if sampleRate := parseFFmpegSampleRate(audioLine); sampleRate != nil {
+			result.SampleRateHz = sampleRate
+		}
+		if channelCount := parseFFmpegChannelCount(audioLine); channelCount != nil {
+			result.ChannelCount = channelCount
+		}
+		break
+	}
+
+	if result.DurationSeconds == nil && result.CodecName == nil && result.SampleRateHz == nil && result.ChannelCount == nil {
+		return audioProbeResult{}, fmt.Errorf("ffmpeg did not return usable audio metadata")
+	}
+
+	return result, nil
+}
+
+func readFFmpegProbeOutput(ctx context.Context, ffmpegPath, localPath string) (string, error) {
+	command := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-i", localPath)
+	output, err := command.CombinedOutput()
+	if len(output) == 0 {
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("ffmpeg returned empty probe output")
+	}
+
+	return string(output), nil
+}
+
+func parseFFmpegDuration(output string) *float64 {
+	match := ffmpegDurationPattern.FindStringSubmatch(output)
+	if len(match) != 4 {
+		return nil
+	}
+
+	hours, err := strconv.Atoi(match[1])
+	if err != nil {
+		return nil
+	}
+	minutes, err := strconv.Atoi(match[2])
+	if err != nil {
+		return nil
+	}
+	seconds, err := strconv.ParseFloat(match[3], 64)
+	if err != nil {
+		return nil
+	}
+
+	duration := float64(hours*3600+minutes*60) + seconds
+	return &duration
+}
+
+func parseCodecNameFromFFmpegLine(line, marker string) string {
+	parts := strings.SplitN(line, marker, 2)
+	if len(parts) != 2 {
+		return ""
+	}
+
+	codecField := strings.TrimSpace(strings.SplitN(parts[1], ",", 2)[0])
+	codecField = strings.TrimSpace(strings.SplitN(codecField, " ", 2)[0])
+	codecField = strings.TrimSpace(strings.SplitN(codecField, "(", 2)[0])
+	return strings.ToLower(codecField)
+}
+
+func parseFFmpegDimensions(line string) (*int, *int) {
+	match := ffmpegDimensionPattern.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return nil, nil
+	}
+
+	width, err := strconv.Atoi(match[1])
+	if err != nil {
+		return nil, nil
+	}
+	height, err := strconv.Atoi(match[2])
+	if err != nil {
+		return nil, nil
+	}
+
+	return &width, &height
+}
+
+func parseFFmpegSampleRate(line string) *int {
+	match := ffmpegSampleRatePattern.FindStringSubmatch(line)
+	if len(match) != 2 {
+		return nil
+	}
+
+	sampleRate, err := strconv.Atoi(match[1])
+	if err != nil {
+		return nil
+	}
+
+	return &sampleRate
+}
+
+func parseFFmpegChannelCount(line string) *int {
+	match := ffmpegChannelCountPattern.FindStringSubmatch(line)
+	if len(match) == 2 {
+		channelCount, err := strconv.Atoi(match[1])
+		if err == nil && channelCount > 0 {
+			return &channelCount
+		}
+	}
+
+	lowered := strings.ToLower(line)
+	switch {
+	case strings.Contains(lowered, "7.1"):
+		return intPointer(8)
+	case strings.Contains(lowered, "6.1"):
+		return intPointer(7)
+	case strings.Contains(lowered, "5.1"):
+		return intPointer(6)
+	case strings.Contains(lowered, "4.1"):
+		return intPointer(5)
+	case strings.Contains(lowered, "4.0"):
+		return intPointer(4)
+	case strings.Contains(lowered, "3.1"):
+		return intPointer(4)
+	case strings.Contains(lowered, "3.0"):
+		return intPointer(3)
+	case strings.Contains(lowered, "2.1"):
+		return intPointer(3)
+	case strings.Contains(lowered, "stereo"):
+		return intPointer(2)
+	case strings.Contains(lowered, "mono"):
+		return intPointer(1)
+	default:
+		return nil
+	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func createThumbnail(source image.Image, maxWidth, maxHeight int) (image.Image, int, int) {

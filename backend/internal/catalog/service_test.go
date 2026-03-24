@@ -3,6 +3,7 @@ package catalog
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -104,21 +105,22 @@ func TestFullScanAndRescanEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list assets after rescan: %v", err)
 	}
-	if len(assetsAfterRescan) != 3 {
-		t.Fatalf("expected 3 assets after rescan, got %d", len(assetsAfterRescan))
+	if len(assetsAfterRescan) != 2 {
+		t.Fatalf("expected 2 visible assets after rescan, got %d", len(assetsAfterRescan))
 	}
 
-	var missingAssetFound bool
 	for _, asset := range assetsAfterRescan {
 		if asset.LogicalPathKey == "audio/meeting.wav" {
-			missingAssetFound = true
-			if asset.AssetStatus != "missing" {
-				t.Fatalf("expected removed asset status missing, got %s", asset.AssetStatus)
-			}
+			t.Fatal("expected deleted assets to be hidden from the default asset list")
 		}
 	}
-	if !missingAssetFound {
-		t.Fatal("expected removed asset to remain in catalog with missing status")
+
+	missingAsset, err := dataStore.GetAssetByLogicalPathKey(context.Background(), "audio/meeting.wav")
+	if err != nil {
+		t.Fatalf("load removed asset by logical path key: %v", err)
+	}
+	if missingAsset.AssetStatus != string(AssetStatusDeleted) {
+		t.Fatalf("expected removed asset status deleted, got %s", missingAsset.AssetStatus)
 	}
 
 	tasks, err := service.ListTasks(context.Background(), 10, 0)
@@ -310,6 +312,384 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	}
 }
 
+func TestListAssetsAddsSyntheticMissingReplicasForManagedEndpointsWithoutReplicaRows(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	endpoints := []store.StorageEndpoint{
+		{
+			ID:                 "endpoint-local",
+			Name:               "Local Media",
+			EndpointType:       string(connectors.EndpointTypeLocal),
+			RootPath:           `D:\Media`,
+			RoleMode:           "MANAGED",
+			IdentitySignature:  "local-media",
+			AvailabilityStatus: "AVAILABLE",
+			ConnectionConfig:   `{"rootPath":"D:\\Media"}`,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		{
+			ID:                 "endpoint-qnap",
+			Name:               "QNAP SMB",
+			EndpointType:       string(connectors.EndpointTypeQNAP),
+			RootPath:           `\\qnap\share\Media`,
+			RoleMode:           "MANAGED",
+			IdentitySignature:  "qnap-media",
+			AvailabilityStatus: "AVAILABLE",
+			ConnectionConfig:   `{"sharePath":"\\\\qnap\\share\\Media"}`,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		{
+			ID:                 "endpoint-cloud",
+			Name:               "115 Cloud",
+			EndpointType:       string(connectors.EndpointTypeCloud115),
+			RootPath:           "0",
+			RoleMode:           "MANAGED",
+			IdentitySignature:  "cloud-media",
+			AvailabilityStatus: "AVAILABLE",
+			ConnectionConfig:   `{"rootId":"0","accessToken":"token","appType":"windows"}`,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+			t.Fatalf("create storage endpoint %s: %v", endpoint.ID, err)
+		}
+	}
+
+	asset := store.Asset{
+		ID:               "asset-1",
+		LogicalPathKey:   "projects/clip.mp4",
+		DisplayName:      "clip.mp4",
+		MediaType:        "video",
+		AssetStatus:      string(AssetStatusReady),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		PrimaryTimestamp: &now,
+	}
+	if err := dataStore.CreateAsset(ctx, asset); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	replica := store.Replica{
+		ID:            "replica-cloud",
+		AssetID:       asset.ID,
+		EndpointID:    "endpoint-cloud",
+		PhysicalPath:  "115://0/projects/clip.mp4",
+		ReplicaStatus: string(ReplicaStatusActive),
+		ExistsFlag:    true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := dataStore.CreateReplica(ctx, replica); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	service := NewService(dataStore, (&fakeConnectorFactory{
+		connectorsByEndpoint: map[string]*fakeConnector{
+			"endpoint-cloud": {
+				descriptor: connectors.Descriptor{
+					Name:     "115 Cloud",
+					Type:     connectors.EndpointTypeCloud115,
+					RootPath: "0",
+					Capabilities: connectors.Capabilities{
+						CanReadStream: true,
+					},
+				},
+			},
+		},
+	}).Build)
+
+	assets, err := service.ListAssets(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list assets: %v", err)
+	}
+	if len(assets) != 1 {
+		t.Fatalf("expected 1 asset, got %d", len(assets))
+	}
+
+	record := assets[0]
+	if record.AvailableReplicaCount != 1 {
+		t.Fatalf("expected 1 available replica, got %d", record.AvailableReplicaCount)
+	}
+	if record.MissingReplicaCount != 2 {
+		t.Fatalf("expected 2 missing replicas, got %d", record.MissingReplicaCount)
+	}
+	if len(record.Replicas) != 3 {
+		t.Fatalf("expected 3 replica records including placeholders, got %d", len(record.Replicas))
+	}
+
+	missingByEndpoint := make(map[string]bool)
+	for _, candidate := range record.Replicas {
+		if candidate.ExistsFlag {
+			continue
+		}
+		missingByEndpoint[candidate.EndpointID] = true
+	}
+
+	if !missingByEndpoint["endpoint-local"] {
+		t.Fatal("expected local endpoint to be represented as missing")
+	}
+	if !missingByEndpoint["endpoint-qnap"] {
+		t.Fatal("expected qnap endpoint to be represented as missing")
+	}
+}
+
+func TestUpdateEndpointPersistsNoteAndConfigChanges(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+	endpoint := store.StorageEndpoint{
+		ID:                 "endpoint-local",
+		Name:               "Local Media",
+		Note:               "old-note",
+		EndpointType:       string(connectors.EndpointTypeLocal),
+		RootPath:           `D:\Media`,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "local-media",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"rootPath":"D:\\Media"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+		t.Fatalf("create storage endpoint: %v", err)
+	}
+
+	service := NewService(dataStore, func(endpoint store.StorageEndpoint) (connectors.Connector, error) {
+		return &fakeConnector{
+			descriptor: connectors.Descriptor{
+				Name:     endpoint.Name,
+				Type:     connectors.EndpointTypeLocal,
+				RootPath: endpoint.RootPath,
+			},
+		}, nil
+	})
+
+	record, err := service.UpdateEndpoint(ctx, endpoint.ID, UpdateEndpointRequest{
+		Name:               "Archive SSD",
+		Note:               "cold-storage",
+		EndpointType:       "LOCAL",
+		RootPath:           `E:\Archive`,
+		RoleMode:           "MANAGED",
+		AvailabilityStatus: "DISABLED",
+		ConnectionConfig:   json.RawMessage(`{"rootPath":"E:\\Archive"}`),
+	})
+	if err != nil {
+		t.Fatalf("update endpoint: %v", err)
+	}
+
+	if record.Name != "Archive SSD" {
+		t.Fatalf("expected updated endpoint name, got %s", record.Name)
+	}
+	if record.Note != "cold-storage" {
+		t.Fatalf("expected updated endpoint note, got %s", record.Note)
+	}
+	if record.RootPath != `E:\Archive` {
+		t.Fatalf("expected updated root path, got %s", record.RootPath)
+	}
+	if record.AvailabilityStatus != "DISABLED" {
+		t.Fatalf("expected updated availability status, got %s", record.AvailabilityStatus)
+	}
+
+	storedEndpoint, err := dataStore.GetStorageEndpointByID(ctx, endpoint.ID)
+	if err != nil {
+		t.Fatalf("load updated endpoint: %v", err)
+	}
+	if storedEndpoint.Note != "cold-storage" {
+		t.Fatalf("expected stored note to be updated, got %s", storedEndpoint.Note)
+	}
+	if storedEndpoint.RootPath != `E:\Archive` {
+		t.Fatalf("expected stored root path to be updated, got %s", storedEndpoint.RootPath)
+	}
+}
+
+func TestDeleteEndpointRemovesReplicaRecordsAndUpdatesImportRules(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	localEndpoint := store.StorageEndpoint{
+		ID:                 "endpoint-local",
+		Name:               "Local Media",
+		EndpointType:       string(connectors.EndpointTypeLocal),
+		RootPath:           `D:\Media`,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "local-media",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"rootPath":"D:\\Media"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	qnapEndpoint := store.StorageEndpoint{
+		ID:                 "endpoint-qnap",
+		Name:               "QNAP SMB",
+		EndpointType:       string(connectors.EndpointTypeQNAP),
+		RootPath:           `\\qnap\share\Media`,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "qnap-media",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"sharePath":"\\\\qnap\\share\\Media"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	for _, endpoint := range []store.StorageEndpoint{localEndpoint, qnapEndpoint} {
+		if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+			t.Fatalf("create storage endpoint %s: %v", endpoint.ID, err)
+		}
+	}
+
+	asset := store.Asset{
+		ID:               "asset-1",
+		LogicalPathKey:   "projects/clip.mp4",
+		DisplayName:      "clip.mp4",
+		MediaType:        "video",
+		AssetStatus:      string(AssetStatusReady),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		PrimaryTimestamp: &now,
+	}
+	if err := dataStore.CreateAsset(ctx, asset); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	for _, replica := range []store.Replica{
+		{
+			ID:            "replica-local",
+			AssetID:       asset.ID,
+			EndpointID:    localEndpoint.ID,
+			PhysicalPath:  `D:\Media\Projects\clip.mp4`,
+			ReplicaStatus: string(ReplicaStatusActive),
+			ExistsFlag:    true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "replica-qnap",
+			AssetID:       asset.ID,
+			EndpointID:    qnapEndpoint.ID,
+			PhysicalPath:  `\\qnap\share\Media\Projects\clip.mp4`,
+			ReplicaStatus: string(ReplicaStatusActive),
+			ExistsFlag:    true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := dataStore.CreateReplica(ctx, replica); err != nil {
+			t.Fatalf("create replica %s: %v", replica.ID, err)
+		}
+	}
+
+	targetEndpointIDs, err := json.Marshal([]string{localEndpoint.ID, qnapEndpoint.ID})
+	if err != nil {
+		t.Fatalf("marshal import rule targets: %v", err)
+	}
+	if err := dataStore.ReplaceImportRules(ctx, []store.ImportRule{
+		{
+			ID:                "rule-1",
+			RuleType:          "media_type",
+			MatchValue:        "video",
+			TargetEndpointIDs: string(targetEndpointIDs),
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	}); err != nil {
+		t.Fatalf("create import rule: %v", err)
+	}
+
+	service := NewService(dataStore, func(endpoint store.StorageEndpoint) (connectors.Connector, error) {
+		return &fakeConnector{
+			descriptor: connectors.Descriptor{
+				Name:     endpoint.Name,
+				RootPath: endpoint.RootPath,
+			},
+		}, nil
+	})
+
+	summary, err := service.DeleteEndpoint(ctx, localEndpoint.ID)
+	if err != nil {
+		t.Fatalf("delete endpoint: %v", err)
+	}
+
+	if summary.RemovedReplicaCount != 1 {
+		t.Fatalf("expected 1 removed replica, got %d", summary.RemovedReplicaCount)
+	}
+	if summary.UpdatedImportRuleCount != 1 {
+		t.Fatalf("expected 1 updated import rule, got %d", summary.UpdatedImportRuleCount)
+	}
+
+	if _, err := dataStore.GetStorageEndpointByID(ctx, localEndpoint.ID); err == nil {
+		t.Fatal("expected deleted endpoint to be removed from storage_endpoints")
+	}
+
+	replicas, err := dataStore.ListReplicasByAssetID(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("list remaining replicas: %v", err)
+	}
+	if len(replicas) != 1 || replicas[0].EndpointID != qnapEndpoint.ID {
+		t.Fatalf("expected only qnap replica to remain, got %+v", replicas)
+	}
+
+	storedAsset, err := dataStore.GetAssetByID(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("load stored asset: %v", err)
+	}
+	if storedAsset.AssetStatus != string(AssetStatusReady) {
+		t.Fatalf("expected asset to remain ready with one surviving replica, got %s", storedAsset.AssetStatus)
+	}
+
+	rules, err := dataStore.ListImportRules(ctx)
+	if err != nil {
+		t.Fatalf("list import rules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 import rule to remain, got %d", len(rules))
+	}
+
+	var remainingTargets []string
+	if err := json.Unmarshal([]byte(rules[0].TargetEndpointIDs), &remainingTargets); err != nil {
+		t.Fatalf("decode remaining import rule targets: %v", err)
+	}
+	if len(remainingTargets) != 1 || remainingTargets[0] != qnapEndpoint.ID {
+		t.Fatalf("expected qnap to remain as the only import target, got %#v", remainingTargets)
+	}
+}
+
 type fakeConnectorFactory struct {
 	connectorsByEndpoint map[string]*fakeConnector
 }
@@ -323,8 +703,10 @@ func (factory *fakeConnectorFactory) Build(endpoint store.StorageEndpoint) (conn
 }
 
 type fakeConnector struct {
-	descriptor connectors.Descriptor
-	listing    map[string][]connectors.FileEntry
+	descriptor   connectors.Descriptor
+	listing      map[string][]connectors.FileEntry
+	deleteErr    error
+	deletedPaths []string
 }
 
 func (connector *fakeConnector) Descriptor() connectors.Descriptor {
@@ -355,8 +737,9 @@ func (connector *fakeConnector) CopyOut(context.Context, string, io.Writer) erro
 	return nil
 }
 
-func (connector *fakeConnector) DeleteEntry(context.Context, string) error {
-	return nil
+func (connector *fakeConnector) DeleteEntry(_ context.Context, path string) error {
+	connector.deletedPaths = append(connector.deletedPaths, path)
+	return connector.deleteErr
 }
 
 func (connector *fakeConnector) RenameEntry(context.Context, string, string) (connectors.FileEntry, error) {

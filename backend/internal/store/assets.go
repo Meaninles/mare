@@ -57,7 +57,10 @@ func (store *Store) ListAssets(ctx context.Context, limit, offset int) ([]Asset,
 	rows, err := store.db.QueryContext(
 		ctx,
 		`SELECT id, logical_path_key, display_name, media_type, asset_status, primary_timestamp, primary_thumbnail_id, created_at, updated_at
-		 FROM assets ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		 FROM assets
+		 WHERE LOWER(COALESCE(asset_status, '')) <> 'deleted'
+		 ORDER BY created_at DESC
+		 LIMIT ? OFFSET ?`,
 		limit,
 		offset,
 	)

@@ -4,7 +4,7 @@ export function MareLogo({ className }: { className?: string }) {
   return (
     <div className={clsx("mare-logo", className)} aria-hidden="true">
       <svg viewBox="0 0 72 72" role="img">
-        <title>Mare logo</title>
+      <title>Mare 标志</title>
         <rect x="3" y="3" width="66" height="66" rx="20" className="mare-logo-surface" />
         <circle cx="53" cy="18" r="7" className="mare-logo-sun" />
         <path

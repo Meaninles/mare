@@ -10,8 +10,6 @@ from datetime import datetime, timezone
 from p115client import P115Client
 from p115client.tool.attr import normalize_attr_web
 from p115qrcode import qrcode_result, qrcode_status, qrcode_token, qrcode_url
-from p115oss import upload as oss_upload_file
-from p115oss import upload_url as oss_upload_url
 
 
 DEFAULT_APP_TYPE = "windows"
@@ -119,6 +117,17 @@ def ensure_state(resp: dict):
     if resp.get("state") is True:
         return resp
     raise OSError(str(resp))
+
+
+def should_retry_upload_with_multipart(resp: dict) -> bool:
+    if not isinstance(resp, dict):
+        return False
+    if resp.get("state") is True:
+        return False
+
+    message = str(resp.get("message") or "")
+    code = str(resp.get("code") or "")
+    return code == "10002" or "校验文件失败" in message
 
 
 def as_cookie_string(cookie_payload) -> str:
@@ -272,8 +281,67 @@ def resolve_download_app(app_type: str) -> str:
     return app_type
 
 
+def extract_download_url(value) -> str:
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate:
+            return candidate
+
+    if isinstance(value, dict):
+        for key in ("url", "download_url", "href"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+
+    for attr_name in ("url", "download_url", "href"):
+        candidate = getattr(value, attr_name, None)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    geturl = getattr(value, "geturl", None)
+    if callable(geturl):
+        candidate = geturl()
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    raise ValueError(f"unsupported 115 download url payload: {value!r}")
+
+
+def extract_download_headers(value) -> dict[str, str]:
+    headers = {}
+
+    if isinstance(value, dict):
+        candidate = value.get("headers")
+        if isinstance(candidate, dict):
+            headers.update({
+                str(key): str(header_value)
+                for key, header_value in candidate.items()
+                if header_value is not None
+            })
+        return headers
+
+    candidate = getattr(value, "headers", None)
+    if isinstance(candidate, dict):
+        headers.update({
+            str(key): str(header_value)
+            for key, header_value in candidate.items()
+            if header_value is not None
+        })
+
+    candidate_dict = getattr(value, "__dict__", None)
+    if isinstance(candidate_dict, dict):
+        candidate_headers = candidate_dict.get("headers")
+        if isinstance(candidate_headers, dict):
+            headers.update({
+                str(key): str(header_value)
+                for key, header_value in candidate_headers.items()
+                if header_value is not None
+            })
+
+    return headers
+
+
 def do_copy_in(client: P115Client, root_id: int, app_type: str, request: dict) -> dict:
-    runtime_app_type = resolve_runtime_app_type(app_type)
     destination_path = normalize_rel_path(request.get("destinationPath", ""))
     if not destination_path:
         raise ValueError("destinationPath is required")
@@ -294,28 +362,20 @@ def do_copy_in(client: P115Client, root_id: int, app_type: str, request: dict) -
         pass
 
     parent_id = resolve_dir_id(client, root_id, parent_path)
-    upload_key_resp = client.upload_key(app=runtime_app_type)
-    ensure_state(upload_key_resp)
-    user_key_data = upload_key_resp.get("data") or {}
-    user_key = user_key_data.get("userkey") or user_key_data.get("user_key")
-    if not user_key:
-        raise ValueError("115 upload_key returned no userkey")
-    upload_url_resp = oss_upload_url()
-    upload_endpoint = (upload_url_resp or {}).get("endpoint") or "https://oss-cn-shenzhen.aliyuncs.com"
-    if upload_endpoint.startswith("http://"):
-        upload_endpoint = "https://" + upload_endpoint[len("http://") :]
-
-    with open(source_file, "rb") as reader:
-        upload_payload = reader.read()
-
-    resp = oss_upload_file(
-        file=upload_payload,
+    resp = client.upload_file(
+        file=source_file,
         pid=parent_id,
         filename=file_name,
-        user_id=client.user_id,
-        user_key=user_key,
-        endpoint=upload_endpoint,
+        endpoint="https://oss-cn-shenzhen.aliyuncs.com",
     )
+    if should_retry_upload_with_multipart(resp):
+        resp = client.upload_file(
+            file=source_file,
+            pid=parent_id,
+            filename=file_name,
+            partsize=10 * 1024 * 1024,
+            endpoint="https://oss-cn-shenzhen.aliyuncs.com",
+        )
     ensure_state(resp)
     return resolve_entry(client, root_id, destination_path)
 
@@ -330,8 +390,15 @@ def do_copy_out(client: P115Client, root_id: int, app_type: str, request: dict) 
     entry = resolve_entry(client, root_id, source_path)
     if entry.get("isDir"):
         raise IsADirectoryError(source_path)
-    url = client.download_url(entry["pickcode"], app=resolve_download_app(app_type))
-    with urllib.request.urlopen(url["url"]) as response, open(download_file, "wb") as output:
+    url_payload = client.download_url(entry["pickcode"], app=resolve_download_app(app_type))
+    download_url = extract_download_url(url_payload)
+    request_headers = extract_download_headers(url_payload)
+    if not any(str(key).lower() == "cookie" for key in request_headers):
+        request_headers["Cookie"] = str(client.cookies_str)
+    if not any(str(key).lower() == "user-agent" for key in request_headers):
+        request_headers["User-Agent"] = "Mozilla/5.0"
+    http_request = urllib.request.Request(download_url, headers=request_headers)
+    with urllib.request.urlopen(http_request) as response, open(download_file, "wb") as output:
         output.write(response.read())
     return {"downloadFile": download_file}
 

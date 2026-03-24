@@ -82,6 +82,21 @@ func TestLocalConnectorListsMediaEntries(t *testing.T) {
 	if movedEntry.RelativePath != "nested/folder/moved.jpg" {
 		t.Fatalf("unexpected moved path: %s", movedEntry.RelativePath)
 	}
+
+	absoluteEntry, err := connector.StatEntry(context.Background(), filepath.Join(root, "nested", "folder", "moved.jpg"))
+	if err != nil {
+		t.Fatalf("stat entry with absolute path: %v", err)
+	}
+	if absoluteEntry.Name != "moved.jpg" {
+		t.Fatalf("expected moved.jpg via absolute lookup, got %s", absoluteEntry.Name)
+	}
+
+	if err := connector.DeleteEntry(context.Background(), filepath.Join(root, "nested", "folder", "moved.jpg")); err != nil {
+		t.Fatalf("delete entry with absolute path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "nested", "folder", "moved.jpg")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected deleted file to be removed, got %v", err)
+	}
 }
 
 func TestQNAPConnectorReportsMissingShare(t *testing.T) {
@@ -116,7 +131,8 @@ func TestCloud115ConnectorUsesInjectedClient(t *testing.T) {
 		entries: []FileEntry{
 			{Name: "meeting.wav", Path: "/meeting.wav", RelativePath: "meeting.wav", Kind: EntryKindFile, MediaType: MediaTypeAudio},
 		},
-		entry: FileEntry{Name: "meeting.wav", Path: "/meeting.wav", RelativePath: "meeting.wav", Kind: EntryKindFile, MediaType: MediaTypeAudio},
+		entry:       FileEntry{Name: "meeting.wav", Path: "/meeting.wav", RelativePath: "meeting.wav", Kind: EntryKindFile, MediaType: MediaTypeAudio},
+		copyOutData: []byte("audio-stream"),
 	}
 
 	connector, err := NewCloud115Connector(Cloud115Config{
@@ -150,6 +166,20 @@ func TestCloud115ConnectorUsesInjectedClient(t *testing.T) {
 	}
 	if entry.MediaType != MediaTypeAudio {
 		t.Fatalf("expected audio media type, got %s", entry.MediaType)
+	}
+
+	reader, err := connector.ReadStream(context.Background(), "/meeting.wav")
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read all stream data: %v", err)
+	}
+	if string(data) != "audio-stream" {
+		t.Fatalf("unexpected cloud115 stream content: %s", string(data))
 	}
 }
 
@@ -220,8 +250,10 @@ func TestRemovableConnectorIdentityStable(t *testing.T) {
 }
 
 type mock115Client struct {
-	entries []FileEntry
-	entry   FileEntry
+	entries      []FileEntry
+	entry        FileEntry
+	copyOutData  []byte
+	copyOutError error
 }
 
 func (client *mock115Client) HealthCheck(context.Context, string) error {
@@ -240,7 +272,15 @@ func (client *mock115Client) CopyIn(context.Context, string, string, io.Reader) 
 	return client.entry, nil
 }
 
-func (client *mock115Client) CopyOut(context.Context, string, string, io.Writer) error {
+func (client *mock115Client) CopyOut(_ context.Context, _ string, _ string, writer io.Writer) error {
+	if client.copyOutError != nil {
+		return client.copyOutError
+	}
+	if len(client.copyOutData) > 0 {
+		if _, err := writer.Write(client.copyOutData); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
