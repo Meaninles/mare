@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ArchiveRestore, Download, LoaderCircle, MoonStar, RefreshCcw, ServerCog, SunMedium, Upload, Wrench } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTheme, type ThemeMode } from "../components/ThemeProvider";
+import { useLibraryContext } from "../context/LibraryContext";
 import { useAppBootstrap } from "../hooks/useAppBootstrap";
 import { useCatalogEndpoints } from "../hooks/useCatalog";
 import { useExportSettingsBackup, useImportSettingsBackup } from "../hooks/useSettings";
@@ -55,6 +56,7 @@ const developerTools = [
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
+  const { currentLibrary, isLibraryOpen } = useLibraryContext();
   const bootstrapQuery = useAppBootstrap();
   const endpointsQuery = useCatalogEndpoints();
   const exportMutation = useExportSettingsBackup();
@@ -77,6 +79,11 @@ export function SettingsPage() {
   const bootstrapData = bootstrapQuery.data;
 
   async function handleExport() {
+    if (!isLibraryOpen) {
+      setError("请先从 Welcome 页面打开一个资产库，再执行库级备份导出。");
+      return;
+    }
+
     setNotice(null);
     setError(null);
 
@@ -98,6 +105,11 @@ export function SettingsPage() {
   }
 
   async function handleImport() {
+    if (!isLibraryOpen) {
+      setError("请先打开一个资产库，再执行库级备份导入。");
+      return;
+    }
+
     if (!selectedBundle) {
       setError("请先选择一个备份文件再导入。");
       return;
@@ -138,6 +150,11 @@ export function SettingsPage() {
   }
 
   async function runValidation(scope: "full" | string) {
+    if (!isLibraryOpen) {
+      setError("当前没有已打开的资产库，无法执行库内校验。");
+      return;
+    }
+
     setBusyValidationKey(scope);
     setValidationMessage(scope === "full" ? "正在对所有端点执行导入后的校验..." : null);
     setError(null);
@@ -219,6 +236,27 @@ export function SettingsPage() {
       {notice ? <p className="inline-note">{notice}</p> : null}
       {error ? <p className="error-copy">{error}</p> : null}
       {validationMessage ? <p className="inline-note">{validationMessage}</p> : null}
+      {!isLibraryOpen ? (
+        <article className="detail-card">
+          <div className="settings-note-card">
+            <ServerCog size={18} />
+            <div>
+              <strong>当前没有已打开的资产库</strong>
+              <p>应用级主题仍可在这里调整；库级备份、导入和校验，需要先在 Welcome 页面打开资产库。</p>
+            </div>
+          </div>
+        </article>
+      ) : currentLibrary ? (
+        <article className="detail-card">
+          <div className="settings-note-card">
+            <ServerCog size={18} />
+            <div>
+              <strong>当前资产库：{currentLibrary.name}</strong>
+              <p>库级备份、导入和节点校验都会作用于这个资产库。</p>
+            </div>
+          </div>
+        </article>
+      ) : null}
 
       <div className="page-grid settings-layout">
         <article className="detail-card">
@@ -307,7 +345,7 @@ export function SettingsPage() {
                   type="button"
                   className="primary-button"
                   onClick={() => void handleExport()}
-                  disabled={exportMutation.isPending}
+                  disabled={exportMutation.isPending || !isLibraryOpen}
                 >
                   {exportMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}
                   导出备份
@@ -346,11 +384,12 @@ export function SettingsPage() {
                 type="file"
                 accept="application/json,.json"
                 onChange={handleFileSelection}
+                disabled={!isLibraryOpen}
               />
 
               <label className="field">
                 <span>导入模式</span>
-                <select value={importMode} onChange={(event) => setImportMode(event.target.value as BackupImportMode)}>
+                <select value={importMode} onChange={(event) => setImportMode(event.target.value as BackupImportMode)} disabled={!isLibraryOpen}>
                   <option value="config_only">仅配置</option>
                   <option value="config_and_catalog" disabled={!selectedBundle?.catalog}>
                     配置 + 目录快照
@@ -372,7 +411,7 @@ export function SettingsPage() {
                   type="button"
                   className="primary-button"
                   onClick={() => void handleImport()}
-                  disabled={importMutation.isPending || !selectedBundle}
+                  disabled={importMutation.isPending || !selectedBundle || !isLibraryOpen}
                 >
                   {importMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <ArchiveRestore size={16} />}
                   导入备份
@@ -434,7 +473,7 @@ export function SettingsPage() {
             type="button"
             className="ghost-button"
             onClick={() => void runValidation("full")}
-            disabled={busyValidationKey === "full" || endpoints.length === 0}
+            disabled={busyValidationKey === "full" || endpoints.length === 0 || !isLibraryOpen}
           >
             {busyValidationKey === "full" ? <LoaderCircle size={16} className="spin" /> : <RefreshCcw size={16} />}
             全部校验
@@ -499,7 +538,7 @@ export function SettingsPage() {
                     type="button"
                     className="ghost-button"
                     onClick={() => void runValidation(endpoint.id)}
-                    disabled={busyValidationKey === endpoint.id}
+                    disabled={busyValidationKey === endpoint.id || !isLibraryOpen}
                   >
                     {busyValidationKey === endpoint.id ? <LoaderCircle size={16} className="spin" /> : <RefreshCcw size={16} />}
                     校验

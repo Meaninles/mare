@@ -160,6 +160,8 @@ func (service *Service) ImportSettingsBackup(ctx context.Context, request Import
 			IdentitySignature:  endpointRecord.IdentitySignature,
 			AvailabilityStatus: endpointRecord.AvailabilityStatus,
 			ConnectionConfig:   string(endpointRecord.ConnectionConfig),
+			CredentialRef:      endpointRecord.CredentialRef,
+			CredentialHint:     endpointRecord.CredentialHint,
 			CreatedAt:          endpointRecord.CreatedAt,
 			UpdatedAt:          endpointRecord.UpdatedAt,
 		}

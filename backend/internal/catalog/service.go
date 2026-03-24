@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"mam/backend/internal/connectors"
+	"mam/backend/internal/credentials"
 	"mam/backend/internal/store"
 )
 
@@ -36,6 +37,7 @@ type Service struct {
 	connectorFactory     func(endpoint store.StorageEndpoint) (connectors.Connector, error)
 	removableEnumerator  connectors.DeviceEnumerator
 	mediaConfig          MediaConfig
+	credentialVault      *credentials.Vault
 	mediaJobKeys         sync.Map
 	deviceRoleSelections sync.Map
 }
@@ -43,22 +45,34 @@ type Service struct {
 func NewService(
 	dataStore *store.Store,
 	factory func(endpoint store.StorageEndpoint) (connectors.Connector, error),
-	mediaConfigs ...MediaConfig,
+	options ...ServiceOption,
 ) *Service {
 	if factory == nil {
 		factory = defaultConnectorFactory
 	}
 
-	mediaConfig := MediaConfig{}
-	if len(mediaConfigs) > 0 {
-		mediaConfig = mediaConfigs[0]
+	resolvedOptions := serviceOptions{}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		option.apply(&resolvedOptions)
+	}
+
+	credentialVault := resolvedOptions.credentialVault
+	if credentialVault == nil {
+		vault, err := credentials.NewVault("")
+		if err == nil {
+			credentialVault = vault
+		}
 	}
 
 	return &Service{
 		store:               dataStore,
 		connectorFactory:    factory,
 		removableEnumerator: connectors.NewWindowsUSBEnumerator(),
-		mediaConfig:         normalizeMediaConfig(mediaConfig),
+		mediaConfig:         normalizeMediaConfig(resolvedOptions.mediaConfig),
+		credentialVault:     credentialVault,
 	}
 }
 
@@ -68,7 +82,7 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 		return EndpointRecord{}, errors.New("endpoint type is required")
 	}
 
-	connectionConfig, err := normalizeConnectionConfig(endpointType, request.ConnectionConfig)
+	connectionConfig, extractedCredential, err := normalizeConnectionConfig(endpointType, request.ConnectionConfig)
 	if err != nil {
 		return EndpointRecord{}, err
 	}
@@ -85,7 +99,10 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 
 	now := time.Now().UTC()
 	connectionConfigText := string(connectionConfig)
-	roleMode := defaultString(strings.TrimSpace(request.RoleMode), defaultRoleMode)
+	roleMode := normalizeEndpointRoleMode(request.RoleMode)
+	if roleMode == "" {
+		roleMode = defaultRoleMode
+	}
 	availabilityStatus := defaultString(strings.TrimSpace(request.AvailabilityStatus), defaultAvailabilityStatus)
 
 	allEndpoints, err := service.store.ListStorageEndpoints(ctx)
@@ -101,6 +118,24 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 		}
 	}
 
+	existingCredentialRef := ""
+	existingCredentialHint := ""
+	if existing != nil {
+		existingCredentialRef = existing.CredentialRef
+		existingCredentialHint = existing.CredentialHint
+	}
+
+	credentialRef, credentialHint, err := service.resolveEndpointCredential(
+		endpointType,
+		existingCredentialRef,
+		existingCredentialHint,
+		request.CredentialRef,
+		extractedCredential,
+	)
+	if err != nil {
+		return EndpointRecord{}, err
+	}
+
 	endpoint := store.StorageEndpoint{
 		ID:                 uuid.NewString(),
 		Name:               defaultString(strings.TrimSpace(request.Name), defaultEndpointName(endpointType)),
@@ -111,6 +146,8 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 		IdentitySignature:  identitySignature,
 		AvailabilityStatus: availabilityStatus,
 		ConnectionConfig:   connectionConfigText,
+		CredentialRef:      credentialRef,
+		CredentialHint:     credentialHint,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -120,7 +157,7 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 		endpoint.CreatedAt = existing.CreatedAt
 	}
 
-	if _, factoryErr := service.connectorFactory(endpoint); factoryErr != nil {
+	if _, factoryErr := service.buildConnector(endpoint); factoryErr != nil {
 		return EndpointRecord{}, factoryErr
 	}
 
@@ -168,6 +205,15 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 		return nil, err
 	}
 
+	allEndpoints, err := service.store.ListStorageEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allEndpointLookup := make(map[string]store.StorageEndpoint, len(allEndpoints))
+	for _, endpoint := range allEndpoints {
+		allEndpointLookup[endpoint.ID] = endpoint
+	}
+
 	records := make([]AssetRecord, 0, len(assets))
 	for _, asset := range assets {
 		replicas, replicaErr := service.store.ListReplicasByAssetID(ctx, asset.ID)
@@ -179,6 +225,8 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 			ctx,
 			replicas,
 			expectedEndpoints,
+			allEndpointLookup,
+			asset.LogicalPathKey,
 		)
 		if err != nil {
 			return nil, err
@@ -203,6 +251,8 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 		record := AssetRecord{
 			ID:                    asset.ID,
 			LogicalPathKey:        asset.LogicalPathKey,
+			CanonicalPath:         canonicalLogicalPath(asset.LogicalPathKey),
+			CanonicalDirectory:    canonicalDirectoryPath(asset.LogicalPathKey),
 			DisplayName:           asset.DisplayName,
 			MediaType:             asset.MediaType,
 			AssetStatus:           asset.AssetStatus,
@@ -229,7 +279,7 @@ func (service *Service) ListTasks(ctx context.Context, limit, offset int) ([]sto
 
 func (service *Service) FullScan(ctx context.Context) (FullScanSummary, error) {
 	startedAt := time.Now().UTC()
-	endpoints, err := service.store.ListEnabledStorageEndpoints(ctx)
+	endpoints, _, err := service.listManagedEnabledEndpoints(ctx)
 	if err != nil {
 		return FullScanSummary{}, err
 	}
@@ -258,6 +308,9 @@ func (service *Service) RescanEndpoint(ctx context.Context, endpointID string) (
 	if err != nil {
 		return EndpointScanSummary{}, err
 	}
+	if !isManagedEndpoint(endpoint) {
+		return EndpointScanSummary{}, fmt.Errorf("endpoint %q is not a managed storage node", endpoint.Name)
+	}
 
 	task, err := service.createScanTask(ctx, endpoint)
 	if err != nil {
@@ -285,7 +338,7 @@ func (service *Service) RescanEndpoint(ctx context.Context, endpointID string) (
 		return summary, err
 	}
 
-	connector, err := service.connectorFactory(endpoint)
+	connector, err := service.buildConnector(endpoint)
 	if err != nil {
 		return service.failTask(ctx, task, summary, err)
 	}
@@ -857,26 +910,28 @@ func normalizeEndpointType(value string) string {
 	}
 }
 
-func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.RawMessage, error) {
+func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.RawMessage, *endpointCredentialInput, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
-		return json.RawMessage(`{}`), nil
+		return json.RawMessage(`{}`), nil, nil
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, fmt.Errorf("invalid connection config: %w", err)
+		return nil, nil, fmt.Errorf("invalid connection config: %w", err)
 	}
+
+	extractedCredential := extractEndpointCredential(endpointType, payload)
 
 	normalized, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("normalize connection config: %w", err)
+		return nil, nil, fmt.Errorf("normalize connection config: %w", err)
 	}
 
 	switch endpointType {
 	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeRemovable):
-		return normalized, nil
+		return normalized, extractedCredential, nil
 	default:
-		return nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
+		return nil, nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
 	}
 }
 
@@ -973,6 +1028,9 @@ func toEndpointRecord(endpoint store.StorageEndpoint) EndpointRecord {
 		RoleMode:           endpoint.RoleMode,
 		IdentitySignature:  endpoint.IdentitySignature,
 		AvailabilityStatus: endpoint.AvailabilityStatus,
+		CredentialRef:      endpoint.CredentialRef,
+		CredentialHint:     endpoint.CredentialHint,
+		HasCredential:      strings.TrimSpace(endpoint.CredentialRef) != "",
 		ConnectionConfig:   json.RawMessage(endpoint.ConnectionConfig),
 		CreatedAt:          endpoint.CreatedAt,
 		UpdatedAt:          endpoint.UpdatedAt,

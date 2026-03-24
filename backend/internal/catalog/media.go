@@ -675,7 +675,7 @@ func (service *Service) selectReadableReplica(ctx context.Context, replicas []st
 			return nil, err
 		}
 
-		connector, err := service.connectorFactory(endpoint)
+		connector, err := service.buildConnector(endpoint)
 		if err != nil {
 			continue
 		}
@@ -725,7 +725,7 @@ func (service *Service) materializeReplicaToLocalFile(
 		}
 	}
 
-	connector, err := service.connectorFactory(endpoint)
+	connector, err := service.buildConnector(endpoint)
 	if err != nil {
 		return "", nil, err
 	}

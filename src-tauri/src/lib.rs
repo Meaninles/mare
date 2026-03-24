@@ -7,12 +7,17 @@ mod connectors;
 mod database;
 mod error;
 mod import;
+mod libraries;
 mod search;
 mod sync;
 mod tasks;
 
 use app_core::AppCore;
 use bootstrap::get_app_bootstrap;
+use libraries::{
+    clear_active_library, create_library_record, list_libraries, register_existing_library,
+    set_active_library,
+};
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
@@ -27,13 +32,21 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            let app_core = tauri::async_runtime::block_on(async move { AppCore::initialize(&handle).await })?;
+            let app_core =
+                tauri::async_runtime::block_on(async move { AppCore::initialize(&handle).await })?;
 
             let _ = app_core.pool();
             app.manage(app_core);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_app_bootstrap])
+        .invoke_handler(tauri::generate_handler![
+            get_app_bootstrap,
+            list_libraries,
+            create_library_record,
+            register_existing_library,
+            set_active_library,
+            clear_active_library
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

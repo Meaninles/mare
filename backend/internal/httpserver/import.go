@@ -13,7 +13,12 @@ func (server *Server) handleImportDevices(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	devices, err := server.catalog.ListImportDevices(r.Context())
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	devices, err := catalogService.ListImportDevices(r.Context())
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -34,6 +39,11 @@ func (server *Server) handleImportDeviceRoleSelection(w http.ResponseWriter, r *
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.SelectImportDeviceRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -43,7 +53,7 @@ func (server *Server) handleImportDeviceRoleSelection(w http.ResponseWriter, r *
 		return
 	}
 
-	result, err := server.catalog.SelectImportDeviceRole(r.Context(), request)
+	result, err := catalogService.SelectImportDeviceRole(r.Context(), request)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -64,6 +74,11 @@ func (server *Server) handleImportSourceBrowse(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.ImportSourceBrowseRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -73,7 +88,7 @@ func (server *Server) handleImportSourceBrowse(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	result, err := server.catalog.BrowseImportSource(r.Context(), request)
+	result, err := catalogService.BrowseImportSource(r.Context(), request)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -89,9 +104,14 @@ func (server *Server) handleImportSourceBrowse(w http.ResponseWriter, r *http.Re
 }
 
 func (server *Server) handleImportRules(w http.ResponseWriter, r *http.Request) {
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := server.catalog.ListImportRules(r.Context())
+		rules, err := catalogService.ListImportRules(r.Context())
 		if err != nil {
 			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -114,7 +134,7 @@ func (server *Server) handleImportRules(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		rules, err := server.catalog.SaveImportRules(r.Context(), request)
+		rules, err := catalogService.SaveImportRules(r.Context(), request)
 		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
 				"success": false,
@@ -138,6 +158,11 @@ func (server *Server) handleImportExecute(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.ExecuteImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -147,7 +172,7 @@ func (server *Server) handleImportExecute(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	summary, err := server.catalog.ExecuteImport(r.Context(), request)
+	summary, err := catalogService.ExecuteImport(r.Context(), request)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": err == nil,
 		"summary": summary,

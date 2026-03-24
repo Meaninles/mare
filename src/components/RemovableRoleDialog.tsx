@@ -73,7 +73,7 @@ export function RemovableRoleDialog() {
     setPendingIdentity(null);
 
     if (role === "import_source") {
-      navigate(`/import?device=${encodeURIComponent(result.device.identitySignature)}`);
+      navigate(`/ingest?device=${encodeURIComponent(result.device.identitySignature)}`);
       return;
     }
 

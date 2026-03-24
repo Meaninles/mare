@@ -10,8 +10,8 @@ func (store *Store) CreateStorageEndpoint(ctx context.Context, endpoint StorageE
 	_, err := store.db.ExecContext(
 		ctx,
 		`INSERT INTO storage_endpoints
-		(id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, credential_ref, credential_hint, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		endpoint.ID,
 		endpoint.Name,
 		endpoint.Note,
@@ -21,6 +21,8 @@ func (store *Store) CreateStorageEndpoint(ctx context.Context, endpoint StorageE
 		endpoint.IdentitySignature,
 		endpoint.AvailabilityStatus,
 		endpoint.ConnectionConfig,
+		endpoint.CredentialRef,
+		endpoint.CredentialHint,
 		endpoint.CreatedAt.UTC().Format(timeLayout),
 		endpoint.UpdatedAt.UTC().Format(timeLayout),
 	)
@@ -33,7 +35,7 @@ func (store *Store) CreateStorageEndpoint(ctx context.Context, endpoint StorageE
 func (store *Store) GetStorageEndpointByID(ctx context.Context, id string) (StorageEndpoint, error) {
 	row := store.db.QueryRowContext(
 		ctx,
-		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, credential_ref, credential_hint, created_at, updated_at
 		 FROM storage_endpoints WHERE id = ?`,
 		id,
 	)
@@ -43,7 +45,7 @@ func (store *Store) GetStorageEndpointByID(ctx context.Context, id string) (Stor
 func (store *Store) ListStorageEndpoints(ctx context.Context) ([]StorageEndpoint, error) {
 	rows, err := store.db.QueryContext(
 		ctx,
-		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, credential_ref, credential_hint, created_at, updated_at
 		 FROM storage_endpoints ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -66,7 +68,7 @@ func (store *Store) ListStorageEndpoints(ctx context.Context) ([]StorageEndpoint
 func (store *Store) ListEnabledStorageEndpoints(ctx context.Context) ([]StorageEndpoint, error) {
 	rows, err := store.db.QueryContext(
 		ctx,
-		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, created_at, updated_at
+		`SELECT id, name, note, endpoint_type, root_path, role_mode, identity_signature, availability_status, connection_config, credential_ref, credential_hint, created_at, updated_at
 		 FROM storage_endpoints
 		 WHERE UPPER(availability_status) != 'DISABLED'
 		 ORDER BY created_at DESC`,
@@ -92,7 +94,7 @@ func (store *Store) UpdateStorageEndpoint(ctx context.Context, endpoint StorageE
 	_, err := store.db.ExecContext(
 		ctx,
 		`UPDATE storage_endpoints
-		 SET name = ?, note = ?, endpoint_type = ?, root_path = ?, role_mode = ?, identity_signature = ?, availability_status = ?, connection_config = ?, updated_at = ?
+		 SET name = ?, note = ?, endpoint_type = ?, root_path = ?, role_mode = ?, identity_signature = ?, availability_status = ?, connection_config = ?, credential_ref = ?, credential_hint = ?, updated_at = ?
 		 WHERE id = ?`,
 		endpoint.Name,
 		endpoint.Note,
@@ -102,6 +104,8 @@ func (store *Store) UpdateStorageEndpoint(ctx context.Context, endpoint StorageE
 		endpoint.IdentitySignature,
 		endpoint.AvailabilityStatus,
 		endpoint.ConnectionConfig,
+		endpoint.CredentialRef,
+		endpoint.CredentialHint,
 		endpoint.UpdatedAt.UTC().Format(timeLayout),
 		endpoint.ID,
 	)
@@ -135,6 +139,8 @@ func scanStorageEndpoint(scanner rowScanner) (StorageEndpoint, error) {
 		&endpoint.IdentitySignature,
 		&endpoint.AvailabilityStatus,
 		&endpoint.ConnectionConfig,
+		&endpoint.CredentialRef,
+		&endpoint.CredentialHint,
 		&createdAtText,
 		&updatedAtText,
 	); err != nil {

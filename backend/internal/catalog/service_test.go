@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,11 +254,39 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	if len(assetsAfterFullScan) != 1 {
 		t.Fatalf("expected 1 merged asset after full scan, got %d", len(assetsAfterFullScan))
 	}
+	if assetsAfterFullScan[0].CanonicalPath != "projects/photo.jpg" {
+		t.Fatalf("expected canonical path projects/photo.jpg, got %s", assetsAfterFullScan[0].CanonicalPath)
+	}
+	if assetsAfterFullScan[0].CanonicalDirectory != "projects" {
+		t.Fatalf("expected canonical directory projects, got %s", assetsAfterFullScan[0].CanonicalDirectory)
+	}
 	if assetsAfterFullScan[0].AvailableReplicaCount != 3 {
 		t.Fatalf("expected 3 available replicas after full scan, got %d", assetsAfterFullScan[0].AvailableReplicaCount)
 	}
 	if assetsAfterFullScan[0].MissingReplicaCount != 0 {
 		t.Fatalf("expected 0 missing replicas after full scan, got %d", assetsAfterFullScan[0].MissingReplicaCount)
+	}
+	resolvedDirectories := make(map[string]string)
+	for _, replica := range assetsAfterFullScan[0].Replicas {
+		if replica.RelativePath != "projects/photo.jpg" {
+			t.Fatalf("expected replica relative path projects/photo.jpg, got %s", replica.RelativePath)
+		}
+		if replica.LogicalDirectory != "projects" {
+			t.Fatalf("expected replica logical directory projects, got %s", replica.LogicalDirectory)
+		}
+		if !replica.MatchesLogicalPath {
+			t.Fatalf("expected replica %s to match canonical logical path", replica.EndpointID)
+		}
+		resolvedDirectories[replica.EndpointID] = replica.ResolvedDirectory
+	}
+	if resolvedDirectories["endpoint-local"] != `D:\Media\projects` {
+		t.Fatalf("expected local resolved directory D:\\Media\\projects, got %s", resolvedDirectories["endpoint-local"])
+	}
+	if resolvedDirectories["endpoint-qnap"] != `\\qnap\share\Media\projects` {
+		t.Fatalf("expected qnap resolved directory \\\\qnap\\share\\Media\\projects, got %s", resolvedDirectories["endpoint-qnap"])
+	}
+	if resolvedDirectories["endpoint-cloud"] != "0:/projects" {
+		t.Fatalf("expected cloud resolved directory 0:/projects, got %s", resolvedDirectories["endpoint-cloud"])
 	}
 
 	factory.connectorsByEndpoint["endpoint-qnap"].listing = map[string][]connectors.FileEntry{
@@ -309,6 +338,152 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	}
 	if len(availableByEndpoint) != 2 {
 		t.Fatalf("expected 2 endpoints to remain available, got %d", len(availableByEndpoint))
+	}
+}
+
+func TestFullScanIgnoresImportSourceEndpoints(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	endpoints := []store.StorageEndpoint{
+		{
+			ID:                 "endpoint-managed",
+			Name:               "Managed SSD",
+			EndpointType:       string(connectors.EndpointTypeLocal),
+			RootPath:           `D:\Media`,
+			RoleMode:           "MANAGED",
+			IdentitySignature:  "managed-media",
+			AvailabilityStatus: "AVAILABLE",
+			ConnectionConfig:   `{"rootPath":"D:\\Media"}`,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		{
+			ID:                 "endpoint-import-source",
+			Name:               "Import Source",
+			EndpointType:       string(connectors.EndpointTypeLocal),
+			RootPath:           `E:\Card`,
+			RoleMode:           "IMPORT_SOURCE",
+			IdentitySignature:  "import-source",
+			AvailabilityStatus: "AVAILABLE",
+			ConnectionConfig:   `{"rootPath":"E:\\Card"}`,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+			t.Fatalf("create storage endpoint %s: %v", endpoint.ID, err)
+		}
+	}
+
+	service := NewService(dataStore, (&fakeConnectorFactory{
+		connectorsByEndpoint: map[string]*fakeConnector{
+			"endpoint-managed": {
+				descriptor: connectors.Descriptor{
+					Name:     "Managed SSD",
+					Type:     connectors.EndpointTypeLocal,
+					RootPath: `D:\Media`,
+				},
+				listing: map[string][]connectors.FileEntry{
+					"": {
+						fileEntry(`D:\Media\Projects\Photo.JPG`, "Projects/Photo.JPG", connectors.MediaTypeImage, now),
+					},
+				},
+			},
+			"endpoint-import-source": {
+				descriptor: connectors.Descriptor{
+					Name:     "Import Source",
+					Type:     connectors.EndpointTypeLocal,
+					RootPath: `E:\Card`,
+				},
+				listing: map[string][]connectors.FileEntry{
+					"": {
+						fileEntry(`E:\Card\Projects\Photo.JPG`, "Projects/Photo.JPG", connectors.MediaTypeImage, now),
+					},
+				},
+			},
+		},
+	}).Build)
+
+	summary, err := service.FullScan(ctx)
+	if err != nil {
+		t.Fatalf("full scan: %v", err)
+	}
+	if summary.EndpointCount != 1 {
+		t.Fatalf("expected only 1 managed endpoint to participate in full scan, got %d", summary.EndpointCount)
+	}
+	if summary.SuccessCount != 1 {
+		t.Fatalf("expected 1 successful managed endpoint scan, got %d", summary.SuccessCount)
+	}
+
+	assets, err := service.ListAssets(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("list assets: %v", err)
+	}
+	if len(assets) != 1 {
+		t.Fatalf("expected 1 asset after managed scan, got %d", len(assets))
+	}
+	if assets[0].AvailableReplicaCount != 1 {
+		t.Fatalf("expected 1 managed replica, got %d", assets[0].AvailableReplicaCount)
+	}
+}
+
+func TestRescanEndpointRejectsImportSourceRole(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	now := time.Now().UTC().Round(time.Second)
+	endpoint := store.StorageEndpoint{
+		ID:                 "endpoint-import-source",
+		Name:               "Import Source",
+		EndpointType:       string(connectors.EndpointTypeLocal),
+		RootPath:           `E:\Card`,
+		RoleMode:           "IMPORT_SOURCE",
+		IdentitySignature:  "import-source",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"rootPath":"E:\\Card"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := dataStore.CreateStorageEndpoint(context.Background(), endpoint); err != nil {
+		t.Fatalf("create import source endpoint: %v", err)
+	}
+
+	service := NewService(dataStore, (&fakeConnectorFactory{
+		connectorsByEndpoint: map[string]*fakeConnector{
+			endpoint.ID: {
+				descriptor: connectors.Descriptor{
+					Name:     endpoint.Name,
+					Type:     connectors.EndpointTypeLocal,
+					RootPath: endpoint.RootPath,
+				},
+			},
+		},
+	}).Build)
+
+	if _, err := service.RescanEndpoint(context.Background(), endpoint.ID); err == nil {
+		t.Fatal("expected rescan to reject import source endpoint")
 	}
 }
 
@@ -687,6 +862,63 @@ func TestDeleteEndpointRemovesReplicaRecordsAndUpdatesImportRules(t *testing.T) 
 	}
 	if len(remainingTargets) != 1 || remainingTargets[0] != qnapEndpoint.ID {
 		t.Fatalf("expected qnap to remain as the only import target, got %#v", remainingTargets)
+	}
+}
+
+func TestRegisterEndpointStoresCloudCredentialOutsideLibraryDB(t *testing.T) {
+	credentialRoot := t.TempDir()
+	t.Setenv("MAM_CREDENTIAL_VAULT_DIR", credentialRoot)
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	service := NewService(dataStore, func(endpoint store.StorageEndpoint) (connectors.Connector, error) {
+		return &fakeConnector{
+			descriptor: connectors.Descriptor{
+				Name:     endpoint.Name,
+				Type:     connectors.EndpointTypeCloud115,
+				RootPath: endpoint.RootPath,
+			},
+		}, nil
+	})
+
+	record, err := service.RegisterEndpoint(context.Background(), RegisterEndpointRequest{
+		Name:               "115 Cloud",
+		EndpointType:       string(connectors.EndpointTypeCloud115),
+		RootPath:           "0",
+		RoleMode:           "MANAGED",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   json.RawMessage(`{"rootId":"0","accessToken":"token-123","appType":"windows"}`),
+	})
+	if err != nil {
+		t.Fatalf("register endpoint: %v", err)
+	}
+
+	if !record.HasCredential {
+		t.Fatal("expected cloud endpoint to report a stored local credential")
+	}
+	if strings.TrimSpace(record.CredentialRef) == "" {
+		t.Fatal("expected cloud endpoint to expose a credential ref")
+	}
+
+	storedEndpoint, err := dataStore.GetStorageEndpointByID(context.Background(), record.ID)
+	if err != nil {
+		t.Fatalf("load stored endpoint: %v", err)
+	}
+	if strings.Contains(strings.ToLower(storedEndpoint.ConnectionConfig), "token-123") {
+		t.Fatalf("expected library db to exclude raw credential secret, got %s", storedEndpoint.ConnectionConfig)
+	}
+	if strings.TrimSpace(storedEndpoint.CredentialRef) == "" {
+		t.Fatal("expected stored endpoint to keep a credential ref")
+	}
+	if !strings.Contains(storedEndpoint.ConnectionConfig, `"rootId":"0"`) {
+		t.Fatalf("expected stored connection config to keep portable metadata, got %s", storedEndpoint.ConnectionConfig)
 	}
 }
 

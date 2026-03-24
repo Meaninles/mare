@@ -88,7 +88,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
             <p>这个资产可能已经从可见资产库中移除，或最新刷新尚未完成。</p>
           </div>
 
-          <Link to={`/library${backSearch}`} className="ghost-button inline-button">
+          <Link to={`/assets${backSearch}`} className="ghost-button inline-button">
             <ArrowLeft size={16} />
             返回资产库
           </Link>
@@ -163,7 +163,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
       setDeleteDialog(null);
 
       if (summary.assetRemoved) {
-        navigate(`/library${backSearch}`, { replace: true });
+        navigate(`/assets${backSearch}`, { replace: true });
         return;
       }
 
@@ -175,7 +175,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
 
   return (
     <section className="page-stack">
-      <Link to={`/library${backSearch}`} className="back-link">
+      <Link to={`/assets${backSearch}`} className="back-link">
         <ArrowLeft size={16} />
         返回资产库
       </Link>

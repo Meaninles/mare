@@ -1,4 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLibraryContext } from "../context/LibraryContext";
+import { APP_BOOTSTRAP_QUERY_KEY, invalidateLibraryQueries } from "../lib/query-keys";
 import { getDefaultSettingsBackendUrl, exportSettingsBackup, importSettingsBackup } from "../services/settings";
 import type { BackupImportMode, SettingsBackupBundle } from "../types/settings";
 
@@ -19,6 +21,7 @@ export function useExportSettingsBackup() {
 
 export function useImportSettingsBackup() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { mode: BackupImportMode; bundle: SettingsBackupBundle }) => {
@@ -31,11 +34,8 @@ export function useImportSettingsBackup() {
     },
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["app-bootstrap"] }),
-        queryClient.invalidateQueries({ queryKey: ["catalog-assets"] }),
-        queryClient.invalidateQueries({ queryKey: ["catalog-endpoints"] }),
-        queryClient.invalidateQueries({ queryKey: ["catalog-tasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["import-rules"] })
+        queryClient.invalidateQueries({ queryKey: APP_BOOTSTRAP_QUERY_KEY }),
+        invalidateLibraryQueries(queryClient, currentLibraryId)
       ]);
     }
   });

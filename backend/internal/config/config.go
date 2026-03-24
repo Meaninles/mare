@@ -74,7 +74,7 @@ func Load() (Config, error) {
 		MinIOBucket:         getString("MINIO_BUCKET", ""),
 		FFmpegPath:          getString("FFMPEG_PATH", "ffmpeg"),
 		AIServiceURL:        getString("AI_SERVICE_URL", ""),
-		LogFilePath:         getString("LOG_FILE_PATH", filepath.Join(filepath.Dir(catalogDBPath), "logs", "backend.log")),
+		LogFilePath:         getString("LOG_FILE_PATH", filepath.Join(".", "data", "logs", "backend.log")),
 	}, nil
 }
 

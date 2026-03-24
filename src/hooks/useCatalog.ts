@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLibraryContext } from "../context/LibraryContext";
+import { buildLibraryQueryKey, invalidateLibraryQueries } from "../lib/query-keys";
 import {
   deleteCatalogReplica,
   getCatalogSyncOverview,
@@ -15,8 +17,11 @@ import type { CatalogAsset } from "../types/catalog";
 const backendUrl = getDefaultCatalogBackendUrl();
 
 export function useCatalogAssets(limit = 1000) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["catalog-assets", limit],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "assets", limit),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await listCatalogAssets(backendUrl, limit);
       if (!response.success) {
@@ -31,8 +36,11 @@ export function useCatalogAssets(limit = 1000) {
 }
 
 export function useCatalogEndpoints() {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["catalog-endpoints"],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "endpoints"),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await listCatalogEndpoints(backendUrl);
       if (!response.success) {
@@ -46,8 +54,11 @@ export function useCatalogEndpoints() {
 }
 
 export function useCatalogTasks(limit = 100) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["catalog-tasks", limit],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "tasks", limit),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await listCatalogTasks(backendUrl, limit);
       if (!response.success) {
@@ -62,8 +73,11 @@ export function useCatalogTasks(limit = 100) {
 }
 
 export function useCatalogSyncOverview() {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["catalog-sync-overview"],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "sync-overview"),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await getCatalogSyncOverview(backendUrl);
       if (!response.success) {
@@ -87,6 +101,7 @@ export function useCatalogSyncOverview() {
 
 export function useCatalogRestoreAsset() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { assetId: string; sourceEndpointId: string; targetEndpointId: string }) => {
@@ -98,13 +113,14 @@ export function useCatalogRestoreAsset() {
       return response.summary;
     },
     onSuccess: async () => {
-      await invalidateCatalogQueries(queryClient);
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
 
 export function useCatalogBatchRestore() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { targetEndpointId: string; assetIds: string[] }) => {
@@ -116,13 +132,14 @@ export function useCatalogBatchRestore() {
       return response.summary;
     },
     onSettled: async () => {
-      await invalidateCatalogQueries(queryClient);
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
 
 export function useCatalogDeleteReplica() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { assetId: string; targetEndpointId: string }) => {
@@ -135,22 +152,26 @@ export function useCatalogDeleteReplica() {
     },
     onSuccess: async (summary) => {
       if (summary.assetRemoved) {
-        queryClient.setQueriesData({ queryKey: ["catalog-assets"] }, (current: CatalogAsset[] | undefined) => {
-          if (!current) {
-            return current;
-          }
+        queryClient.setQueriesData(
+          { queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "assets") },
+          (current: CatalogAsset[] | undefined) => {
+            if (!current) {
+              return current;
+            }
 
-          return current.filter((asset) => asset.id !== summary.assetId);
-        });
+            return current.filter((asset) => asset.id !== summary.assetId);
+          }
+        );
       }
 
-      await invalidateCatalogQueries(queryClient);
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
 
 export function useCatalogRetryTask() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (taskId: string) => {
@@ -162,7 +183,7 @@ export function useCatalogRetryTask() {
       return response.summary;
     },
     onSuccess: async () => {
-      await invalidateCatalogQueries(queryClient);
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
@@ -171,11 +192,9 @@ export function useCatalogRetrySyncTask() {
   return useCatalogRetryTask();
 }
 
-async function invalidateCatalogQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["catalog-assets"] }),
-    queryClient.invalidateQueries({ queryKey: ["catalog-endpoints"] }),
-    queryClient.invalidateQueries({ queryKey: ["catalog-sync-overview"] }),
-    queryClient.invalidateQueries({ queryKey: ["catalog-tasks"] })
-  ]);
+async function invalidateCatalogQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  libraryId: string | undefined
+) {
+  await invalidateLibraryQueries(queryClient, libraryId);
 }

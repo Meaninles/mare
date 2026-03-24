@@ -32,7 +32,7 @@ func (service *Service) UpdateEndpoint(ctx context.Context, endpointID string, r
 		connectionConfigInput = json.RawMessage(existing.ConnectionConfig)
 	}
 
-	connectionConfig, err := normalizeConnectionConfig(endpointType, connectionConfigInput)
+	connectionConfig, extractedCredential, err := normalizeConnectionConfig(endpointType, connectionConfigInput)
 	if err != nil {
 		return EndpointRecord{}, err
 	}
@@ -71,21 +71,38 @@ func (service *Service) UpdateEndpoint(ctx context.Context, endpointID string, r
 	}
 
 	now := time.Now().UTC()
+	roleMode := normalizeEndpointRoleMode(request.RoleMode)
+	if roleMode == "" {
+		roleMode = defaultString(existing.RoleMode, defaultRoleMode)
+	}
+	credentialRef, credentialHint, err := service.resolveEndpointCredential(
+		endpointType,
+		existing.CredentialRef,
+		existing.CredentialHint,
+		request.CredentialRef,
+		extractedCredential,
+	)
+	if err != nil {
+		return EndpointRecord{}, err
+	}
+
 	endpoint := store.StorageEndpoint{
 		ID:                 existing.ID,
 		Name:               defaultString(strings.TrimSpace(request.Name), existing.Name),
 		Note:               strings.TrimSpace(request.Note),
 		EndpointType:       endpointType,
 		RootPath:           rootPath,
-		RoleMode:           defaultString(strings.TrimSpace(request.RoleMode), defaultString(existing.RoleMode, defaultRoleMode)),
+		RoleMode:           roleMode,
 		IdentitySignature:  identitySignature,
 		AvailabilityStatus: defaultString(strings.TrimSpace(request.AvailabilityStatus), defaultString(existing.AvailabilityStatus, defaultAvailabilityStatus)),
 		ConnectionConfig:   string(connectionConfig),
+		CredentialRef:      credentialRef,
+		CredentialHint:     credentialHint,
 		CreatedAt:          existing.CreatedAt,
 		UpdatedAt:          now,
 	}
 
-	if _, err := service.connectorFactory(endpoint); err != nil {
+	if _, err := service.buildConnector(endpoint); err != nil {
 		return EndpointRecord{}, err
 	}
 

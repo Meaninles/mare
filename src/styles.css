@@ -1144,6 +1144,57 @@ a {
   margin: 0;
 }
 
+.library-record-list {
+  display: grid;
+  gap: 14px;
+}
+
+.library-record-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--card-background-subtle);
+}
+
+.library-record-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.library-record-head strong,
+.library-record-head p,
+.library-record-meta {
+  margin: 0;
+}
+
+.library-record-head > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.library-record-head p,
+.library-record-meta {
+  color: var(--text-soft);
+  word-break: break-word;
+}
+
+.library-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.route-pending-shell {
+  min-height: 100vh;
+  align-content: center;
+  padding: 24px;
+}
+
 .skeleton-card {
   pointer-events: none;
 }

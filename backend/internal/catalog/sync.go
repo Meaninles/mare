@@ -36,20 +36,26 @@ type SyncEndpointRef struct {
 }
 
 type SyncReplicaRecord struct {
-	ID            string              `json:"id"`
-	EndpointID    string              `json:"endpointId"`
-	EndpointName  string              `json:"endpointName"`
-	PhysicalPath  string              `json:"physicalPath"`
-	ReplicaStatus string              `json:"replicaStatus"`
-	ExistsFlag    bool                `json:"existsFlag"`
-	LastSeenAt    *time.Time          `json:"lastSeenAt,omitempty"`
-	Version       *AssetVersionRecord `json:"version,omitempty"`
+	ID                 string              `json:"id"`
+	EndpointID         string              `json:"endpointId"`
+	EndpointName       string              `json:"endpointName"`
+	PhysicalPath       string              `json:"physicalPath"`
+	RelativePath       string              `json:"relativePath"`
+	LogicalDirectory   string              `json:"logicalDirectory"`
+	ResolvedDirectory  string              `json:"resolvedDirectory"`
+	MatchesLogicalPath bool                `json:"matchesLogicalPath"`
+	ReplicaStatus      string              `json:"replicaStatus"`
+	ExistsFlag         bool                `json:"existsFlag"`
+	LastSeenAt         *time.Time          `json:"lastSeenAt,omitempty"`
+	Version            *AssetVersionRecord `json:"version,omitempty"`
 }
 
 type SyncAssetRecord struct {
 	ID                    string              `json:"id"`
 	DisplayName           string              `json:"displayName"`
 	LogicalPathKey        string              `json:"logicalPathKey"`
+	CanonicalPath         string              `json:"canonicalPath"`
+	CanonicalDirectory    string              `json:"canonicalDirectory"`
 	MediaType             string              `json:"mediaType"`
 	AssetStatus           string              `json:"assetStatus"`
 	PrimaryTimestamp      *time.Time          `json:"primaryTimestamp,omitempty"`
@@ -475,6 +481,7 @@ func (service *Service) buildSyncAssetRecord(
 		replicas,
 		endpoints,
 		endpointLookup,
+		asset.LogicalPathKey,
 	)
 	if err != nil {
 		return SyncAssetRecord{}, ReplicaDiffResult{}, err
@@ -498,6 +505,8 @@ func (service *Service) buildSyncAssetRecord(
 		ID:                    asset.ID,
 		DisplayName:           asset.DisplayName,
 		LogicalPathKey:        asset.LogicalPathKey,
+		CanonicalPath:         canonicalLogicalPath(asset.LogicalPathKey),
+		CanonicalDirectory:    canonicalDirectoryPath(asset.LogicalPathKey),
 		MediaType:             asset.MediaType,
 		AssetStatus:           asset.AssetStatus,
 		PrimaryTimestamp:      asset.PrimaryTimestamp,
@@ -556,11 +565,11 @@ func (service *Service) executeRestoreAsset(ctx context.Context, request Restore
 		return restoreExecutionResult{}, errors.New("source replica is not available for restore")
 	}
 
-	sourceConnector, err := service.connectorFactory(sourceEndpoint)
+	sourceConnector, err := service.buildConnector(sourceEndpoint)
 	if err != nil {
 		return restoreExecutionResult{}, err
 	}
-	targetConnector, err := service.connectorFactory(targetEndpoint)
+	targetConnector, err := service.buildConnector(targetEndpoint)
 	if err != nil {
 		return restoreExecutionResult{}, err
 	}
@@ -770,7 +779,7 @@ func (service *Service) selectPreferredSourceEndpoint(
 		if err != nil {
 			return nil, nil, err
 		}
-		connector, err := service.connectorFactory(endpoint)
+		connector, err := service.buildConnector(endpoint)
 		if err != nil {
 			continue
 		}
@@ -876,37 +885,9 @@ func buildSyncEndpointRefs(endpointIDs []string, lookup map[string]store.Storage
 }
 
 func deriveRestoreRelativePath(rootPath, physicalPath, fallback string) string {
-	root := canonicalizePath(rootPath)
-	physical := canonicalizePath(physicalPath)
-	fallbackPath := strings.TrimPrefix(canonicalizePath(fallback), "/")
-
-	if physical == "" {
-		return fallbackPath
-	}
-
-	if strings.Contains(physical, "://") {
-		return fallbackPath
-	}
-
-	candidate := physical
-	if root != "" {
-		rootLower := strings.ToLower(root)
-		physicalLower := strings.ToLower(physical)
-		switch {
-		case physicalLower == rootLower:
-			return fallbackPath
-		case strings.HasPrefix(physicalLower, rootLower+"/"):
-			candidate = physical[len(root)+1:]
-		default:
-			return fallbackPath
-		}
-	}
-
-	candidate = strings.TrimPrefix(canonicalizePath(candidate), "/")
-	if candidate == "" {
-		return fallbackPath
-	}
-	return candidate
+	_ = rootPath
+	_ = physicalPath
+	return canonicalLogicalPath(fallback)
 }
 
 func isSyncTaskType(taskType string) bool {

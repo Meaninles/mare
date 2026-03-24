@@ -20,9 +20,14 @@ type retrySyncTaskRequest struct {
 }
 
 func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Request) {
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		records, err := server.catalog.ListEndpoints(r.Context())
+		records, err := catalogService.ListEndpoints(r.Context())
 		if err != nil {
 			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -45,7 +50,7 @@ func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		record, err := server.catalog.RegisterEndpoint(r.Context(), request)
+		record, err := catalogService.RegisterEndpoint(r.Context(), request)
 		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
 				"success": false,
@@ -64,6 +69,11 @@ func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Requ
 }
 
 func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *http.Request) {
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	endpointID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/v1/catalog/endpoints/"))
 	if endpointID == "" || strings.Contains(endpointID, "/") {
 		http.NotFound(w, r)
@@ -81,7 +91,7 @@ func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *ht
 			return
 		}
 
-		record, err := server.catalog.UpdateEndpoint(r.Context(), endpointID, request)
+		record, err := catalogService.UpdateEndpoint(r.Context(), endpointID, request)
 		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
 				"success": false,
@@ -95,7 +105,7 @@ func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *ht
 			"endpoint": record,
 		})
 	case http.MethodDelete:
-		summary, err := server.catalog.DeleteEndpoint(r.Context(), endpointID)
+		summary, err := catalogService.DeleteEndpoint(r.Context(), endpointID)
 		if err != nil {
 			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -119,10 +129,15 @@ func (server *Server) handleCatalogAssets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	limit := queryInt(r, "limit", 200)
 	offset := queryInt(r, "offset", 0)
 
-	records, err := server.catalog.ListAssets(r.Context(), limit, offset)
+	records, err := catalogService.ListAssets(r.Context(), limit, offset)
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -143,6 +158,11 @@ func (server *Server) handleCatalogDeleteReplica(w http.ResponseWriter, r *http.
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.DeleteReplicaRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -152,7 +172,7 @@ func (server *Server) handleCatalogDeleteReplica(w http.ResponseWriter, r *http.
 		return
 	}
 
-	summary, err := server.catalog.DeleteReplica(r.Context(), request)
+	summary, err := catalogService.DeleteReplica(r.Context(), request)
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -174,6 +194,11 @@ func (server *Server) handleCatalogAssetResource(w http.ResponseWriter, r *http.
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/catalog/assets/")
 	segments := strings.Split(strings.Trim(path, "/"), "/")
 	if len(segments) != 2 {
@@ -190,7 +215,7 @@ func (server *Server) handleCatalogAssetResource(w http.ResponseWriter, r *http.
 
 	switch resource {
 	case "poster":
-		mediaResource, err := server.catalog.ResolvePosterResource(r.Context(), assetID)
+		mediaResource, err := catalogService.ResolvePosterResource(r.Context(), assetID)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				http.NotFound(w, r)
@@ -204,7 +229,7 @@ func (server *Server) handleCatalogAssetResource(w http.ResponseWriter, r *http.
 		}
 		server.serveMediaFile(w, r, mediaResource)
 	case "preview":
-		mediaResource, err := server.catalog.ResolvePreviewResource(r.Context(), assetID)
+		mediaResource, err := catalogService.ResolvePreviewResource(r.Context(), assetID)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				http.NotFound(w, r)
@@ -228,10 +253,15 @@ func (server *Server) handleCatalogTasks(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	limit := queryInt(r, "limit", 100)
 	offset := queryInt(r, "offset", 0)
 
-	tasks, err := server.catalog.ListTasks(r.Context(), limit, offset)
+	tasks, err := catalogService.ListTasks(r.Context(), limit, offset)
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -252,7 +282,12 @@ func (server *Server) handleCatalogSyncOverview(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	overview, err := server.catalog.GetSyncOverview(r.Context())
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	overview, err := catalogService.GetSyncOverview(r.Context())
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -273,6 +308,11 @@ func (server *Server) handleCatalogRestoreAsset(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.RestoreAssetRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -282,7 +322,7 @@ func (server *Server) handleCatalogRestoreAsset(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	summary, err := server.catalog.RestoreAsset(r.Context(), request)
+	summary, err := catalogService.RestoreAsset(r.Context(), request)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if errors.Is(err, strconv.ErrSyntax) {
@@ -308,6 +348,11 @@ func (server *Server) handleCatalogRestoreBatch(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.BatchRestoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -317,7 +362,7 @@ func (server *Server) handleCatalogRestoreBatch(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	summary, err := server.catalog.RestoreAssetsToEndpoint(r.Context(), request)
+	summary, err := catalogService.RestoreAssetsToEndpoint(r.Context(), request)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": err == nil,
 		"summary": summary,
@@ -332,6 +377,11 @@ func (server *Server) handleCatalogRetrySyncTask(w http.ResponseWriter, r *http.
 func (server *Server) handleCatalogRetryTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
 		return
 	}
 
@@ -351,7 +401,7 @@ func (server *Server) handleCatalogRetryTask(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	summary, err := server.catalog.RetryTask(r.Context(), request.TaskID)
+	summary, err := catalogService.RetryTask(r.Context(), request.TaskID)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": err == nil,
 		"summary": summary,
@@ -365,7 +415,12 @@ func (server *Server) handleCatalogFullScan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	summary, err := server.catalog.FullScan(r.Context())
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	summary, err := catalogService.FullScan(r.Context())
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -386,6 +441,11 @@ func (server *Server) handleCatalogEndpointScan(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request endpointScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -402,7 +462,7 @@ func (server *Server) handleCatalogEndpointScan(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	summary, err := server.catalog.RescanEndpoint(r.Context(), request.EndpointID)
+	summary, err := catalogService.RescanEndpoint(r.Context(), request.EndpointID)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if errors.Is(err, strconv.ErrSyntax) {

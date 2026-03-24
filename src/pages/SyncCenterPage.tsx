@@ -465,7 +465,7 @@ function RecoverableAssetCard({
             </button>
           ) : null}
 
-          <Link to={`/library?assetId=${asset.id}`} className="ghost-button">
+          <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
             查看详情
             <ArrowRight size={16} />
           </Link>
@@ -560,7 +560,7 @@ function ConflictAssetCard({ asset }: { asset: CatalogSyncAsset }) {
       ) : null}
 
       <div className="action-row">
-        <Link to={`/library?assetId=${asset.id}`} className="ghost-button">
+        <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
           查看详情
           <ArrowRight size={16} />
         </Link>

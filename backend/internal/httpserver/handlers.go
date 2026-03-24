@@ -18,7 +18,7 @@ func (server *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (server *Server) handleBootstrap(w http.ResponseWriter, _ *http.Request) {
-	server.writeJSON(w, http.StatusOK, server.system.Bootstrap())
+	server.writeJSON(w, http.StatusOK, server.system.BootstrapWithDatabase(server.session.DatabaseState()))
 }
 
 func (server *Server) writeJSON(w http.ResponseWriter, status int, payload any) {

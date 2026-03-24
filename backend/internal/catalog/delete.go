@@ -158,7 +158,7 @@ func (service *Service) executeDeleteReplica(ctx context.Context, request Delete
 		return deleteExecutionResult{}, errors.New("target replica is not available for deletion")
 	}
 
-	connector, err := service.connectorFactory(targetEndpoint)
+	connector, err := service.buildConnector(targetEndpoint)
 	if err != nil {
 		return deleteExecutionResult{}, err
 	}

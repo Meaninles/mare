@@ -14,6 +14,11 @@ func (server *Server) handleSettingsBackupExport(w http.ResponseWriter, r *http.
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.ExportBackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -23,7 +28,7 @@ func (server *Server) handleSettingsBackupExport(w http.ResponseWriter, r *http.
 		return
 	}
 
-	bundle, err := server.catalog.ExportSettingsBackup(r.Context(), server.config, request)
+	bundle, err := catalogService.ExportSettingsBackup(r.Context(), server.config, request)
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -44,6 +49,11 @@ func (server *Server) handleSettingsBackupImport(w http.ResponseWriter, r *http.
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	var request catalog.ImportBackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -53,7 +63,7 @@ func (server *Server) handleSettingsBackupImport(w http.ResponseWriter, r *http.
 		return
 	}
 
-	summary, err := server.catalog.ImportSettingsBackup(r.Context(), request)
+	summary, err := catalogService.ImportSettingsBackup(r.Context(), request)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,

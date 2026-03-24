@@ -3,20 +3,18 @@ package app
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
 
-	"mam/backend/internal/catalog"
 	"mam/backend/internal/buildinfo"
 	"mam/backend/internal/config"
 	"mam/backend/internal/httpserver"
+	"mam/backend/internal/librarysession"
 	"mam/backend/internal/platform"
-	"mam/backend/internal/store"
 )
 
 type App struct {
-	config config.Config
-	server *httpserver.Server
-	store  *store.Store
+	config  config.Config
+	server  *httpserver.Server
+	session *librarysession.Manager
 }
 
 func New(_ context.Context) (*App, error) {
@@ -28,11 +26,7 @@ func New(_ context.Context) (*App, error) {
 	logger := platform.NewLogger(cfg.AppEnv, cfg.LogFilePath)
 	slog.SetDefault(logger)
 
-	dataStore, err := store.NewSQLiteStore(cfg.CatalogDBPath)
-	if err != nil {
-		return nil, err
-	}
-
+	session := librarysession.NewManager(cfg.AppName, cfg.FFmpegPath)
 	system := platform.NewSystemState(
 		cfg,
 		buildinfo.Get(),
@@ -40,21 +34,17 @@ func New(_ context.Context) (*App, error) {
 		platform.NewDependencySnapshot(cfg),
 		platform.DatabaseState{
 			Driver:           "sqlite",
-			Path:             cfg.CatalogDBPath,
-			Ready:            true,
-			MigrationVersion: dataStore.MigrationVersion(),
+			Path:             "",
+			Ready:            false,
+			MigrationVersion: "unloaded",
 		},
 	)
-	catalogService := catalog.NewService(dataStore, nil, catalog.MediaConfig{
-		CacheRoot:  filepath.Join(filepath.Dir(cfg.CatalogDBPath), "cache", "media"),
-		FFmpegPath: cfg.FFmpegPath,
-	})
-	server := httpserver.New(cfg, system, catalogService)
+	server := httpserver.New(cfg, system, session)
 
 	return &App{
-		config: cfg,
-		server: server,
-		store:  dataStore,
+		config:  cfg,
+		server:  server,
+		session: session,
 	}, nil
 }
 
@@ -72,5 +62,6 @@ func (app *App) Run(ctx context.Context) error {
 		return err
 	}
 
-	return app.store.Close()
+	_, _ = app.session.CloseLibrary(context.Background())
+	return nil
 }

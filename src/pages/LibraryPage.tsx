@@ -309,7 +309,7 @@ function AssetCard({
   detailParams.set("assetId", asset.id);
 
   return (
-    <Link to={`/library?${detailParams.toString()}`} className="asset-card">
+    <Link to={`/assets?${detailParams.toString()}`} className="asset-card">
       <div className={`asset-visual tone-${statusTone}${asset.poster?.url ? " has-poster" : ""}`}>
         {asset.poster?.url ? (
           <img src={asset.poster.url} alt={asset.displayName} className="asset-poster" loading="lazy" />

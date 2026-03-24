@@ -291,7 +291,7 @@ func (service *Service) SaveImportRules(ctx context.Context, request SaveImportR
 
 	managedEndpointIDs := make(map[string]struct{}, len(endpoints))
 	for _, endpoint := range endpoints {
-		if strings.ToUpper(strings.TrimSpace(endpoint.RoleMode)) != defaultRoleMode {
+		if !isManagedEndpoint(endpoint) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(endpoint.AvailabilityStatus), "DISABLED") {
@@ -597,7 +597,7 @@ func (service *Service) executeImportItem(
 			Status:       taskStatusFailed,
 		}
 
-		targetConnector, err := service.connectorFactory(endpoint)
+		targetConnector, err := service.buildConnector(endpoint)
 		if err != nil {
 			targetResult.Error = err.Error()
 			item.TargetResults = append(item.TargetResults, targetResult)
@@ -789,7 +789,7 @@ func (service *Service) listManagedImportEndpoints(ctx context.Context) (map[str
 
 	lookup := make(map[string]store.StorageEndpoint)
 	for _, endpoint := range endpoints {
-		if strings.ToUpper(strings.TrimSpace(endpoint.RoleMode)) != defaultRoleMode {
+		if !isManagedEndpoint(endpoint) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(endpoint.AvailabilityStatus), "DISABLED") {

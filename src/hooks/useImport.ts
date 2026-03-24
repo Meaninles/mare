@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLibraryContext } from "../context/LibraryContext";
+import { buildLibraryQueryKey, invalidateLibraryQueries } from "../lib/query-keys";
 import {
   browseImportSource,
   executeImport,
@@ -13,8 +15,11 @@ import type { ImportBrowseMediaType, ImportDeviceRole, ImportRuleInput } from ".
 const backendUrl = getDefaultImportBackendUrl();
 
 export function useImportDevices() {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["import-devices"],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "import", "devices"),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await listImportDevices(backendUrl);
       if (!response.success) {
@@ -30,6 +35,7 @@ export function useImportDevices() {
 
 export function useSelectImportDeviceRole() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { identitySignature: string; role: ImportDeviceRole; name?: string }) => {
@@ -41,18 +47,17 @@ export function useSelectImportDeviceRole() {
       return response.result;
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["import-devices"] }),
-        queryClient.invalidateQueries({ queryKey: ["catalog-endpoints"] })
-      ]);
+      await invalidateLibraryQueries(queryClient, currentLibraryId);
     }
   });
 }
 
 export function useImportSource(identitySignature: string, mediaType: ImportBrowseMediaType, limit = 800) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["import-source", identitySignature, mediaType, limit],
-    enabled: Boolean(identitySignature),
+    queryKey: buildLibraryQueryKey(currentLibraryId, "import", "source", identitySignature, mediaType, limit),
+    enabled: isLibraryOpen && Boolean(identitySignature),
     queryFn: async () => {
       const response = await browseImportSource(backendUrl, {
         identitySignature,
@@ -71,8 +76,11 @@ export function useImportSource(identitySignature: string, mediaType: ImportBrow
 }
 
 export function useImportRules() {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
   return useQuery({
-    queryKey: ["import-rules"],
+    queryKey: buildLibraryQueryKey(currentLibraryId, "import", "rules"),
+    enabled: isLibraryOpen,
     queryFn: async () => {
       const response = await listImportRules(backendUrl);
       if (!response.success) {
@@ -87,6 +95,7 @@ export function useImportRules() {
 
 export function useSaveImportRules() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (rules: ImportRuleInput[]) => {
@@ -98,13 +107,14 @@ export function useSaveImportRules() {
       return response.rules;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["import-rules"] });
+      await invalidateLibraryQueries(queryClient, currentLibraryId);
     }
   });
 }
 
 export function useExecuteImport() {
   const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
 
   return useMutation({
     mutationFn: async (payload: { identitySignature: string; entryPaths: string[] }) => {
@@ -116,11 +126,7 @@ export function useExecuteImport() {
       return response.summary;
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["catalog-assets"] }),
-        queryClient.invalidateQueries({ queryKey: ["catalog-tasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["import-source"] })
-      ]);
+      await invalidateLibraryQueries(queryClient, currentLibraryId);
     }
   });
 }

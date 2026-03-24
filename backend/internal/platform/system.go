@@ -48,6 +48,10 @@ func NewSystemState(cfg config.Config, build buildinfo.Info, modules []ModuleSta
 }
 
 func (state SystemState) Bootstrap() Bootstrap {
+	return state.BootstrapWithDatabase(state.database)
+}
+
+func (state SystemState) BootstrapWithDatabase(database DatabaseState) Bootstrap {
 	var payload Bootstrap
 	payload.App.Name = state.config.AppName
 	payload.App.Env = state.config.AppEnv
@@ -56,6 +60,6 @@ func (state SystemState) Bootstrap() Bootstrap {
 	payload.App.StartedAt = state.startedAt
 	payload.Modules = state.modules
 	payload.Dependencies = state.dependencies
-	payload.Database = state.database
+	payload.Database = database
 	return payload
 }

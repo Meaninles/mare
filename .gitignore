@@ -12,3 +12,8 @@ backend/*.exe
 backend/tmp/
 .cache/
 backend/data/cache/
+.tmp/
+backend/data/*.db
+backend/data/*.db-*
+**/__pycache__/
+*.py[cod]

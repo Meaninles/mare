@@ -5,6 +5,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav, getRouteMeta } from "../components/SidebarNav";
 import { TaskCenterDrawer } from "../components/TaskCenterDrawer";
 import { useTheme } from "../components/ThemeProvider";
+import { useLibraryContext } from "../context/LibraryContext";
 import { useAppBootstrap } from "../hooks/useAppBootstrap";
 import { useCatalogTasks } from "../hooks/useCatalog";
 import { useImportDevices } from "../hooks/useImport";
@@ -14,6 +15,7 @@ import { getTaskSummary } from "../lib/task-center";
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { currentLibrary, currentLibraryId } = useLibraryContext();
   const bootstrapQuery = useAppBootstrap();
   const tasksQuery = useCatalogTasks(20);
   const devicesQuery = useImportDevices();
@@ -28,9 +30,9 @@ export function AppShell() {
 
   const routeMeta = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    if (location.pathname === "/library" && params.has("assetId")) {
+    if (location.pathname === "/assets" && params.has("assetId")) {
       return {
-        label: "资产详情",
+        label: "Asset Detail",
         description: "预览资产、查看副本状态，并执行恢复或删除操作。"
       };
     }
@@ -39,7 +41,7 @@ export function AppShell() {
   }, [location.pathname, location.search]);
 
   const taskSummary = useMemo(() => getTaskSummary(tasksQuery.data ?? []), [tasksQuery.data]);
-  const removableNotices = useRemovableNoticeState(devicesQuery.data ?? []);
+  const removableNotices = useRemovableNoticeState(devicesQuery.data ?? [], currentLibraryId);
   const notificationCount = taskSummary.failed + removableNotices.unreadCount;
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
@@ -52,7 +54,7 @@ export function AppShell() {
     }
 
     navigate({
-      pathname: "/library",
+      pathname: "/assets",
       search: params.toString() ? `?${params.toString()}` : ""
     });
   }
@@ -98,12 +100,13 @@ export function AppShell() {
               <input
                 value={searchValue}
                 onChange={(event) => setSearchValue(event.target.value)}
-                placeholder="搜索名称、路径、描述或后续语义结果"
-                aria-label="全局目录搜索"
+                placeholder="搜索名称、路径、描述或逻辑路径"
+                aria-label="当前资产库搜索"
               />
             </form>
 
             <div className="status-strip status-strip-rich">
+              {currentLibrary ? <span className="status-pill subtle">{currentLibrary.name}</span> : null}
               <span className="status-pill subtle">{theme === "light" ? "浅色" : "深色"}</span>
 
               {bootstrapQuery.isLoading ? (
@@ -116,7 +119,7 @@ export function AppShell() {
               {bootstrapQuery.data ? (
                 <>
                   <span className={`status-pill ${bootstrapQuery.data.database.ready ? "success" : "warning"}`}>
-                    目录数据库 {bootstrapQuery.data.database.ready ? "就绪" : "检查中"}
+                    应用数据库{bootstrapQuery.data.database.ready ? "已就绪" : "检查中"}
                   </span>
                   <span className="status-pill subtle">
                     模块 {readyModuleCount}/{totalModuleCount}

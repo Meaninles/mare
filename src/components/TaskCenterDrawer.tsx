@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AlertTriangle, BellRing, CheckCircle2, HardDrive, LoaderCircle, RefreshCcw, Upload, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
+import { useLibraryContext } from "../context/LibraryContext";
 import { useCatalogRetryTask, useCatalogTasks } from "../hooks/useCatalog";
 import { useImportDevices, useSelectImportDeviceRole } from "../hooks/useImport";
 import { useRemovableNoticeState } from "../hooks/useRemovableNoticeState";
@@ -11,6 +12,7 @@ import type { ImportDeviceRole, ImportDeviceRecord } from "../types/import";
 
 export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
+  const { currentLibraryId } = useLibraryContext();
   const tasksQuery = useCatalogTasks(24);
   const devicesQuery = useImportDevices();
   const retryMutation = useCatalogRetryTask();
@@ -18,7 +20,7 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
   const tasks = tasksQuery.data ?? [];
   const devices = devicesQuery.data ?? [];
   const summary = getTaskSummary(tasks);
-  const removableNotices = useRemovableNoticeState(devices);
+  const removableNotices = useRemovableNoticeState(devices, currentLibraryId);
 
   const runningTasks = tasks.filter((task) => matchesTaskFilter(task, "running"));
   const failedTasks = tasks.filter((task) => matchesTaskFilter(task, "failed"));
@@ -39,7 +41,7 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
     onClose();
 
     if (role === "import_source") {
-      navigate(`/import?device=${encodeURIComponent(result.device.identitySignature)}`);
+      navigate(`/ingest?device=${encodeURIComponent(result.device.identitySignature)}`);
       return;
     }
 

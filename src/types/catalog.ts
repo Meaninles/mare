@@ -7,6 +7,9 @@ export interface CatalogEndpoint {
   roleMode: string;
   identitySignature: string;
   availabilityStatus: string;
+  credentialRef?: string;
+  credentialHint?: string;
+  hasCredential?: boolean;
   connectionConfig: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -19,6 +22,7 @@ export interface CatalogEndpointPayload {
   rootPath: string;
   roleMode: string;
   availabilityStatus: string;
+  credentialRef?: string;
   connectionConfig: Record<string, unknown>;
 }
 
@@ -34,6 +38,10 @@ export interface CatalogReplica {
   id: string;
   endpointId: string;
   physicalPath: string;
+  relativePath?: string;
+  logicalDirectory?: string;
+  resolvedDirectory?: string;
+  matchesLogicalPath?: boolean;
   replicaStatus: string;
   existsFlag: boolean;
   lastSeenAt?: string;
@@ -61,6 +69,8 @@ export interface CatalogAudioMetadata {
 export interface CatalogAsset {
   id: string;
   logicalPathKey: string;
+  canonicalPath?: string;
+  canonicalDirectory?: string;
   displayName: string;
   mediaType: string;
   assetStatus: string;
@@ -117,6 +127,10 @@ export interface CatalogSyncReplica {
   endpointId: string;
   endpointName: string;
   physicalPath: string;
+  relativePath?: string;
+  logicalDirectory?: string;
+  resolvedDirectory?: string;
+  matchesLogicalPath?: boolean;
   replicaStatus: string;
   existsFlag: boolean;
   lastSeenAt?: string;
@@ -127,6 +141,8 @@ export interface CatalogSyncAsset {
   id: string;
   displayName: string;
   logicalPathKey: string;
+  canonicalPath?: string;
+  canonicalDirectory?: string;
   mediaType: string;
   assetStatus: string;
   primaryTimestamp?: string;

@@ -24,12 +24,43 @@ type Store struct {
 }
 
 func NewSQLiteStore(path string) (*Store, error) {
+	return openSQLiteStore(path, true, false)
+}
+
+func OpenSQLiteStore(path string) (*Store, error) {
+	return openSQLiteStore(path, false, false)
+}
+
+func CreateSQLiteStore(path string) (*Store, error) {
+	return openSQLiteStore(path, true, true)
+}
+
+func openSQLiteStore(path string, createDirectories bool, failIfExists bool) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("catalog db path is required")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create db directory: %w", err)
+	if failIfExists {
+		if _, err := os.Stat(path); err == nil {
+			return nil, fmt.Errorf("catalog db already exists: %s", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("stat catalog db: %w", err)
+		}
+	} else {
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) && !createDirectories {
+				return nil, fmt.Errorf("catalog db does not exist: %s", path)
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("stat catalog db: %w", err)
+			}
+		}
+	}
+
+	if createDirectories {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, fmt.Errorf("create db directory: %w", err)
+		}
 	}
 
 	db, err := sql.Open("sqlite", path)

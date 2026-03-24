@@ -12,8 +12,19 @@ type StorageEndpoint struct {
 	IdentitySignature  string
 	AvailabilityStatus string
 	ConnectionConfig   string
+	CredentialRef      string
+	CredentialHint     string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+type LibraryMetadata struct {
+	LibraryID     string
+	LibraryName   string
+	FileExtension string
+	SchemaFamily  string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Asset struct {

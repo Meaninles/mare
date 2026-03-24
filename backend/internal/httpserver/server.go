@@ -9,27 +9,32 @@ import (
 
 	"mam/backend/internal/catalog"
 	"mam/backend/internal/config"
+	"mam/backend/internal/librarysession"
 	"mam/backend/internal/platform"
 )
 
 type Server struct {
 	config  config.Config
 	system  platform.SystemState
-	catalog *catalog.Service
+	session *librarysession.Manager
 	http    *http.Server
 }
 
-func New(cfg config.Config, system platform.SystemState, catalogService *catalog.Service) *Server {
+func New(cfg config.Config, system platform.SystemState, session *librarysession.Manager) *Server {
 	server := &Server{
 		config:  cfg,
 		system:  system,
-		catalog: catalogService,
+		session: session,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.HandleFunc("/readyz", server.handleReady)
 	mux.HandleFunc("/api/v1/system/bootstrap", server.handleBootstrap)
+	mux.HandleFunc("/api/v1/libraries/current", server.handleLibraryCurrent)
+	mux.HandleFunc("/api/v1/libraries/create", server.handleLibraryCreate)
+	mux.HandleFunc("/api/v1/libraries/open", server.handleLibraryOpen)
+	mux.HandleFunc("/api/v1/libraries/close", server.handleLibraryClose)
 	mux.HandleFunc("/api/v1/system/logs", server.handleSystemLogs)
 	mux.HandleFunc("/api/v1/settings/backup/export", server.handleSettingsBackupExport)
 	mux.HandleFunc("/api/v1/settings/backup/import", server.handleSettingsBackupImport)
@@ -87,6 +92,21 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	defer cancel()
 
 	return server.http.Shutdown(shutdownCtx)
+}
+
+func (server *Server) requireCatalog(w http.ResponseWriter) (*catalog.Service, bool) {
+	catalogService, err := server.session.Catalog()
+	if err == nil {
+		return catalogService, true
+	}
+
+	statusCode := http.StatusConflict
+	server.writeJSON(w, statusCode, map[string]any{
+		"success": false,
+		"error":   err.Error(),
+		"library": server.session.Status(),
+	})
+	return nil, false
 }
 
 func (server *Server) loggingMiddleware(next http.Handler) http.Handler {

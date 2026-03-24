@@ -10,6 +10,8 @@ pub enum AppError {
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("tauri path error: {0}")]
     Path(String),
+    #[error("{0}")]
+    Message(String),
 }
 
 impl serde::Serialize for AppError {

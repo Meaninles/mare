@@ -59,6 +59,7 @@ type RegisterEndpointRequest struct {
 	RoleMode           string          `json:"roleMode"`
 	AvailabilityStatus string          `json:"availabilityStatus"`
 	IdentitySignature  string          `json:"identitySignature"`
+	CredentialRef      string          `json:"credentialRef,omitempty"`
 	ConnectionConfig   json.RawMessage `json:"connectionConfig"`
 }
 
@@ -70,6 +71,7 @@ type UpdateEndpointRequest struct {
 	RoleMode           string          `json:"roleMode"`
 	AvailabilityStatus string          `json:"availabilityStatus"`
 	IdentitySignature  string          `json:"identitySignature"`
+	CredentialRef      string          `json:"credentialRef,omitempty"`
 	ConnectionConfig   json.RawMessage `json:"connectionConfig"`
 }
 
@@ -82,6 +84,9 @@ type EndpointRecord struct {
 	RoleMode           string          `json:"roleMode"`
 	IdentitySignature  string          `json:"identitySignature"`
 	AvailabilityStatus string          `json:"availabilityStatus"`
+	CredentialRef      string          `json:"credentialRef,omitempty"`
+	CredentialHint     string          `json:"credentialHint,omitempty"`
+	HasCredential      bool            `json:"hasCredential"`
 	ConnectionConfig   json.RawMessage `json:"connectionConfig"`
 	CreatedAt          time.Time       `json:"createdAt"`
 	UpdatedAt          time.Time       `json:"updatedAt"`
@@ -125,18 +130,24 @@ type AssetAudioMetadataRecord struct {
 }
 
 type ReplicaRecord struct {
-	ID            string              `json:"id"`
-	EndpointID    string              `json:"endpointId"`
-	PhysicalPath  string              `json:"physicalPath"`
-	ReplicaStatus string              `json:"replicaStatus"`
-	ExistsFlag    bool                `json:"existsFlag"`
-	LastSeenAt    *time.Time          `json:"lastSeenAt,omitempty"`
-	Version       *AssetVersionRecord `json:"version,omitempty"`
+	ID                  string              `json:"id"`
+	EndpointID          string              `json:"endpointId"`
+	PhysicalPath        string              `json:"physicalPath"`
+	RelativePath        string              `json:"relativePath"`
+	LogicalDirectory    string              `json:"logicalDirectory"`
+	ResolvedDirectory   string              `json:"resolvedDirectory"`
+	MatchesLogicalPath  bool                `json:"matchesLogicalPath"`
+	ReplicaStatus       string              `json:"replicaStatus"`
+	ExistsFlag          bool                `json:"existsFlag"`
+	LastSeenAt          *time.Time          `json:"lastSeenAt,omitempty"`
+	Version             *AssetVersionRecord `json:"version,omitempty"`
 }
 
 type AssetRecord struct {
 	ID                    string                    `json:"id"`
 	LogicalPathKey        string                    `json:"logicalPathKey"`
+	CanonicalPath         string                    `json:"canonicalPath"`
+	CanonicalDirectory    string                    `json:"canonicalDirectory"`
 	DisplayName           string                    `json:"displayName"`
 	MediaType             string                    `json:"mediaType"`
 	AssetStatus           string                    `json:"assetStatus"`

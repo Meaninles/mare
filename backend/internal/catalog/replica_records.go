@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"mam/backend/internal/store"
@@ -20,7 +19,7 @@ func (service *Service) listManagedEnabledEndpoints(ctx context.Context) ([]stor
 	managedEndpoints := make([]store.StorageEndpoint, 0, len(endpoints))
 	endpointLookup := make(map[string]store.StorageEndpoint, len(endpoints))
 	for _, endpoint := range endpoints {
-		if !strings.EqualFold(strings.TrimSpace(endpoint.RoleMode), defaultRoleMode) {
+		if !isManagedEndpoint(endpoint) {
 			continue
 		}
 		managedEndpoints = append(managedEndpoints, endpoint)
@@ -34,11 +33,15 @@ func (service *Service) buildAssetReplicaRecords(
 	ctx context.Context,
 	replicas []store.Replica,
 	expectedEndpoints []store.StorageEndpoint,
+	endpointLookup map[string]store.StorageEndpoint,
+	logicalPathKey string,
 ) ([]ReplicaRecord, int, int, error) {
 	replicaRecords := make([]ReplicaRecord, 0, len(replicas)+len(expectedEndpoints))
 	representedEndpointIDs := make(map[string]struct{}, len(replicas))
 	availableReplicaCount := 0
 	missingReplicaCount := 0
+	canonicalPath := canonicalLogicalPath(logicalPathKey)
+	canonicalDirectory := canonicalDirectoryPath(logicalPathKey)
 
 	for _, replica := range replicas {
 		representedEndpointIDs[replica.EndpointID] = struct{}{}
@@ -53,14 +56,28 @@ func (service *Service) buildAssetReplicaRecords(
 			missingReplicaCount++
 		}
 
+		endpoint := endpointLookup[replica.EndpointID]
+		relativePath := canonicalPath
+		resolvedDirectory := canonicalDirectory
+		matchesLogicalPath := false
+		if endpoint.ID != "" {
+			relativePath = deriveReplicaRelativePath(endpoint, replica.PhysicalPath, logicalPathKey)
+			resolvedDirectory = resolveReplicaDirectoryPath(endpoint, logicalPathKey)
+			matchesLogicalPath = matchesCanonicalLogicalPath(endpoint, replica.PhysicalPath, logicalPathKey)
+		}
+
 		replicaRecords = append(replicaRecords, ReplicaRecord{
-			ID:            replica.ID,
-			EndpointID:    replica.EndpointID,
-			PhysicalPath:  replica.PhysicalPath,
-			ReplicaStatus: replica.ReplicaStatus,
-			ExistsFlag:    replica.ExistsFlag,
-			LastSeenAt:    replica.LastSeenAt,
-			Version:       versionRecord,
+			ID:                 replica.ID,
+			EndpointID:         replica.EndpointID,
+			PhysicalPath:       replica.PhysicalPath,
+			RelativePath:       relativePath,
+			LogicalDirectory:   canonicalDirectory,
+			ResolvedDirectory:  resolvedDirectory,
+			MatchesLogicalPath: matchesLogicalPath,
+			ReplicaStatus:      replica.ReplicaStatus,
+			ExistsFlag:         replica.ExistsFlag,
+			LastSeenAt:         replica.LastSeenAt,
+			Version:            versionRecord,
 		})
 	}
 
@@ -71,11 +88,15 @@ func (service *Service) buildAssetReplicaRecords(
 
 		missingReplicaCount++
 		replicaRecords = append(replicaRecords, ReplicaRecord{
-			ID:            syntheticReplicaID(endpoint.ID),
-			EndpointID:    endpoint.ID,
-			PhysicalPath:  "",
-			ReplicaStatus: string(ReplicaStatusMissing),
-			ExistsFlag:    false,
+			ID:                 syntheticReplicaID(endpoint.ID),
+			EndpointID:         endpoint.ID,
+			PhysicalPath:       "",
+			RelativePath:       canonicalPath,
+			LogicalDirectory:   canonicalDirectory,
+			ResolvedDirectory:  resolveReplicaDirectoryPath(endpoint, logicalPathKey),
+			MatchesLogicalPath: true,
+			ReplicaStatus:      string(ReplicaStatusMissing),
+			ExistsFlag:         false,
 		})
 	}
 
@@ -87,11 +108,14 @@ func (service *Service) buildSyncReplicaRecords(
 	replicas []store.Replica,
 	expectedEndpoints []store.StorageEndpoint,
 	endpointLookup map[string]store.StorageEndpoint,
+	logicalPathKey string,
 ) ([]SyncReplicaRecord, int, int, error) {
 	replicaRecords := make([]SyncReplicaRecord, 0, len(replicas)+len(expectedEndpoints))
 	representedEndpointIDs := make(map[string]struct{}, len(replicas))
 	availableReplicaCount := 0
 	missingReplicaCount := 0
+	canonicalPath := canonicalLogicalPath(logicalPathKey)
+	canonicalDirectory := canonicalDirectoryPath(logicalPathKey)
 
 	for _, replica := range replicas {
 		representedEndpointIDs[replica.EndpointID] = struct{}{}
@@ -111,15 +135,29 @@ func (service *Service) buildSyncReplicaRecords(
 			endpointName = endpoint.Name
 		}
 
+		endpoint := endpointLookup[replica.EndpointID]
+		relativePath := canonicalPath
+		resolvedDirectory := canonicalDirectory
+		matchesLogicalPath := false
+		if endpoint.ID != "" {
+			relativePath = deriveReplicaRelativePath(endpoint, replica.PhysicalPath, logicalPathKey)
+			resolvedDirectory = resolveReplicaDirectoryPath(endpoint, logicalPathKey)
+			matchesLogicalPath = matchesCanonicalLogicalPath(endpoint, replica.PhysicalPath, logicalPathKey)
+		}
+
 		replicaRecords = append(replicaRecords, SyncReplicaRecord{
-			ID:            replica.ID,
-			EndpointID:    replica.EndpointID,
-			EndpointName:  endpointName,
-			PhysicalPath:  replica.PhysicalPath,
-			ReplicaStatus: replica.ReplicaStatus,
-			ExistsFlag:    replica.ExistsFlag,
-			LastSeenAt:    replica.LastSeenAt,
-			Version:       versionRecord,
+			ID:                 replica.ID,
+			EndpointID:         replica.EndpointID,
+			EndpointName:       endpointName,
+			PhysicalPath:       replica.PhysicalPath,
+			RelativePath:       relativePath,
+			LogicalDirectory:   canonicalDirectory,
+			ResolvedDirectory:  resolvedDirectory,
+			MatchesLogicalPath: matchesLogicalPath,
+			ReplicaStatus:      replica.ReplicaStatus,
+			ExistsFlag:         replica.ExistsFlag,
+			LastSeenAt:         replica.LastSeenAt,
+			Version:            versionRecord,
 		})
 	}
 
@@ -130,12 +168,16 @@ func (service *Service) buildSyncReplicaRecords(
 
 		missingReplicaCount++
 		replicaRecords = append(replicaRecords, SyncReplicaRecord{
-			ID:            syntheticReplicaID(endpoint.ID),
-			EndpointID:    endpoint.ID,
-			EndpointName:  endpoint.Name,
-			PhysicalPath:  "",
-			ReplicaStatus: string(ReplicaStatusMissing),
-			ExistsFlag:    false,
+			ID:                 syntheticReplicaID(endpoint.ID),
+			EndpointID:         endpoint.ID,
+			EndpointName:       endpoint.Name,
+			PhysicalPath:       "",
+			RelativePath:       canonicalPath,
+			LogicalDirectory:   canonicalDirectory,
+			ResolvedDirectory:  resolveReplicaDirectoryPath(endpoint, logicalPathKey),
+			MatchesLogicalPath: true,
+			ReplicaStatus:      string(ReplicaStatusMissing),
+			ExistsFlag:         false,
 		})
 	}
 

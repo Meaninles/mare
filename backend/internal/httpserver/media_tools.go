@@ -17,6 +17,11 @@ func (server *Server) handleVideoMediaToolAnalyze(w http.ResponseWriter, r *http
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	file, fileHeader, overrides, err := parseMediaToolUpload(r)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -27,7 +32,7 @@ func (server *Server) handleVideoMediaToolAnalyze(w http.ResponseWriter, r *http
 	}
 	defer file.Close()
 
-	analysis, err := server.catalog.AnalyzeUploadedVideo(r.Context(), fileHeader.Filename, file, overrides)
+	analysis, err := catalogService.AnalyzeUploadedVideo(r.Context(), fileHeader.Filename, file, overrides)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -48,6 +53,11 @@ func (server *Server) handleAudioMediaToolAnalyze(w http.ResponseWriter, r *http
 		return
 	}
 
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
 	file, fileHeader, overrides, err := parseMediaToolUpload(r)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -58,7 +68,7 @@ func (server *Server) handleAudioMediaToolAnalyze(w http.ResponseWriter, r *http
 	}
 	defer file.Close()
 
-	analysis, err := server.catalog.AnalyzeUploadedAudio(r.Context(), fileHeader.Filename, file, overrides)
+	analysis, err := catalogService.AnalyzeUploadedAudio(r.Context(), fileHeader.Filename, file, overrides)
 	if err != nil {
 		server.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
