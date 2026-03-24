@@ -10,6 +10,11 @@ type libraryPathRequest struct {
 	Path string `json:"path"`
 }
 
+type legacyLibraryMigrateRequest struct {
+	TargetPath  string `json:"targetPath"`
+	LibraryName string `json:"libraryName"`
+}
+
 func (server *Server) handleLibraryCurrent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -114,5 +119,62 @@ func (server *Server) handleLibraryClose(w http.ResponseWriter, r *http.Request)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"library": status,
+	})
+}
+
+func (server *Server) handleLegacyLibraryStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	status, err := server.session.LegacyCatalogStatus(r.Context(), server.config.CatalogDBPath)
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"legacy":  status,
+	})
+}
+
+func (server *Server) handleLegacyLibraryMigrate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	var request legacyLibraryMigrateRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+
+	result, err := server.session.MigrateLegacyCatalog(
+		r.Context(),
+		server.config.CatalogDBPath,
+		request.TargetPath,
+		request.LibraryName,
+	)
+	if err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"migration": result,
+		"library":   result.Library,
 	})
 }

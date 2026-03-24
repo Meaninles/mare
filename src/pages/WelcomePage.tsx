@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
+  ArrowRight,
   FolderOpen,
   FolderPlus,
+  Folders,
   HardDrive,
   LibraryBig,
   LoaderCircle,
@@ -28,7 +30,6 @@ export function WelcomePage() {
     closeLibrary,
     createLibrary,
     currentLibrary,
-    currentLibrarySession,
     isLibraryOpen,
     openLibraryPath,
     openRegisteredLibrary,
@@ -52,10 +53,10 @@ export function WelcomePage() {
     try {
       const library = await createLibrary(createForm);
       setCreateForm(emptyForm);
-      setNotice(`已创建并挂载资产库“${library.name}”。`);
-      navigate("/assets");
+      setNotice(`已创建“${library.name}”，请先配置存储节点。`);
+      navigate("/storage?setup=first-endpoint");
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "创建资产库失败。");
+      setError(createError instanceof Error ? createError.message : "创建资产库失败");
     } finally {
       setBusyAction(null);
     }
@@ -69,10 +70,10 @@ export function WelcomePage() {
     try {
       const library = await openLibraryPath(openForm);
       setOpenForm(emptyForm);
-      setNotice(`已打开资产库“${library.name}”。`);
+      setNotice(`已打开“${library.name}”`);
       navigate("/assets");
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : "打开资产库失败。");
+      setError(openError instanceof Error ? openError.message : "打开资产库失败");
     } finally {
       setBusyAction(null);
     }
@@ -90,10 +91,10 @@ export function WelcomePage() {
 
     try {
       await openRegisteredLibrary(target);
-      setNotice(`已打开最近使用的资产库“${target.name}”。`);
+      setNotice(`已切换到“${target.name}”`);
       navigate("/assets");
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : "打开最近使用的资产库失败。");
+      setError(openError instanceof Error ? openError.message : "打开最近资产库失败");
     } finally {
       setBusyAction(null);
     }
@@ -106,136 +107,156 @@ export function WelcomePage() {
 
     try {
       await closeLibrary();
-      setNotice("当前资产库已关闭。");
+      setNotice("当前资产库已关闭");
     } catch (closeError) {
-      setError(closeError instanceof Error ? closeError.message : "关闭资产库失败。");
+      setError(closeError instanceof Error ? closeError.message : "关闭资产库失败");
     } finally {
       setBusyAction(null);
     }
   }
 
   return (
-    <section className="page-stack">
-      <article className="hero-card library-hero">
-        <div className="library-hero-copy">
-          <p className="eyebrow">欢迎页</p>
-          <h3>从资产库开始，而不是直接从某个存储端开始。</h3>
-          <p>
-            先创建或打开一个资产库，再在这个资产库下面配置存储节点、导入规则和统一的文件资产视图。
-          </p>
+    <section className="page-stack welcome-stage">
+      <article className="hero-card welcome-hero">
+        <div className="welcome-hero-head">
+          <div className="window-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <p className="eyebrow">Libraries</p>
         </div>
 
-        <div className="hero-metrics">
-          <MetricCard label="最近资产库" value={recentLibraries.length} tone="neutral" />
-          <MetricCard label="当前会话" value={isLibraryOpen ? 1 : 0} tone={isLibraryOpen ? "success" : "warning"} />
-          <MetricCard label="应用模块" value={`${readyModuleCount}/${bootstrapQuery.data?.modules.length ?? 0}`} tone="neutral" />
-          <MetricCard label="应用数据库" value={bootstrapQuery.data?.database.ready ? "就绪" : "检查中"} tone={bootstrapQuery.data?.database.ready ? "success" : "warning"} />
+        <div className="welcome-hero-copy">
+          <h3>资产库</h3>
+          <div className="welcome-stat-row">
+            <QuickStat icon={<LibraryBig size={14} />} label="最近" value={recentLibraries.length} />
+            <QuickStat
+              icon={<Sparkles size={14} />}
+              label="会话"
+              value={isLibraryOpen ? "已打开" : "未打开"}
+            />
+            <QuickStat
+              icon={<HardDrive size={14} />}
+              label="模块"
+              value={`${readyModuleCount}/${bootstrapQuery.data?.modules.length ?? 0}`}
+            />
+          </div>
+
+          <div className="action-row">
+            <button
+              type="button"
+              className="ghost-button inline-button"
+              onClick={() => navigate("/library-manager")}
+            >
+              <Folders size={16} />
+              管理资产库
+            </button>
+          </div>
         </div>
       </article>
 
       {notice ? <p className="inline-note">{notice}</p> : null}
       {error ? <p className="error-copy">{error}</p> : null}
 
-      {currentLibrary ? (
-        <article className="detail-card">
+      <div className="welcome-zone-grid">
+        <article className="detail-card welcome-zone-card welcome-zone-tall">
           <div className="section-head">
             <div>
-              <p className="eyebrow">当前资产库</p>
-              <h4>{currentLibrary.name}</h4>
+              <p className="eyebrow">当前</p>
+              <h4>{currentLibrary?.name ?? "未打开资产库"}</h4>
             </div>
             <span className={`status-pill ${isLibraryOpen ? "success" : "subtle"}`}>
-              {isLibraryOpen ? "已挂载" : "未挂载"}
+              {isLibraryOpen ? "已打开" : "待选择"}
             </span>
           </div>
 
-          <div className="field-grid">
-            <div className="field">
-              <span>库文件路径</span>
-              <strong>{currentLibrary.path}</strong>
-            </div>
-            <div className="field">
-              <span>最近打开</span>
-              <strong>{formatCatalogDate(currentLibrary.lastOpenedAt ?? currentLibrary.updatedAt)}</strong>
-            </div>
-            {currentLibrarySession?.ready ? (
-              <>
-                <div className="field">
-                  <span>架构</span>
-                  <strong>{currentLibrarySession.schemaFamily ?? "unknown"}</strong>
-                </div>
-                <div className="field">
-                  <span>缓存根目录</span>
-                  <strong>{currentLibrarySession.cacheRoot ?? "-"}</strong>
-                </div>
-              </>
-            ) : null}
-          </div>
+          {currentLibrary ? (
+            <>
+              <div className="welcome-zone-meta">
+                <span>{currentLibrary.path}</span>
+                <span>{formatCatalogDate(currentLibrary.lastOpenedAt ?? currentLibrary.updatedAt)}</span>
+              </div>
 
-          <div className="action-row">
-            {isLibraryOpen ? (
-              <>
-                <button type="button" className="primary-button" onClick={() => navigate("/assets")}>
-                  <FolderOpen size={16} />
-                  进入资产视图
-                </button>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => void handleCloseLibrary()}
-                  disabled={busyAction === "close"}
-                >
-                  {busyAction === "close" ? <LoaderCircle size={16} className="spin" /> : <HardDrive size={16} />}
-                  关闭当前资产库
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => void handleOpenRecentLibrary(currentLibrary.id)}
-                disabled={busyAction !== null}
-              >
-                {busyAction === "recent" ? <LoaderCircle size={16} className="spin" /> : <LibraryBig size={16} />}
-                重新打开当前资产库
-              </button>
-            )}
-          </div>
+              <div className="welcome-zone-actions">
+                {isLibraryOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => navigate("/assets")}
+                    >
+                      <ArrowRight size={16} />
+                      进入资产
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handleCloseLibrary()}
+                      disabled={busyAction === "close"}
+                    >
+                      {busyAction === "close" ? <LoaderCircle size={16} className="spin" /> : <HardDrive size={16} />}
+                      关闭
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void handleOpenRecentLibrary(currentLibrary.id)}
+                    disabled={busyAction !== null}
+                  >
+                    {busyAction === "recent" ? <LoaderCircle size={16} className="spin" /> : <FolderOpen size={16} />}
+                    打开
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="welcome-zone-empty">
+              <LibraryBig size={20} />
+              <div>
+                <strong>从右侧开始</strong>
+                <p>新建，或打开一个已有库。</p>
+              </div>
+            </div>
+          )}
         </article>
-      ) : null}
 
-      <div className="page-grid settings-layout">
-        <article className="detail-card">
-          <div className="section-head">
+        <article className="detail-card welcome-zone-card">
+          <div className="quick-action-head">
+            <span className="quick-action-icon">
+              <FolderPlus size={18} />
+            </span>
             <div>
-              <p className="eyebrow">新建</p>
-              <h4>新建资产库</h4>
+              <p className="eyebrow">Create</p>
+              <h4>新建</h4>
             </div>
-            <span className="status-pill subtle">`.maredb`</span>
           </div>
 
-          <div className="field-grid">
+          <div className="field-grid quick-field-grid">
             <label className="field">
-              <span>资产库名称</span>
+              <span>名称</span>
               <input
                 value={createForm.name}
-                onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))}
-                placeholder="例如：2026新疆西藏自驾"
+                onChange={(event) =>
+                  setCreateForm((current) => ({ ...current, name: event.target.value }))
+                }
+                placeholder="2026 新疆"
               />
             </label>
 
             <label className="field field-span">
-              <span>资产库文件路径</span>
+              <span>路径</span>
               <input
                 value={createForm.path}
-                onChange={(event) => setCreateForm((current) => ({ ...current, path: event.target.value }))}
+                onChange={(event) =>
+                  setCreateForm((current) => ({ ...current, path: event.target.value }))
+                }
                 placeholder="B:\\Libraries\\2026-xinjiang-trip.maredb"
               />
             </label>
           </div>
-
-          <p className="secondary-text">
-            这里填的是资产库数据库文件路径，不是某个存储节点路径。没有后缀时系统会自动补 `.maredb`。
-          </p>
 
           <div className="action-row">
             <button
@@ -245,35 +266,41 @@ export function WelcomePage() {
               disabled={busyAction !== null}
             >
               {busyAction === "create" ? <LoaderCircle size={16} className="spin" /> : <FolderPlus size={16} />}
-              创建并打开
+              创建
             </button>
           </div>
         </article>
 
-        <article className="detail-card">
-          <div className="section-head">
+        <article className="detail-card welcome-zone-card">
+          <div className="quick-action-head">
+            <span className="quick-action-icon">
+              <FolderOpen size={18} />
+            </span>
             <div>
-              <p className="eyebrow">打开</p>
-              <h4>打开已有资产库</h4>
+              <p className="eyebrow">Open</p>
+              <h4>打开</h4>
             </div>
-            <span className="status-pill subtle">按需挂载</span>
           </div>
 
-          <div className="field-grid">
+          <div className="field-grid quick-field-grid">
             <label className="field">
-              <span>显示名称</span>
+              <span>名称</span>
               <input
                 value={openForm.name}
-                onChange={(event) => setOpenForm((current) => ({ ...current, name: event.target.value }))}
-                placeholder="可选；留空则取文件名"
+                onChange={(event) =>
+                  setOpenForm((current) => ({ ...current, name: event.target.value }))
+                }
+                placeholder="可选"
               />
             </label>
 
             <label className="field field-span">
-              <span>资产库文件路径</span>
+              <span>路径</span>
               <input
                 value={openForm.path}
-                onChange={(event) => setOpenForm((current) => ({ ...current, path: event.target.value }))}
+                onChange={(event) =>
+                  setOpenForm((current) => ({ ...current, path: event.target.value }))
+                }
                 placeholder="B:\\Libraries\\2026-xinjiang-trip.maredb"
               />
             </label>
@@ -287,64 +314,61 @@ export function WelcomePage() {
               disabled={busyAction !== null}
             >
               {busyAction === "open" ? <LoaderCircle size={16} className="spin" /> : <FolderOpen size={16} />}
-              打开并登记
+              打开
             </button>
           </div>
         </article>
       </div>
 
-      <article className="detail-card">
+      <article className="detail-card recent-libraries-card">
         <div className="section-head">
           <div>
-            <p className="eyebrow">最近资产库</p>
+            <p className="eyebrow">Recent</p>
             <h4>最近使用</h4>
           </div>
-          <span className="status-pill subtle">
-            <Sparkles size={14} />
-            资产库优先
-          </span>
+          <span className="status-pill subtle">{recentLibraries.length}</span>
         </div>
 
         {recentLibraries.length === 0 ? (
           <div className="sync-empty-block">
             <LibraryBig size={20} />
             <div>
-              <strong>还没有登记过任何资产库</strong>
-              <p>先创建一个新的资产库，或者手动打开已有的库文件。</p>
+              <strong>还没有资产库</strong>
+              <p>先创建，或打开一个已有库。</p>
             </div>
           </div>
         ) : (
-          <div className="library-record-list">
-            {recentLibraries.map((library) => (
-              <article key={library.id} className="library-record-card">
-                <div className="library-record-head">
-                  <div>
-                    <strong>{library.name}</strong>
-                    <p>{library.path}</p>
+          <div className="recent-library-grid">
+            {recentLibraries.map((library) => {
+              const active = library.id === currentLibrary?.id;
+
+              return (
+                <article key={library.id} className={`library-mini-card${active ? " is-active" : ""}`}>
+                  <div className="library-mini-head">
+                    <div>
+                      <strong>{library.name}</strong>
+                      <p>{library.path}</p>
+                    </div>
+                    <span className={`status-pill ${active && isLibraryOpen ? "success" : "subtle"}`}>
+                      {active && isLibraryOpen ? "当前" : "最近"}
+                    </span>
                   </div>
-                  <span className={`status-pill ${library.id === currentLibrary?.id ? (isLibraryOpen ? "success" : "subtle") : "subtle"}`}>
-                    {library.id === currentLibrary?.id ? (isLibraryOpen ? "当前已打开" : "当前选中") : "最近使用"}
-                  </span>
-                </div>
 
-                <div className="library-record-meta">
-                  <span>最近打开：{formatCatalogDate(library.lastOpenedAt ?? library.updatedAt)}</span>
-                  <span>创建于：{formatCatalogDate(library.createdAt)}</span>
-                </div>
-
-                <div className="action-row">
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => void handleOpenRecentLibrary(library.id)}
-                    disabled={busyAction !== null}
-                  >
-                    {busyAction === "recent" ? <LoaderCircle size={16} className="spin" /> : <FolderOpen size={16} />}
-                    打开这个资产库
-                  </button>
-                </div>
-              </article>
-            ))}
+                  <div className="library-mini-meta">
+                    <span>{formatCatalogDate(library.lastOpenedAt ?? library.updatedAt)}</span>
+                    <button
+                      type="button"
+                      className="ghost-button inline-button"
+                      onClick={() => void handleOpenRecentLibrary(library.id)}
+                      disabled={busyAction !== null}
+                    >
+                      {busyAction === "recent" ? <LoaderCircle size={16} className="spin" /> : <ArrowRight size={16} />}
+                      打开
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </article>
@@ -352,19 +376,19 @@ export function WelcomePage() {
   );
 }
 
-function MetricCard({
+function QuickStat({
+  icon,
   label,
-  value,
-  tone
+  value
 }: {
+  icon: ReactNode;
   label: string;
   value: string | number;
-  tone: "success" | "warning" | "neutral";
 }) {
   return (
-    <article className={`metric-card tone-${tone}`}>
-      <p>{label}</p>
-      <strong>{value}</strong>
-    </article>
+    <span className="status-pill subtle quick-stat-pill">
+      {icon}
+      {label} {value}
+    </span>
   );
 }

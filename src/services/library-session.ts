@@ -1,4 +1,8 @@
-import type { BackendLibrarySessionResponse } from "../types/libraries";
+import type {
+  BackendLibrarySessionResponse,
+  LegacyCatalogMigrationResponse,
+  LegacyCatalogStatusResponse
+} from "../types/libraries";
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8080";
 
@@ -56,4 +60,18 @@ export async function openBackendLibrary(baseUrl: string, path: string): Promise
 
 export async function closeBackendLibrary(baseUrl: string): Promise<BackendLibrarySessionResponse> {
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/libraries/close`, {});
+}
+
+export async function getLegacyCatalogStatus(baseUrl: string): Promise<LegacyCatalogStatusResponse> {
+  return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/libraries/legacy/status`);
+}
+
+export async function migrateLegacyCatalog(
+  baseUrl: string,
+  payload: {
+    targetPath?: string;
+    libraryName?: string;
+  }
+): Promise<LegacyCatalogMigrationResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/libraries/legacy/migrate`, payload);
 }

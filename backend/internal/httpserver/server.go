@@ -35,6 +35,8 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/libraries/create", server.handleLibraryCreate)
 	mux.HandleFunc("/api/v1/libraries/open", server.handleLibraryOpen)
 	mux.HandleFunc("/api/v1/libraries/close", server.handleLibraryClose)
+	mux.HandleFunc("/api/v1/libraries/legacy/status", server.handleLegacyLibraryStatus)
+	mux.HandleFunc("/api/v1/libraries/legacy/migrate", server.handleLegacyLibraryMigrate)
 	mux.HandleFunc("/api/v1/system/logs", server.handleSystemLogs)
 	mux.HandleFunc("/api/v1/settings/backup/export", server.handleSettingsBackupExport)
 	mux.HandleFunc("/api/v1/settings/backup/import", server.handleSettingsBackupImport)

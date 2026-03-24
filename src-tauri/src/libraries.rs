@@ -43,6 +43,24 @@ pub async fn clear_active_library(core: State<'_, AppCore>) -> Result<(), AppErr
 }
 
 #[tauri::command]
+pub async fn update_library_record(
+    id: String,
+    path: String,
+    name: Option<String>,
+    core: State<'_, AppCore>,
+) -> Result<RegisteredLibrary, AppError> {
+    core.update_library_record(id, path, name).await
+}
+
+#[tauri::command]
+pub async fn delete_library_record(
+    id: String,
+    core: State<'_, AppCore>,
+) -> Result<(), AppError> {
+    core.delete_library_record(id).await
+}
+
+#[tauri::command]
 pub async fn list_library_tasks(
     limit_per_library: Option<i64>,
     core: State<'_, AppCore>,

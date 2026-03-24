@@ -15,8 +15,8 @@ mod tasks;
 use app_core::AppCore;
 use bootstrap::get_app_bootstrap;
 use libraries::{
-    clear_active_library, create_library_record, list_libraries, list_library_tasks,
-    register_existing_library, set_active_library,
+    clear_active_library, create_library_record, delete_library_record, list_libraries,
+    list_library_tasks, register_existing_library, set_active_library, update_library_record,
 };
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -46,7 +46,9 @@ pub fn run() {
             create_library_record,
             register_existing_library,
             set_active_library,
-            clear_active_library
+            clear_active_library,
+            update_library_record,
+            delete_library_record
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

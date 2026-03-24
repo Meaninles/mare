@@ -7,12 +7,18 @@ import {
 } from "react";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useAppBootstrap } from "../hooks/useAppBootstrap";
-import { APP_BOOTSTRAP_QUERY_KEY, clearLibraryQueries, LIBRARY_SESSION_QUERY_KEY } from "../lib/query-keys";
+import {
+  APP_BOOTSTRAP_QUERY_KEY,
+  clearLibraryQueries,
+  LIBRARY_SESSION_QUERY_KEY
+} from "../lib/query-keys";
 import {
   clearActiveLibrary,
   createLibraryRecord,
+  deleteLibraryRecord,
   registerExistingLibrary,
-  setActiveLibrary
+  setActiveLibrary,
+  updateLibraryRecord
 } from "../services/desktop";
 import {
   closeBackendLibrary,
@@ -35,6 +41,12 @@ type LibraryMutationInput = {
   name?: string;
 };
 
+type UpdateLibraryInput = {
+  id: string;
+  path: string;
+  name?: string;
+};
+
 interface LibraryContextValue {
   bootstrapQuery: ReturnType<typeof useAppBootstrap>;
   sessionQuery: UseQueryResult<BackendLibrarySessionResponse, Error>;
@@ -49,6 +61,8 @@ interface LibraryContextValue {
   createLibrary: (input: LibraryMutationInput) => Promise<RegisteredLibrary>;
   openLibraryPath: (input: LibraryMutationInput) => Promise<RegisteredLibrary>;
   openRegisteredLibrary: (library: RegisteredLibrary) => Promise<RegisteredLibrary>;
+  updateRegisteredLibrary: (input: UpdateLibraryInput) => Promise<RegisteredLibrary>;
+  deleteRegisteredLibrary: (library: RegisteredLibrary) => Promise<void>;
   closeLibrary: () => Promise<void>;
 }
 
@@ -75,11 +89,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     }
 
     return (
-      recentLibraries.find(
-        (library) =>
-          library.id === currentLibrarySession.libraryId ||
-          sameLibraryPath(library.path, currentLibrarySession.path)
-      ) ?? activeLibrary
+      recentLibraries.find((library) => sameLibraryPath(library.path, currentLibrarySession.path)) ??
+      activeLibrary
     );
   }, [activeLibrary, currentLibrarySession, recentLibraries]);
 
@@ -96,41 +107,71 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     await refreshState();
   }, [queryClient, refreshState]);
 
-  const createLibrary = useCallback(async (input: LibraryMutationInput) => {
-    const path = normalizeLibraryPath(input.path);
-    const name = normalizeOptionalText(input.name);
+  const createLibrary = useCallback(
+    async (input: LibraryMutationInput) => {
+      const path = normalizeLibraryPath(input.path);
+      const name = normalizeOptionalText(input.name);
 
-    const response = await createBackendLibrary(backendUrl, path);
-    unwrapLibraryResponse(response, "无法创建资产库。");
-    const library = await createLibraryRecord({ path, name });
-    await finalizeLibrarySwitch();
-    return library;
-  }, [finalizeLibrarySwitch]);
+      const response = await createBackendLibrary(backendUrl, path);
+      unwrapLibraryResponse(response, "无法创建资产库。");
 
-  const openLibraryPath = useCallback(async (input: LibraryMutationInput) => {
-    const path = normalizeLibraryPath(input.path);
-    const name = normalizeOptionalText(input.name);
-
-    const response = await openBackendLibrary(backendUrl, path);
-    unwrapLibraryResponse(response, "无法打开资产库。");
-    const library = await registerExistingLibrary({ path, name });
-    await finalizeLibrarySwitch();
-    return library;
-  }, [finalizeLibrarySwitch]);
-
-  const openRegisteredLibrary = useCallback(async (library: RegisteredLibrary) => {
-    if (currentLibrarySession?.ready && sameLibraryPath(currentLibrarySession.path, library.path)) {
-      await setActiveLibrary(library.id);
-      await refreshState();
+      const library = await createLibraryRecord({ path, name });
+      await finalizeLibrarySwitch();
       return library;
-    }
+    },
+    [finalizeLibrarySwitch]
+  );
 
-    const response = await openBackendLibrary(backendUrl, normalizeLibraryPath(library.path));
-    unwrapLibraryResponse(response, "无法打开所选资产库。");
-    await setActiveLibrary(library.id);
-    await finalizeLibrarySwitch();
-    return library;
-  }, [currentLibrarySession, finalizeLibrarySwitch, refreshState]);
+  const openLibraryPath = useCallback(
+    async (input: LibraryMutationInput) => {
+      const path = normalizeLibraryPath(input.path);
+      const name = normalizeOptionalText(input.name);
+
+      const response = await openBackendLibrary(backendUrl, path);
+      unwrapLibraryResponse(response, "无法打开资产库。");
+
+      const library = await registerExistingLibrary({ path, name });
+      await finalizeLibrarySwitch();
+      return library;
+    },
+    [finalizeLibrarySwitch]
+  );
+
+  const openRegisteredLibrary = useCallback(
+    async (library: RegisteredLibrary) => {
+      if (currentLibrarySession?.ready && sameLibraryPath(currentLibrarySession.path, library.path)) {
+        await setActiveLibrary(library.id);
+        await refreshState();
+        return library;
+      }
+
+      const response = await openBackendLibrary(backendUrl, normalizeLibraryPath(library.path));
+      unwrapLibraryResponse(response, "无法打开所选资产库。");
+
+      await setActiveLibrary(library.id);
+      await finalizeLibrarySwitch();
+      return library;
+    },
+    [currentLibrarySession, finalizeLibrarySwitch, refreshState]
+  );
+
+  const updateRegisteredLibrary = useCallback(
+    async (input: UpdateLibraryInput) => {
+      const library = await updateLibraryRecord({
+        id: input.id,
+        path: normalizeLibraryPath(input.path),
+        name: normalizeOptionalText(input.name)
+      });
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: APP_BOOTSTRAP_QUERY_KEY }),
+        bootstrapQuery.refetch()
+      ]);
+
+      return library;
+    },
+    [bootstrapQuery, queryClient]
+  );
 
   const closeLibrary = useCallback(async () => {
     const response = await closeBackendLibrary(backendUrl);
@@ -143,36 +184,69 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     await refreshState();
   }, [queryClient, refreshState]);
 
-  const value = useMemo<LibraryContextValue>(() => ({
-    bootstrapQuery,
-    sessionQuery,
-    recentLibraries,
-    activeLibrary,
-    currentLibrary,
-    currentLibrarySession,
-    currentLibraryId,
-    isInitializing: bootstrapQuery.isLoading || sessionQuery.isLoading,
-    isLibraryOpen,
-    refreshState,
-    createLibrary,
-    openLibraryPath,
-    openRegisteredLibrary,
-    closeLibrary
-  }), [
-    activeLibrary,
-    bootstrapQuery,
-    closeLibrary,
-    createLibrary,
-    currentLibrary,
-    currentLibraryId,
-    currentLibrarySession,
-    isLibraryOpen,
-    openLibraryPath,
-    openRegisteredLibrary,
-    recentLibraries,
-    refreshState,
-    sessionQuery
-  ]);
+  const deleteRegisteredLibrary = useCallback(
+    async (library: RegisteredLibrary) => {
+      const deletingCurrent =
+        activeLibrary?.id === library.id ||
+        currentLibrary?.id === library.id ||
+        sameLibraryPath(currentLibrarySession?.path, library.path);
+
+      if (deletingCurrent && currentLibrarySession?.ready) {
+        const response = await closeBackendLibrary(backendUrl);
+        if (!response.success) {
+          throw new Error(response.error ?? "无法在删除前关闭当前资产库。");
+        }
+      }
+
+      await deleteLibraryRecord(library.id);
+
+      if (deletingCurrent) {
+        await clearActiveLibrary();
+        clearLibraryQueries(queryClient);
+      }
+
+      await refreshState();
+    },
+    [activeLibrary?.id, currentLibrary?.id, currentLibrarySession, queryClient, refreshState]
+  );
+
+  const value = useMemo<LibraryContextValue>(
+    () => ({
+      bootstrapQuery,
+      sessionQuery,
+      recentLibraries,
+      activeLibrary,
+      currentLibrary,
+      currentLibrarySession,
+      currentLibraryId,
+      isInitializing: bootstrapQuery.isLoading || sessionQuery.isLoading,
+      isLibraryOpen,
+      refreshState,
+      createLibrary,
+      openLibraryPath,
+      openRegisteredLibrary,
+      updateRegisteredLibrary,
+      deleteRegisteredLibrary,
+      closeLibrary
+    }),
+    [
+      activeLibrary,
+      bootstrapQuery,
+      closeLibrary,
+      createLibrary,
+      currentLibrary,
+      currentLibraryId,
+      currentLibrarySession,
+      deleteRegisteredLibrary,
+      isLibraryOpen,
+      openLibraryPath,
+      openRegisteredLibrary,
+      recentLibraries,
+      refreshState,
+      sessionQuery,
+      updateRegisteredLibrary
+    ]
+  );
 
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;
 }

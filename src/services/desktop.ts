@@ -37,3 +37,15 @@ export async function setActiveLibrary(id: string): Promise<RegisteredLibrary> {
 export async function clearActiveLibrary(): Promise<void> {
   return invoke<void>("clear_active_library");
 }
+
+export async function updateLibraryRecord(payload: {
+  id: string;
+  path: string;
+  name?: string;
+}): Promise<RegisteredLibrary> {
+  return invoke<RegisteredLibrary>("update_library_record", payload);
+}
+
+export async function deleteLibraryRecord(id: string): Promise<void> {
+  return invoke<void>("delete_library_record", { id });
+}

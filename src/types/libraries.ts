@@ -49,3 +49,48 @@ export interface BackendLibrarySessionResponse {
   library?: BackendLibrarySession;
   error?: string;
 }
+
+export interface LibrarySummary {
+  assetCount: number;
+  replicaCount: number;
+  endpointCount: number;
+  importRuleCount: number;
+  taskCount: number;
+}
+
+export interface LegacyCatalogStatus {
+  available: boolean;
+  sourcePath?: string;
+  targetPath?: string;
+  manifestPath?: string;
+  targetExists: boolean;
+  suggestedLibraryName?: string;
+  sourceSummary?: LibrarySummary;
+  reason?: string;
+}
+
+export interface LegacyCatalogStatusResponse {
+  success: boolean;
+  legacy?: LegacyCatalogStatus;
+  error?: string;
+}
+
+export interface LegacyCatalogMigrationResult {
+  sourcePath: string;
+  targetPath: string;
+  manifestPath: string;
+  suggestedLibraryName: string;
+  sourcePreserved: boolean;
+  countsMatch: boolean;
+  sourceSummary: LibrarySummary;
+  targetSummary: LibrarySummary;
+  migratedAt: string;
+  library: BackendLibrarySession;
+}
+
+export interface LegacyCatalogMigrationResponse {
+  success: boolean;
+  migration?: LegacyCatalogMigrationResult;
+  library?: BackendLibrarySession;
+  error?: string;
+}

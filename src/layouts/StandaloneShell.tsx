@@ -1,4 +1,4 @@
-import { FolderOpen, LibraryBig, Settings2, Workflow } from "lucide-react";
+import { FolderOpen, Folders, LibraryBig, Settings2, Workflow } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
 import { MareLogo } from "../components/MareLogo";
@@ -9,79 +9,92 @@ export function StandaloneShell() {
 
   return (
     <div className="app-frame">
-      <aside className="sidebar">
+      <aside className="sidebar sidebar-rail">
         <div className="sidebar-inner">
-          <div className="brand-panel compact">
-            <MareLogo className="brand-mark" />
-            <div className="brand-copy-block">
+          <div className="brand-panel rail-brand">
+            <div className="window-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <MareLogo className="brand-mark rail-brand-mark" />
+            <div className="rail-brand-copy">
               <p className="eyebrow">Mare</p>
-              <h1>Mare</h1>
-              <p className="brand-copy">
-                先选择或创建资产库，再进入统一的文件资产管理。
-              </p>
             </div>
           </div>
 
-          <nav className="nav-list" aria-label="应用导航">
-            <NavLink to="/welcome" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-              <span className="nav-item-icon">
-                <LibraryBig size={18} strokeWidth={1.8} />
+          <nav className="nav-list nav-rail" aria-label="应用导航">
+            <NavLink to="/welcome" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="资产库">
+              <span className="nav-item-icon rail-nav-icon">
+                <LibraryBig size={18} strokeWidth={1.85} />
               </span>
-              <span className="nav-item-copy compact">
-                <strong>资产库入口</strong>
-                <small>新建、打开和查看最近使用的资产库。</small>
-              </span>
-            </NavLink>
-
-            <NavLink to="/system-tasks" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-              <span className="nav-item-icon">
-                <Workflow size={18} strokeWidth={1.8} />
-              </span>
-              <span className="nav-item-copy compact">
-                <strong>传输任务</strong>
-                <small>按资产库查看所有同步任务，并预留下载任务类别。</small>
+              <span className="nav-item-copy rail-nav-copy">
+                <strong>资产库</strong>
               </span>
             </NavLink>
 
-            <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-              <span className="nav-item-icon">
-                <Settings2 size={18} strokeWidth={1.8} />
+            <NavLink to="/library-manager" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="管理">
+              <span className="nav-item-icon rail-nav-icon">
+                <Folders size={18} strokeWidth={1.85} />
               </span>
-              <span className="nav-item-copy compact">
-                <strong>应用设置</strong>
-                <small>主题、备份和诊断工具保持在应用层。</small>
+              <span className="nav-item-copy rail-nav-copy">
+                <strong>管理</strong>
+              </span>
+            </NavLink>
+
+            <NavLink to="/system-tasks" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="任务">
+              <span className="nav-item-icon rail-nav-icon">
+                <Workflow size={18} strokeWidth={1.85} />
+              </span>
+              <span className="nav-item-copy rail-nav-copy">
+                <strong>任务</strong>
+              </span>
+            </NavLink>
+
+            <NavLink to="/settings" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="设置">
+              <span className="nav-item-icon rail-nav-icon">
+                <Settings2 size={18} strokeWidth={1.85} />
+              </span>
+              <span className="nav-item-copy rail-nav-copy">
+                <strong>设置</strong>
               </span>
             </NavLink>
           </nav>
-
-          {currentLibrary ? (
-            <article className="sidebar-footer compact">
-              <p className="sidebar-meta">{currentLibrary.name}</p>
-              <p className="sidebar-submeta">
-                {isLibraryOpen && currentLibrarySession?.ready
-                  ? `当前已打开：${currentLibrarySession.name ?? currentLibrary.name}`
-                  : "当前没有已挂载的资产库会话。"}
-              </p>
-
-              {isLibraryOpen ? (
-                <button type="button" className="ghost-button inline-button" onClick={() => navigate("/assets")}>
-                  <FolderOpen size={16} />
-                  进入资产视图
-                </button>
-              ) : null}
-            </article>
-          ) : null}
         </div>
 
-        <div className="sidebar-footer compact">
-          <p className="sidebar-meta">应用壳</p>
-          <p className="sidebar-submeta">
-            这里不直接加载资产内容，只有选定资产库后才会进入库内页面。
-          </p>
+        <div className="sidebar-footer rail-footer">
+          <span
+            className={`rail-status-dot${isLibraryOpen ? " is-live" : ""}`}
+            aria-hidden="true"
+          />
+          <div className="rail-footer-copy">
+            <strong>{currentLibrary?.name ?? "未打开"}</strong>
+            <small>{isLibraryOpen ? "当前资产库" : "入口页"}</small>
+          </div>
         </div>
       </aside>
 
-      <div className="content-shell">
+      <div className="content-shell content-shell-refined standalone-shell">
+        {currentLibrary ? (
+          <div className="standalone-shell-bar">
+            <div className="status-pill subtle toolbar-pill">
+              <LibraryBig size={14} />
+              {currentLibrarySession?.name ?? currentLibrary.name}
+            </div>
+
+            {isLibraryOpen ? (
+              <button
+                type="button"
+                className="ghost-button inline-button"
+                onClick={() => navigate("/assets")}
+              >
+                <FolderOpen size={16} />
+                进入资产
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <main className="content-panel">
           <Outlet />
         </main>

@@ -171,6 +171,74 @@ impl DatabaseManager {
         self.store_active_library_id(None).await
     }
 
+    pub async fn update_library_record(
+        &self,
+        id: String,
+        path: String,
+        name: Option<String>,
+    ) -> Result<RegisteredLibrary, AppError> {
+        let normalized_path = normalize_library_path(&path)?;
+        let resolved_name = resolve_library_name(name.as_deref(), &normalized_path)?;
+        let now = now_text();
+
+        let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM libraries WHERE id = ?1")
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await?;
+
+        if exists == 0 {
+            return Err(AppError::Message(format!("library not found: {id}")));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE libraries
+            SET name = ?1, path = ?2, updated_at = ?3
+            WHERE id = ?4
+            "#,
+        )
+        .bind(&resolved_name)
+        .bind(&normalized_path)
+        .bind(&now)
+        .bind(&id)
+        .execute(&self.pool)
+        .await?;
+
+        let active_id = self.active_library_id().await?;
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, created_at, updated_at, last_opened_at
+            FROM libraries
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(&id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_library(row, active_id.as_deref())
+    }
+
+    pub async fn delete_library_record(&self, id: String) -> Result<(), AppError> {
+        let active_id = self.active_library_id().await?;
+
+        let result = sqlx::query("DELETE FROM libraries WHERE id = ?1")
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::Message(format!("library not found: {id}")));
+        }
+
+        if active_id.as_deref() == Some(id.as_str()) {
+            self.store_active_library_id(None).await?;
+        }
+
+        Ok(())
+    }
+
     async fn upsert_library_record(
         &self,
         path: String,

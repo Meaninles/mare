@@ -108,6 +108,19 @@ impl AppCore {
         self.database.clear_active_library().await
     }
 
+    pub async fn update_library_record(
+        &self,
+        id: String,
+        path: String,
+        name: Option<String>,
+    ) -> Result<RegisteredLibrary, AppError> {
+        self.database.update_library_record(id, path, name).await
+    }
+
+    pub async fn delete_library_record(&self, id: String) -> Result<(), AppError> {
+        self.database.delete_library_record(id).await
+    }
+
     pub async fn list_library_tasks(
         &self,
         limit_per_library: Option<i64>,

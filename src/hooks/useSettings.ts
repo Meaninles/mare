@@ -1,7 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLibraryContext } from "../context/LibraryContext";
 import { APP_BOOTSTRAP_QUERY_KEY, invalidateLibraryQueries } from "../lib/query-keys";
-import { getDefaultSettingsBackendUrl, exportSettingsBackup, importSettingsBackup } from "../services/settings";
+import {
+  getDefaultSettingsBackendUrl,
+  exportSettingsBackup,
+  importSettingsBackup
+} from "../services/settings";
 import type { BackupImportMode, SettingsBackupBundle } from "../types/settings";
 
 const backendUrl = getDefaultSettingsBackendUrl();

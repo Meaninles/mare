@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "migratedAt": "2026-03-24T19:33:14.9992373Z",
+  "sourcePath": "B:\\codex_project\\mam\\backend\\data\\mam.db",
+  "targetPath": "B:\\codex_project\\mam\\backend\\data\\default-library.maredb",
+  "suggestedLibraryName": "default-library",
+  "sourcePreserved": true,
+  "countsMatch": true,
+  "sourceSummary": {
+    "assetCount": 15,
+    "replicaCount": 22,
+    "endpointCount": 3,
+    "importRuleCount": 1,
+    "taskCount": 958
+  },
+  "targetSummary": {
+    "assetCount": 15,
+    "replicaCount": 22,
+    "endpointCount": 3,
+    "importRuleCount": 1,
+    "taskCount": 958
+  }
+}

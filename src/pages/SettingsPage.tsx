@@ -1,5 +1,15 @@
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
-import { ArchiveRestore, Download, LoaderCircle, MoonStar, RefreshCcw, ServerCog, SunMedium, Upload, Wrench } from "lucide-react";
+import {
+  ArchiveRestore,
+  Download,
+  LoaderCircle,
+  MoonStar,
+  RefreshCcw,
+  ServerCog,
+  SunMedium,
+  Upload,
+  Wrench
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTheme, type ThemeMode } from "../components/ThemeProvider";
 import { useLibraryContext } from "../context/LibraryContext";
@@ -7,9 +17,21 @@ import { useAppBootstrap } from "../hooks/useAppBootstrap";
 import { useCatalogEndpoints } from "../hooks/useCatalog";
 import { useExportSettingsBackup, useImportSettingsBackup } from "../hooks/useSettings";
 import { formatCatalogDate } from "../lib/catalog-view";
-import { getDefaultCatalogBackendUrl, runCatalogEndpointScan, runCatalogFullScan } from "../services/catalog";
-import type { CatalogEndpoint, EndpointScanSummary, FullScanSummary } from "../types/catalog";
-import type { BackupImportMode, SettingsBackupBundle, SettingsBackupImportSummary } from "../types/settings";
+import {
+  getDefaultCatalogBackendUrl,
+  runCatalogEndpointScan,
+  runCatalogFullScan
+} from "../services/catalog";
+import type {
+  CatalogEndpoint,
+  EndpointScanSummary,
+  FullScanSummary
+} from "../types/catalog";
+import type {
+  BackupImportMode,
+  SettingsBackupBundle,
+  SettingsBackupImportSummary
+} from "../types/settings";
 
 const backendUrl = getDefaultCatalogBackendUrl();
 
@@ -24,14 +46,14 @@ const themeOptions: Array<{
     value: "light",
     title: "浅色",
     subtitle: "默认均衡",
-    description: "适合长时间查看缩略图、列表和目录内容时使用。",
+    description: "适合长时间查看缩略图、列表和目录内容。",
     icon: SunMedium
   },
   {
     value: "dark",
     title: "深色",
     subtitle: "降低眩光",
-    description: "保持相同布局与流程，同时在较暗环境里减轻视觉疲劳。",
+    description: "在较暗环境下浏览资产时更舒适。",
     icon: MoonStar
   }
 ];
@@ -39,7 +61,7 @@ const themeOptions: Array<{
 const developerTools = [
   {
     title: "媒体实验室",
-    copy: "预览视频封面提取、音频元数据检查和本地媒体工具。",
+    copy: "预览视频封面提取、音频元数据检测和本地媒体工具。",
     path: "/media-lab"
   },
   {
@@ -80,7 +102,7 @@ export function SettingsPage() {
 
   async function handleExport() {
     if (!isLibraryOpen) {
-      setError("请先从 Welcome 页面打开一个资产库，再执行库级备份导出。");
+      setError("请先在 Welcome 页面打开一个资产库，再执行库级备份导出。");
       return;
     }
 
@@ -116,7 +138,7 @@ export function SettingsPage() {
     }
 
     if (importMode === "config_and_catalog" && !selectedBundle.catalog) {
-      setError("这个备份不包含目录快照，无法执行完整恢复。");
+      setError("这个备份不包含资产快照，无法执行完整恢复。");
       return;
     }
 
@@ -156,31 +178,31 @@ export function SettingsPage() {
     }
 
     setBusyValidationKey(scope);
-    setValidationMessage(scope === "full" ? "正在对所有端点执行导入后的校验..." : null);
+    setValidationMessage(scope === "full" ? "正在对当前资产库的全部端点执行导入后校验..." : null);
     setError(null);
 
     try {
       if (scope === "full") {
         const response = await runCatalogFullScan(backendUrl);
         if (!response.success || !response.summary) {
-          throw new Error(response.error ?? "校验导入后的目录失败。");
+          throw new Error(response.error ?? "校验导入后的资产库失败。");
         }
 
         setValidationSummary(response.summary as FullScanSummary);
-        setValidationMessage("后台校验已完成，目录状态已经按真实端点重新刷新。");
+        setValidationMessage("后台校验已完成，当前资产库的端点状态已重新刷新。");
       } else {
         const response = await runCatalogEndpointScan(backendUrl, scope);
         if (!response.success || !response.summary) {
-          throw new Error(response.error ?? "校验这个端点失败。");
+          throw new Error(response.error ?? "校验这个存储节点失败。");
         }
 
         setValidationSummary(response.summary as EndpointScanSummary);
-        setValidationMessage("端点校验已完成。");
+        setValidationMessage("存储节点校验已完成。");
       }
 
       await Promise.all([endpointsQuery.refetch(), bootstrapQuery.refetch()]);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "校验导入端点失败。");
+      setError(requestError instanceof Error ? requestError.message : "校验导入后的存储节点失败。");
     } finally {
       setBusyValidationKey(null);
     }
@@ -215,27 +237,33 @@ export function SettingsPage() {
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">设置</p>
-          <h3>导出、导入并恢复你的受管目录，而不用从头重新建立资产库。</h3>
+          <h3>管理当前资产库的备份、恢复、重绑与导入后校验。</h3>
           <p>
-            这里整合了界面偏好、备份导出、恢复导入，以及导入后重新绑定端点与校验的完整流程。
+            这里的备份与导入都作用于当前打开的资产库，不再是全局单体状态。
+            应用级主题仍然在这里管理，但库级配置、端点和资产快照始终绑定到当前资产库。
           </p>
         </div>
 
         <div className="hero-metrics">
           <MetricCard label="主题" value={theme === "light" ? "浅色" : "深色"} tone="neutral" />
           <MetricCard
-            label="目录数据库"
+            label="应用数据库"
             value={bootstrapData?.database.ready ? "就绪" : "检查中"}
             tone={bootstrapData?.database.ready ? "success" : "warning"}
           />
-          <MetricCard label="迁移版本" value={bootstrapData?.database.migrationVersion ?? "未知"} tone="neutral" />
-          <MetricCard label="端点数" value={endpoints.length} tone="warning" />
+          <MetricCard
+            label="迁移版本"
+            value={bootstrapData?.database.migrationVersion ?? "未知"}
+            tone="neutral"
+          />
+          <MetricCard label="当前端点数" value={endpoints.length} tone="warning" />
         </div>
       </article>
 
       {notice ? <p className="inline-note">{notice}</p> : null}
       {error ? <p className="error-copy">{error}</p> : null}
       {validationMessage ? <p className="inline-note">{validationMessage}</p> : null}
+
       {!isLibraryOpen ? (
         <article className="detail-card">
           <div className="settings-note-card">
@@ -252,7 +280,7 @@ export function SettingsPage() {
             <ServerCog size={18} />
             <div>
               <strong>当前资产库：{currentLibrary.name}</strong>
-              <p>库级备份、导入和节点校验都会作用于这个资产库。</p>
+              <p>本页的备份、导入、同步校验和端点重绑，都只作用于这个资产库。</p>
             </div>
           </div>
         </article>
@@ -283,7 +311,9 @@ export function SettingsPage() {
                     <div className="theme-option-icon">
                       <Icon size={18} strokeWidth={1.9} />
                     </div>
-                    <span className={`status-pill ${active ? "success" : "subtle"}`}>{active ? "当前使用" : "切换"}</span>
+                    <span className={`status-pill ${active ? "success" : "subtle"}`}>
+                      {active ? "当前使用" : "切换"}
+                    </span>
                   </div>
 
                   <div className={`theme-preview ${option.value}`}>
@@ -313,7 +343,7 @@ export function SettingsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">备份导出</p>
-              <h4>创建可迁移的备份包</h4>
+              <h4>创建可迁移的资产库备份</h4>
             </div>
           </div>
 
@@ -323,13 +353,11 @@ export function SettingsPage() {
                 <div className="theme-option-icon">
                   <Download size={18} />
                 </div>
-                <span className="status-pill subtle">{includeCatalog ? "包含目录快照" : "仅配置"}</span>
+                <span className="status-pill subtle">{includeCatalog ? "包含资产快照" : "仅配置"}</span>
               </div>
 
-              <strong>导出当前配置</strong>
-              <p>
-                导出当前主题、存储端点、导入规则，并可选附带目录快照，用于新机器上的快速恢复。
-              </p>
+              <strong>导出当前资产库配置</strong>
+              <p>导出当前主题、存储节点、导入规则，并可选附带资产快照，用于迁移或恢复。</p>
 
               <label className="checkbox-field">
                 <input
@@ -337,7 +365,7 @@ export function SettingsPage() {
                   checked={includeCatalog}
                   onChange={(event) => setIncludeCatalog(event.target.checked)}
                 />
-                <span>附带目录快照，便于快速恢复</span>
+                <span>附带资产快照，便于快速恢复资产视图</span>
               </label>
 
               <div className="action-row">
@@ -375,9 +403,7 @@ export function SettingsPage() {
               </div>
 
               <strong>选择备份文件</strong>
-              <p>
-                可以只导入配置，也可以连目录快照一起恢复，这样在实时校验完成前就能立即看到资产库。
-              </p>
+              <p>可以只导入配置，也可以连同资产快照一起恢复，这样在实时校验完成前也能先看到资产视图。</p>
 
               <input
                 ref={fileInputRef}
@@ -389,10 +415,14 @@ export function SettingsPage() {
 
               <label className="field">
                 <span>导入模式</span>
-                <select value={importMode} onChange={(event) => setImportMode(event.target.value as BackupImportMode)} disabled={!isLibraryOpen}>
+                <select
+                  value={importMode}
+                  onChange={(event) => setImportMode(event.target.value as BackupImportMode)}
+                  disabled={!isLibraryOpen}
+                >
                   <option value="config_only">仅配置</option>
                   <option value="config_and_catalog" disabled={!selectedBundle?.catalog}>
-                    配置 + 目录快照
+                    配置 + 资产快照
                   </option>
                 </select>
               </label>
@@ -444,8 +474,8 @@ export function SettingsPage() {
                   <strong>导入于 {formatCatalogDate(lastImportSummary.importedAt)}</strong>
                   <p>
                     {lastImportSummary.mode === "config_and_catalog"
-                      ? "目录快照已经立即恢复，随后会通过实时校验来校正端点状态。"
-                      : "这次只恢复了设置和端点定义，没有应用目录快照。"}
+                      ? "资产快照已经先恢复到当前资产库，随后会通过实时校验来修正各端点状态。"
+                      : "这次只恢复了设置、端点和导入规则，没有恢复资产快照。"}
                   </p>
                 </div>
               </div>
@@ -466,7 +496,7 @@ export function SettingsPage() {
         <div className="section-head">
           <div>
             <p className="eyebrow">重绑与校验</p>
-            <h4>在当前机器上重新连接已导入端点</h4>
+            <h4>在当前机器上重新连接资产库的存储节点</h4>
           </div>
 
           <button
@@ -484,16 +514,16 @@ export function SettingsPage() {
           <div className="sync-empty-block">
             <LoaderCircle size={20} className="spin" />
             <div>
-              <strong>正在加载已导入端点</strong>
-              <p>备份操作完成后，当前端点定义正在刷新。</p>
+              <strong>正在加载当前资产库的存储节点</strong>
+              <p>备份操作完成后，当前资产库的节点定义正在刷新。</p>
             </div>
           </div>
         ) : endpoints.length === 0 ? (
           <div className="sync-empty-block">
             <ServerCog size={20} />
             <div>
-              <strong>当前还没有需要重绑的端点</strong>
-              <p>可以先导入备份，或者去存储管理页登记端点。</p>
+              <strong>当前资产库还没有需要重绑的端点</strong>
+              <p>可以先导入备份，或者去存储节点页面登记端点。</p>
             </div>
           </div>
         ) : (
@@ -646,7 +676,11 @@ function validateBundle(bundle: SettingsBackupBundle) {
   if (typeof bundle.formatVersion !== "number") {
     throw new Error("所选文件缺少备份格式版本信息。");
   }
-  if (!bundle.configuration || !Array.isArray(bundle.configuration.endpoints) || !Array.isArray(bundle.configuration.importRules)) {
+  if (
+    !bundle.configuration ||
+    !Array.isArray(bundle.configuration.endpoints) ||
+    !Array.isArray(bundle.configuration.importRules)
+  ) {
     throw new Error("所选文件不包含必需的配置快照。");
   }
 }
@@ -675,7 +709,7 @@ function getRecoveryHint(endpoint: CatalogEndpoint) {
     case "QNAP_SMB":
       return "请确认 SMB 共享路径和 NAS 可用性。";
     case "CLOUD_115":
-      return "请检查根目录 ID，必要时刷新 115 凭证。";
+      return "请检查根目录 ID，必要时刷新 115 凭据。";
     case "REMOVABLE":
       return "请重新接入同一块设备，以便再次匹配身份。";
     default:
@@ -686,7 +720,7 @@ function getRecoveryHint(endpoint: CatalogEndpoint) {
 function getImportModeLabel(mode: BackupImportMode) {
   switch (mode) {
     case "config_and_catalog":
-      return "配置 + 目录快照";
+      return "配置 + 资产快照";
     case "config_only":
       return "仅配置";
     default:
@@ -723,7 +757,7 @@ function getAvailabilityStatusLabel(status: string) {
 function getRoleModeLabel(roleMode: string) {
   switch (roleMode) {
     case "MANAGED":
-      return "管理存储";
+      return "受管存储";
     case "IMPORT_SOURCE":
       return "导入源";
     default:
@@ -731,7 +765,9 @@ function getRoleModeLabel(roleMode: string) {
   }
 }
 
-function isEndpointScanSummary(summary: FullScanSummary | EndpointScanSummary): summary is EndpointScanSummary {
+function isEndpointScanSummary(
+  summary: FullScanSummary | EndpointScanSummary
+): summary is EndpointScanSummary {
   return "endpointId" in summary;
 }
 

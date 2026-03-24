@@ -107,6 +107,17 @@ export function StoragePage() {
   }, [editingEndpointId, endpoints, endpointsQuery.isLoading, location.search]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("setup") !== "first-endpoint" || endpointsQuery.isLoading) {
+      return;
+    }
+
+    if (endpoints.length === 0) {
+      setNotice("这是一个新的资产库，请先配置至少一个存储端点。");
+    }
+  }, [endpoints.length, endpointsQuery.isLoading, location.search]);
+
+  useEffect(() => {
     setForm((current) => {
       if (devices.length === 0) {
         if (current.selectedMountPoint === "") {
