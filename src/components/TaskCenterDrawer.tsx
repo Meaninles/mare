@@ -205,8 +205,8 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
         </div>
 
         <div className="task-drawer-footer">
-          <Link to="/tasks" className="ghost-button" onClick={onClose}>
-            打开任务与日志
+          <Link to="/system-tasks" className="ghost-button" onClick={onClose}>
+            打开传输任务
           </Link>
           <Link to="/sync" className="primary-button" onClick={onClose}>
             打开同步中心

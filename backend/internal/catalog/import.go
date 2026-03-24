@@ -398,7 +398,7 @@ func (service *Service) ExecuteImport(ctx context.Context, request ExecuteImport
 		return summary, err
 	}
 
-	executeErr := service.executeImport(ctx, request, task.ID, &summary)
+	executeErr := service.executeImport(ctx, request, task.ID, task.RetryCount, startedAt, &summary)
 	finishedAt := time.Now().UTC()
 	summary.FinishedAt = finishedAt
 	if executeErr != nil && summary.Error == "" {
@@ -414,7 +414,8 @@ func (service *Service) ExecuteImport(ctx context.Context, request ExecuteImport
 	}
 
 	resultText := fmt.Sprintf(
-		"已处理 %d 个文件，成功 %d 个，部分完成 %d 个，失败 %d 个。",
+		"已处理 %d/%d 个文件（100%%），成功 %d 个，部分完成 %d 个，失败 %d 个。",
+		summary.TotalFiles,
 		summary.TotalFiles,
 		summary.SuccessCount,
 		summary.PartialCount,
@@ -470,6 +471,8 @@ func (service *Service) executeImport(
 	ctx context.Context,
 	request ExecuteImportRequest,
 	scanRevision string,
+	retryCount int,
+	startedAt time.Time,
 	summary *ImportExecutionSummary,
 ) error {
 	identitySignature := strings.TrimSpace(request.IdentitySignature)
@@ -515,6 +518,9 @@ func (service *Service) executeImport(
 	summary.DeviceLabel = defaultString(strings.TrimSpace(device.VolumeLabel), strings.TrimSpace(device.MountPoint))
 	summary.TotalFiles = len(entryPaths)
 	summary.Items = make([]ImportExecutionItem, 0, len(entryPaths))
+	if err := service.updateImportTaskProgress(ctx, scanRevision, retryCount, startedAt, *summary); err != nil {
+		return err
+	}
 
 	for _, entryPath := range entryPaths {
 		item := service.executeImportItem(ctx, sourceConnector, resolvedIdentity, entryPath, rules, targetEndpoints, scanRevision)
@@ -526,6 +532,9 @@ func (service *Service) executeImport(
 			summary.PartialCount++
 		default:
 			summary.FailedCount++
+		}
+		if err := service.updateImportTaskProgress(ctx, scanRevision, retryCount, startedAt, *summary); err != nil {
+			return err
 		}
 	}
 
@@ -670,6 +679,34 @@ func (service *Service) executeImportItem(
 	}
 
 	return item
+}
+
+func (service *Service) updateImportTaskProgress(
+	ctx context.Context,
+	taskID string,
+	retryCount int,
+	startedAt time.Time,
+	summary ImportExecutionSummary,
+) error {
+	processedCount := summary.SuccessCount + summary.PartialCount + summary.FailedCount
+	progressPercent := calcProgressPercent(processedCount, summary.TotalFiles)
+	resultText := fmt.Sprintf(
+		"已处理 %d/%d 个文件（%d%%），成功 %d 个，部分完成 %d 个，失败 %d 个。",
+		processedCount,
+		summary.TotalFiles,
+		progressPercent,
+		summary.SuccessCount,
+		summary.PartialCount,
+		summary.FailedCount,
+	)
+	now := time.Now().UTC()
+	return service.store.UpdateTaskStatus(ctx, taskID, store.TaskStatusUpdate{
+		Status:        taskStatusRunning,
+		ResultSummary: &resultText,
+		RetryCount:    retryCount,
+		StartedAt:     &startedAt,
+		UpdatedAt:     now,
+	})
 }
 
 func (service *Service) collectImportSourceEntries(

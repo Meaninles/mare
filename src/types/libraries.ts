@@ -8,6 +8,28 @@ export interface RegisteredLibrary {
   isActive: boolean;
 }
 
+export interface LibraryTaskRecord {
+  libraryId: string;
+  libraryName: string;
+  libraryPath: string;
+  libraryIsActive: boolean;
+  id: string;
+  taskType: string;
+  status: string;
+  payload: string;
+  resultSummary?: string;
+  errorMessage?: string;
+  retryCount: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  sourceEndpointId?: string;
+  sourceEndpointName?: string;
+  targetEndpointId?: string;
+  targetEndpointName?: string;
+}
+
 export interface BackendLibrarySession {
   status: string;
   ready: boolean;

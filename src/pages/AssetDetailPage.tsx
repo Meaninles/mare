@@ -28,7 +28,7 @@ import {
   getReplicaTone,
   normalizeMediaType
 } from "../lib/catalog-view";
-import type { CatalogReplica } from "../types/catalog";
+import type { CatalogEndpoint, CatalogReplica } from "../types/catalog";
 
 type DeleteDialogState = {
   replica: CatalogReplica;
@@ -100,7 +100,10 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const availableReplicas = getAvailableReplicas(asset);
   const missingReplicas = getMissingReplicas(asset);
   const isAudioAsset = normalizeMediaType(asset.mediaType) === "audio";
-  const recommendedSource = availableReplicas[0] ?? null;
+  const recommendedSource = useMemo(
+    () => choosePreferredRestoreSource(availableReplicas, endpointsQuery.data ?? []),
+    [availableReplicas, endpointsQuery.data]
+  );
 
   function handlePlaceholderAction(action: string, endpointName?: string) {
     setActionNotice(`${action}${endpointName ? `：${endpointName}` : ""} 还会继续接入更明确的客户端动作。`);
@@ -360,6 +363,40 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
       />
     </section>
   );
+}
+
+function choosePreferredRestoreSource(replicas: CatalogReplica[], endpoints: CatalogEndpoint[]) {
+  const endpointLookup = new Map(endpoints.map((endpoint) => [endpoint.id, endpoint]));
+
+  return [...replicas].sort((left, right) => {
+    const leftEndpoint = endpointLookup.get(left.endpointId);
+    const rightEndpoint = endpointLookup.get(right.endpointId);
+    const leftPriority = getRestoreSourcePriority(leftEndpoint?.endpointType);
+    const rightPriority = getRestoreSourcePriority(rightEndpoint?.endpointType);
+
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    const leftName = (leftEndpoint?.name ?? left.endpointId).toLowerCase();
+    const rightName = (rightEndpoint?.name ?? right.endpointId).toLowerCase();
+    return leftName.localeCompare(rightName, "zh-CN");
+  })[0] ?? null;
+}
+
+function getRestoreSourcePriority(endpointType?: string) {
+  switch ((endpointType ?? "").trim().toUpperCase()) {
+    case "LOCAL":
+      return 0;
+    case "REMOVABLE":
+      return 1;
+    case "QNAP_SMB":
+      return 2;
+    case "CLOUD_115":
+      return 3;
+    default:
+      return 9;
+  }
 }
 
 function ReplicaCard({

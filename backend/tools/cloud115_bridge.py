@@ -13,6 +13,7 @@ from p115qrcode import qrcode_result, qrcode_status, qrcode_token, qrcode_url
 
 
 DEFAULT_APP_TYPE = "windows"
+DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 300
 QR_STATUS_LABELS = {
     0: "waiting",
     1: "scanned",
@@ -28,6 +29,17 @@ def normalize_app_type(value: str) -> str:
     if value in ("", "desktop", "os_windows"):
         return DEFAULT_APP_TYPE
     return value
+
+
+def resolve_download_timeout_seconds() -> int:
+    value = (os.getenv("MAM_115_DOWNLOAD_TIMEOUT_SECONDS") or "").strip()
+    if not value:
+        return DEFAULT_DOWNLOAD_TIMEOUT_SECONDS
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else DEFAULT_DOWNLOAD_TIMEOUT_SECONDS
+    except Exception:
+        return DEFAULT_DOWNLOAD_TIMEOUT_SECONDS
 
 
 def resolve_runtime_app_type(value: str) -> str:
@@ -398,7 +410,7 @@ def do_copy_out(client: P115Client, root_id: int, app_type: str, request: dict) 
     if not any(str(key).lower() == "user-agent" for key in request_headers):
         request_headers["User-Agent"] = "Mozilla/5.0"
     http_request = urllib.request.Request(download_url, headers=request_headers)
-    with urllib.request.urlopen(http_request) as response, open(download_file, "wb") as output:
+    with urllib.request.urlopen(http_request, timeout=resolve_download_timeout_seconds()) as response, open(download_file, "wb") as output:
         output.write(response.read())
     return {"downloadFile": download_file}
 

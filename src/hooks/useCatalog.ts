@@ -112,8 +112,8 @@ export function useCatalogRestoreAsset() {
 
       return response.summary;
     },
-    onSuccess: async () => {
-      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    onSuccess: () => {
+      void invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
@@ -131,8 +131,8 @@ export function useCatalogBatchRestore() {
 
       return response.summary;
     },
-    onSettled: async () => {
-      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    onSettled: () => {
+      void invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
@@ -150,7 +150,7 @@ export function useCatalogDeleteReplica() {
 
       return response.summary;
     },
-    onSuccess: async (summary) => {
+    onSuccess: (summary) => {
       if (summary.assetRemoved) {
         queryClient.setQueriesData(
           { queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "assets") },
@@ -164,7 +164,7 @@ export function useCatalogDeleteReplica() {
         );
       }
 
-      await invalidateCatalogQueries(queryClient, currentLibraryId);
+      void invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }
@@ -182,8 +182,8 @@ export function useCatalogRetryTask() {
 
       return response.summary;
     },
-    onSuccess: async () => {
-      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    onSuccess: () => {
+      void invalidateCatalogQueries(queryClient, currentLibraryId);
     }
   });
 }

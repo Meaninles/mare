@@ -97,6 +97,8 @@ type RestoreAssetSummary struct {
 	CreatedReplica     bool      `json:"createdReplica"`
 	UpdatedReplica     bool      `json:"updatedReplica"`
 	Skipped            bool      `json:"skipped"`
+	ProgressPercent    int       `json:"progressPercent"`
+	ProgressLabel      string    `json:"progressLabel,omitempty"`
 	StartedAt          time.Time `json:"startedAt"`
 	FinishedAt         time.Time `json:"finishedAt"`
 	Error              string    `json:"error,omitempty"`
@@ -126,6 +128,8 @@ type BatchRestoreSummary struct {
 	SuccessCount       int                      `json:"successCount"`
 	FailedCount        int                      `json:"failedCount"`
 	SkippedCount       int                      `json:"skippedCount"`
+	ProgressPercent    int                      `json:"progressPercent"`
+	ProgressLabel      string                   `json:"progressLabel,omitempty"`
 	Items              []BatchRestoreItemResult `json:"items"`
 	StartedAt          time.Time                `json:"startedAt"`
 	FinishedAt         time.Time                `json:"finishedAt"`
@@ -217,10 +221,12 @@ func (service *Service) RestoreAsset(ctx context.Context, request RestoreAssetRe
 
 	startedAt := time.Now().UTC()
 	summary := RestoreAssetSummary{
-		TaskID:    task.ID,
-		Status:    taskStatusRunning,
-		StartedAt: startedAt,
-		AssetID:   strings.TrimSpace(request.AssetID),
+		TaskID:          task.ID,
+		Status:          taskStatusRunning,
+		StartedAt:       startedAt,
+		AssetID:         strings.TrimSpace(request.AssetID),
+		ProgressPercent: 0,
+		ProgressLabel:   "准备源文件",
 	}
 
 	slog.Info(
@@ -231,16 +237,15 @@ func (service *Service) RestoreAsset(ctx context.Context, request RestoreAssetRe
 		"targetEndpointId", request.TargetEndpointID,
 	)
 
-	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-		Status:     taskStatusRunning,
-		RetryCount: task.RetryCount,
-		StartedAt:  &startedAt,
-		UpdatedAt:  startedAt,
-	}); err != nil {
+	if err := service.updateRestoreTaskProgress(ctx, task.ID, task.RetryCount, startedAt, summary); err != nil {
 		return summary, err
 	}
 
-	result, restoreErr := service.executeRestoreAsset(ctx, request, task.ID)
+	result, restoreErr := service.executeRestoreAsset(ctx, request, task.ID, func(progressPercent int, progressLabel string) error {
+		summary.ProgressPercent = progressPercent
+		summary.ProgressLabel = progressLabel
+		return service.updateRestoreTaskProgress(ctx, task.ID, task.RetryCount, startedAt, summary)
+	})
 	finishedAt := time.Now().UTC()
 	summary.FinishedAt = finishedAt
 
@@ -280,6 +285,8 @@ func (service *Service) RestoreAsset(ctx context.Context, request RestoreAssetRe
 	summary.UpdatedReplica = result.updatedReplica
 	summary.Skipped = result.skipped
 	summary.Status = taskStatusSuccess
+	summary.ProgressPercent = 100
+	summary.ProgressLabel = "已完成"
 
 	resultText, marshalErr := json.Marshal(summary)
 	if marshalErr != nil {
@@ -319,6 +326,8 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 		TaskID:           task.ID,
 		TargetEndpointID: strings.TrimSpace(request.TargetEndpointID),
 		Status:           taskStatusRunning,
+		ProgressPercent:  0,
+		ProgressLabel:    "准备任务队列",
 		StartedAt:        startedAt,
 	}
 
@@ -329,12 +338,7 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 		"assetCount", len(request.AssetIDs),
 	)
 
-	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-		Status:     taskStatusRunning,
-		RetryCount: task.RetryCount,
-		StartedAt:  &startedAt,
-		UpdatedAt:  startedAt,
-	}); err != nil {
+	if err := service.updateBatchRestoreProgress(ctx, task.ID, task.RetryCount, startedAt, summary); err != nil {
 		return summary, err
 	}
 
@@ -346,6 +350,10 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 
 	assetIDs := uniqueStrings(request.AssetIDs)
 	summary.TotalAssets = len(assetIDs)
+	summary.ProgressLabel = "开始处理资产"
+	if err := service.updateBatchRestoreProgress(ctx, task.ID, task.RetryCount, startedAt, summary); err != nil {
+		return summary, err
+	}
 	for _, assetID := range assetIDs {
 		itemResult := BatchRestoreItemResult{
 			AssetID:          assetID,
@@ -368,11 +376,16 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 			AssetID:          assetID,
 			SourceEndpointID: sourceReplica.EndpointID,
 			TargetEndpointID: targetEndpoint.ID,
-		}, task.ID)
+		}, task.ID, nil)
 		if restoreErr != nil {
 			itemResult.Error = restoreErr.Error()
 			summary.FailedCount++
 			summary.Items = append(summary.Items, itemResult)
+			summary.ProgressPercent = calcProgressPercent(len(summary.Items), summary.TotalAssets)
+			summary.ProgressLabel = buildBatchRestoreProgressLabel(summary, asset.DisplayName)
+			if err := service.updateBatchRestoreProgress(ctx, task.ID, task.RetryCount, startedAt, summary); err != nil {
+				return summary, err
+			}
 			continue
 		}
 
@@ -386,6 +399,11 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 			summary.SuccessCount++
 		}
 		summary.Items = append(summary.Items, itemResult)
+		summary.ProgressPercent = calcProgressPercent(len(summary.Items), summary.TotalAssets)
+		summary.ProgressLabel = buildBatchRestoreProgressLabel(summary, result.asset.DisplayName)
+		if err := service.updateBatchRestoreProgress(ctx, task.ID, task.RetryCount, startedAt, summary); err != nil {
+			return summary, err
+		}
 	}
 
 	finishedAt := time.Now().UTC()
@@ -398,6 +416,8 @@ func (service *Service) RestoreAssetsToEndpoint(ctx context.Context, request Bat
 	default:
 		summary.Status = taskStatusFailed
 	}
+	summary.ProgressPercent = 100
+	summary.ProgressLabel = "已完成"
 
 	resultText, marshalErr := json.Marshal(summary)
 	if marshalErr != nil {
@@ -531,7 +551,12 @@ func (service *Service) buildSyncAssetRecord(
 	return record, diffResult, nil
 }
 
-func (service *Service) executeRestoreAsset(ctx context.Context, request RestoreAssetRequest, scanRevision string) (restoreExecutionResult, error) {
+func (service *Service) executeRestoreAsset(
+	ctx context.Context,
+	request RestoreAssetRequest,
+	scanRevision string,
+	progress func(progressPercent int, progressLabel string) error,
+) (restoreExecutionResult, error) {
 	assetID := strings.TrimSpace(request.AssetID)
 	sourceEndpointID := strings.TrimSpace(request.SourceEndpointID)
 	targetEndpointID := strings.TrimSpace(request.TargetEndpointID)
@@ -612,6 +637,12 @@ func (service *Service) executeRestoreAsset(ctx context.Context, request Restore
 		}, nil
 	}
 
+	if progress != nil {
+		if err := progress(12, "读取源副本"); err != nil {
+			return restoreExecutionResult{}, err
+		}
+	}
+
 	localSourcePath, cleanup, err := service.materializeReplicaToLocalFile(ctx, sourceEndpoint, sourceReplica)
 	if err != nil {
 		return restoreExecutionResult{}, err
@@ -626,6 +657,12 @@ func (service *Service) executeRestoreAsset(ctx context.Context, request Restore
 	}
 	defer sourceReader.Close()
 
+	if progress != nil {
+		if err := progress(48, "写入目标位置"); err != nil {
+			return restoreExecutionResult{}, err
+		}
+	}
+
 	destinationPath := deriveRestoreRelativePath(sourceEndpoint.RootPath, sourceReplica.PhysicalPath, asset.LogicalPathKey)
 	if destinationPath == "" {
 		return restoreExecutionResult{}, errors.New("unable to derive restore destination path")
@@ -634,6 +671,12 @@ func (service *Service) executeRestoreAsset(ctx context.Context, request Restore
 	copiedEntry, err := targetConnector.CopyIn(ctx, destinationPath, sourceReader)
 	if err != nil {
 		return restoreExecutionResult{}, err
+	}
+
+	if progress != nil {
+		if err := progress(82, "登记副本信息"); err != nil {
+			return restoreExecutionResult{}, err
+		}
 	}
 
 	scanResult := ScanResult{
@@ -698,6 +741,12 @@ func (service *Service) executeRestoreAsset(ctx context.Context, request Restore
 
 	if err := service.syncAssetStatus(ctx, asset.ID); err != nil {
 		return restoreExecutionResult{}, err
+	}
+
+	if progress != nil {
+		if err := progress(96, "刷新资产状态"); err != nil {
+			return restoreExecutionResult{}, err
+		}
 	}
 
 	return result, nil
@@ -948,4 +997,76 @@ func preferredSourceEndpointIDs(diffResult ReplicaDiffResult) []string {
 func endpointIDInSet(endpointID string, values map[string]struct{}) bool {
 	_, ok := values[strings.TrimSpace(endpointID)]
 	return ok
+}
+
+func (service *Service) updateRestoreTaskProgress(
+	ctx context.Context,
+	taskID string,
+	retryCount int,
+	startedAt time.Time,
+	summary RestoreAssetSummary,
+) error {
+	resultText, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	value := string(resultText)
+	now := time.Now().UTC()
+	return service.store.UpdateTaskStatus(ctx, taskID, store.TaskStatusUpdate{
+		Status:        taskStatusRunning,
+		ResultSummary: &value,
+		RetryCount:    retryCount,
+		StartedAt:     &startedAt,
+		UpdatedAt:     now,
+	})
+}
+
+func (service *Service) updateBatchRestoreProgress(
+	ctx context.Context,
+	taskID string,
+	retryCount int,
+	startedAt time.Time,
+	summary BatchRestoreSummary,
+) error {
+	resultText, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	value := string(resultText)
+	now := time.Now().UTC()
+	return service.store.UpdateTaskStatus(ctx, taskID, store.TaskStatusUpdate{
+		Status:        taskStatusRunning,
+		ResultSummary: &value,
+		RetryCount:    retryCount,
+		StartedAt:     &startedAt,
+		UpdatedAt:     now,
+	})
+}
+
+func calcProgressPercent(processedCount, totalCount int) int {
+	if totalCount <= 0 {
+		return 0
+	}
+
+	percent := (processedCount * 100) / totalCount
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
+}
+
+func buildBatchRestoreProgressLabel(summary BatchRestoreSummary, displayName string) string {
+	if summary.TotalAssets <= 0 {
+		return "开始处理资产"
+	}
+
+	return fmt.Sprintf(
+		"已处理 %d/%d 个资产，当前：%s",
+		len(summary.Items),
+		summary.TotalAssets,
+		defaultString(strings.TrimSpace(displayName), "未命名资产"),
+	)
 }

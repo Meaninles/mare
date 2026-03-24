@@ -36,12 +36,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	readTimeout, err := getDuration("HTTP_READ_TIMEOUT", 15*time.Second)
+	readTimeout, err := getDuration("HTTP_READ_TIMEOUT", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
 
-	writeTimeout, err := getDuration("HTTP_WRITE_TIMEOUT", 15*time.Second)
+	writeTimeout, err := getDuration("HTTP_WRITE_TIMEOUT", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}

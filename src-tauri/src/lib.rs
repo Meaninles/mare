@@ -15,8 +15,8 @@ mod tasks;
 use app_core::AppCore;
 use bootstrap::get_app_bootstrap;
 use libraries::{
-    clear_active_library, create_library_record, list_libraries, register_existing_library,
-    set_active_library,
+    clear_active_library, create_library_record, list_libraries, list_library_tasks,
+    register_existing_library, set_active_library,
 };
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -42,6 +42,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_bootstrap,
             list_libraries,
+            list_library_tasks,
             create_library_record,
             register_existing_library,
             set_active_library,

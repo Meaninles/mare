@@ -1,6 +1,13 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { BellRing, LoaderCircle, Search, Sparkles } from "lucide-react";
+import {
+  BellRing,
+  LibraryBig,
+  LoaderCircle,
+  Search,
+  Settings2,
+  Sparkles
+} from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav, getRouteMeta } from "../components/SidebarNav";
 import { TaskCenterDrawer } from "../components/TaskCenterDrawer";
@@ -32,7 +39,7 @@ export function AppShell() {
     const params = new URLSearchParams(location.search);
     if (location.pathname === "/assets" && params.has("assetId")) {
       return {
-        label: "Asset Detail",
+        label: "资产详情",
         description: "预览资产、查看副本状态，并执行恢复或删除操作。"
       };
     }
@@ -68,28 +75,45 @@ export function AppShell() {
 
       <div className="content-shell">
         <header className="topbar topbar-refined">
-          <div className="shell-header-row">
-            <div className="topbar-copy compact">
-              <p className="eyebrow">{routeMeta.label}</p>
-              <h2>{routeMeta.label}</h2>
-              <p>{routeMeta.description}</p>
-            </div>
-
-            <div className="shell-actions">
+          <div className="shell-header-row library-header-row">
+            <div className="library-header-main">
               <button
                 type="button"
-                className={`ghost-button task-center-trigger${notificationCount > 0 || taskSummary.failed > 0 ? " has-alert" : ""}`}
-                onClick={() => setTaskCenterOpen(true)}
+                className="ghost-button icon-button shell-corner-link"
+                onClick={() => navigate("/welcome")}
+                aria-label="返回资产库入口"
+                title="返回资产库入口"
               >
-                <BellRing size={16} />
-                通知中心
-                <span className={`status-pill ${notificationCount > 0 || taskSummary.failed > 0 ? "danger" : taskSummary.running > 0 ? "warning" : "subtle"}`}>
-                  {notificationCount > 0
-                    ? `${notificationCount} 条提醒`
-                    : taskSummary.running > 0
-                      ? `${taskSummary.running} 个进行中`
-                      : "已读"}
-                </span>
+                <LibraryBig size={18} />
+              </button>
+
+              <div className="topbar-copy compact">
+                <p className="eyebrow">{routeMeta.label}</p>
+                <h2>{routeMeta.label}</h2>
+                <p>{routeMeta.description}</p>
+              </div>
+            </div>
+
+            <div className="shell-corner-cluster">
+              <button
+                type="button"
+                className="ghost-button icon-button shell-corner-link"
+                onClick={() => navigate("/settings")}
+                aria-label="打开设置"
+                title="打开设置"
+              >
+                <Settings2 size={18} />
+              </button>
+
+              <button
+                type="button"
+                className={`ghost-button icon-button shell-corner-link task-center-icon${notificationCount > 0 || taskSummary.failed > 0 ? " has-alert" : ""}`}
+                onClick={() => setTaskCenterOpen(true)}
+                aria-label="打开通知中心"
+                title="打开通知中心"
+              >
+                <BellRing size={18} />
+                {notificationCount > 0 ? <span className="task-center-badge">{notificationCount}</span> : null}
               </button>
             </div>
           </div>
@@ -119,7 +143,7 @@ export function AppShell() {
               {bootstrapQuery.data ? (
                 <>
                   <span className={`status-pill ${bootstrapQuery.data.database.ready ? "success" : "warning"}`}>
-                    应用数据库{bootstrapQuery.data.database.ready ? "已就绪" : "检查中"}
+                    应用数据库 {bootstrapQuery.data.database.ready ? "已就绪" : "检查中"}
                   </span>
                   <span className="status-pill subtle">
                     模块 {readyModuleCount}/{totalModuleCount}

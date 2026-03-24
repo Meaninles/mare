@@ -12,7 +12,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { StorageTesterPage } from "./pages/StorageTesterPage";
 import { StoragePage } from "./pages/StoragePage";
 import { SyncCenterPage } from "./pages/SyncCenterPage";
-import { TaskCenterPage } from "./pages/TaskCenterPage";
+import { SystemTasksPage } from "./pages/SystemTasksPage";
 import { WelcomePage } from "./pages/WelcomePage";
 
 export function App() {
@@ -21,6 +21,7 @@ export function App() {
       <Route element={<StandaloneShell />}>
         <Route index element={<Navigate to="/welcome" replace />} />
         <Route path="/welcome" element={<WelcomePage />} />
+        <Route path="/system-tasks" element={<SystemTasksPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
@@ -29,7 +30,6 @@ export function App() {
           <Route path="/assets" element={<LibraryPage />} />
           <Route path="/collections" element={<CollectionsPage />} />
           <Route path="/sync" element={<SyncCenterPage />} />
-          <Route path="/tasks" element={<TaskCenterPage />} />
           <Route path="/ingest" element={<ImportCenterPage />} />
           <Route path="/storage" element={<StoragePage />} />
           <Route path="/media-lab" element={<MediaLabPage />} />
@@ -40,6 +40,7 @@ export function App() {
 
       <Route path="/library" element={<Navigate to="/assets" replace />} />
       <Route path="/import" element={<Navigate to="/ingest" replace />} />
+      <Route path="/tasks" element={<Navigate to="/system-tasks" replace />} />
       <Route path="*" element={<Navigate to="/welcome" replace />} />
     </Routes>
   );

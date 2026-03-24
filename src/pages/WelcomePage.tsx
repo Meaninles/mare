@@ -118,7 +118,7 @@ export function WelcomePage() {
     <section className="page-stack">
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
-          <p className="eyebrow">Welcome</p>
+          <p className="eyebrow">欢迎页</p>
           <h3>从资产库开始，而不是直接从某个存储端开始。</h3>
           <p>
             先创建或打开一个资产库，再在这个资产库下面配置存储节点、导入规则和统一的文件资产视图。
@@ -140,7 +140,7 @@ export function WelcomePage() {
         <article className="detail-card">
           <div className="section-head">
             <div>
-              <p className="eyebrow">Current Library</p>
+              <p className="eyebrow">当前资产库</p>
               <h4>{currentLibrary.name}</h4>
             </div>
             <span className={`status-pill ${isLibraryOpen ? "success" : "subtle"}`}>
@@ -160,7 +160,7 @@ export function WelcomePage() {
             {currentLibrarySession?.ready ? (
               <>
                 <div className="field">
-                  <span>Schema</span>
+                  <span>架构</span>
                   <strong>{currentLibrarySession.schemaFamily ?? "unknown"}</strong>
                 </div>
                 <div className="field">
@@ -207,7 +207,7 @@ export function WelcomePage() {
         <article className="detail-card">
           <div className="section-head">
             <div>
-              <p className="eyebrow">Create</p>
+              <p className="eyebrow">新建</p>
               <h4>新建资产库</h4>
             </div>
             <span className="status-pill subtle">`.maredb`</span>
@@ -253,7 +253,7 @@ export function WelcomePage() {
         <article className="detail-card">
           <div className="section-head">
             <div>
-              <p className="eyebrow">Open</p>
+              <p className="eyebrow">打开</p>
               <h4>打开已有资产库</h4>
             </div>
             <span className="status-pill subtle">按需挂载</span>
@@ -296,7 +296,7 @@ export function WelcomePage() {
       <article className="detail-card">
         <div className="section-head">
           <div>
-            <p className="eyebrow">Recent Libraries</p>
+            <p className="eyebrow">最近资产库</p>
             <h4>最近使用</h4>
           </div>
           <span className="status-pill subtle">

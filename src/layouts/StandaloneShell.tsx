@@ -1,4 +1,4 @@
-import { FolderOpen, LibraryBig, Settings2 } from "lucide-react";
+import { FolderOpen, LibraryBig, Settings2, Workflow } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
 import { MareLogo } from "../components/MareLogo";
@@ -30,6 +30,16 @@ export function StandaloneShell() {
               <span className="nav-item-copy compact">
                 <strong>资产库入口</strong>
                 <small>新建、打开和查看最近使用的资产库。</small>
+              </span>
+            </NavLink>
+
+            <NavLink to="/system-tasks" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+              <span className="nav-item-icon">
+                <Workflow size={18} strokeWidth={1.8} />
+              </span>
+              <span className="nav-item-copy compact">
+                <strong>传输任务</strong>
+                <small>按资产库查看所有同步任务，并预留下载任务类别。</small>
               </span>
             </NavLink>
 

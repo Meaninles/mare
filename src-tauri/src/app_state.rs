@@ -29,6 +29,30 @@ pub struct RegisteredLibrary {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryTaskRecord {
+    pub library_id: String,
+    pub library_name: String,
+    pub library_path: String,
+    pub library_is_active: bool,
+    pub id: String,
+    pub task_type: String,
+    pub status: String,
+    pub payload: String,
+    pub result_summary: Option<String>,
+    pub error_message: Option<String>,
+    pub retry_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub source_endpoint_id: Option<String>,
+    pub source_endpoint_name: Option<String>,
+    pub target_endpoint_id: Option<String>,
+    pub target_endpoint_name: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppBootstrap {
     pub app_name: String,
     pub database: DatabaseStatus,

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppBootstrap } from "../types/bootstrap";
-import type { RegisteredLibrary } from "../types/libraries";
+import type { LibraryTaskRecord, RegisteredLibrary } from "../types/libraries";
 
 export async function getAppBootstrap(): Promise<AppBootstrap> {
   return invoke<AppBootstrap>("get_app_bootstrap");
@@ -8,6 +8,12 @@ export async function getAppBootstrap(): Promise<AppBootstrap> {
 
 export async function listLibraries(): Promise<RegisteredLibrary[]> {
   return invoke<RegisteredLibrary[]>("list_libraries");
+}
+
+export async function listLibraryTasks(limitPerLibrary?: number): Promise<LibraryTaskRecord[]> {
+  return typeof limitPerLibrary === "number"
+    ? invoke<LibraryTaskRecord[]>("list_library_tasks", { limitPerLibrary })
+    : invoke<LibraryTaskRecord[]>("list_library_tasks");
 }
 
 export async function createLibraryRecord(payload: {

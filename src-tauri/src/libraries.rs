@@ -1,6 +1,10 @@
 use tauri::State;
 
-use crate::{app_core::AppCore, app_state::RegisteredLibrary, error::AppError};
+use crate::{
+    app_core::AppCore,
+    app_state::{LibraryTaskRecord, RegisteredLibrary},
+    error::AppError,
+};
 
 #[tauri::command]
 pub async fn list_libraries(core: State<'_, AppCore>) -> Result<Vec<RegisteredLibrary>, AppError> {
@@ -36,4 +40,12 @@ pub async fn set_active_library(
 #[tauri::command]
 pub async fn clear_active_library(core: State<'_, AppCore>) -> Result<(), AppError> {
     core.clear_active_library().await
+}
+
+#[tauri::command]
+pub async fn list_library_tasks(
+    limit_per_library: Option<i64>,
+    core: State<'_, AppCore>,
+) -> Result<Vec<LibraryTaskRecord>, AppError> {
+    core.list_library_tasks(limit_per_library).await
 }
