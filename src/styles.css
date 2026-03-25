@@ -128,6 +128,23 @@ select {
   font: inherit;
 }
 
+select {
+  color: var(--text);
+  background-color: var(--card-background-subtle);
+}
+
+option,
+optgroup {
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--card-background-subtle) 92%, #ffffff 8%);
+}
+
+:root[data-theme="dark"] option,
+:root[data-theme="dark"] optgroup {
+  color: var(--text);
+  background-color: #242934;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -3821,6 +3838,34 @@ a {
 .transfer-summary-card small {
   color: var(--text-soft);
   line-height: 1.5;
+}
+
+.system-tasks-legacy-hero,
+.system-tasks-legacy-context {
+  display: none;
+}
+
+.system-tasks-header {
+  gap: 10px 14px;
+  padding: 12px 16px;
+}
+
+.system-tasks-header .compact-page-header-main {
+  gap: 8px 12px;
+}
+
+.system-tasks-header .compact-page-header-actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+.task-page-context-row {
+  align-items: center;
+}
+
+.task-page-context-row .eyebrow,
+.task-page-context-row h4 {
+  display: none;
 }
 
 .transfer-toolbar {

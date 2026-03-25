@@ -137,10 +137,23 @@ export function SystemTasksPage() {
   }, [taskViews]);
 
   const selectedLibrary = libraryFilter === "all" ? undefined : libraryLookup.get(libraryFilter);
+  const activeLaneLabel = laneFilters.find((filter) => filter.value === laneFilter)?.label ?? "全部类别";
+  const activeStatusLabel = statusFilters.find((filter) => filter.value === statusFilter)?.label ?? "全部状态";
 
   return (
-    <section className="page-stack">
-      <article className="hero-card library-hero">
+    <section className="page-stack system-tasks-page">
+      <article className="detail-card compact-page-header system-tasks-header">
+        <div className="compact-page-header-main">
+          <div className="replica-chip-row compact-page-header-metrics">
+            <span className="replica-chip warning">同步任务 {summary.syncTotal}</span>
+            <span className="replica-chip neutral">下载任务 {summary.downloadTotal}</span>
+            <span className="replica-chip danger">失败任务 {summary.failedTotal}</span>
+            <span className="replica-chip success">涉及资产库 {summary.libraryCount}</span>
+          </div>
+        </div>
+      </article>
+
+      <article className="hero-card library-hero system-tasks-legacy-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">传输任务</p>
           <h3>统一查看所有资产库里的文件传输任务，并按资产库筛选。</h3>
@@ -181,9 +194,13 @@ export function SystemTasksPage() {
         </div>
       </article>
 
-      <article className="detail-card">
+      <article className="detail-card system-tasks-legacy-context">
         <div className="section-head">
-          <div>
+          <div className="replica-chip-row task-page-context-row">
+            <span className="replica-chip neutral">{selectedLibrary ? `筛选 ${selectedLibrary.name}` : "所有资产库"}</span>
+            <span className="replica-chip neutral">{activeLaneLabel}</span>
+            <span className="replica-chip neutral">{activeStatusLabel}</span>
+            {currentLibrary ? <span className="replica-chip success">当前打开 {currentLibrary.name}</span> : null}
             <p className="eyebrow">当前上下文</p>
             <h4>{selectedLibrary ? selectedLibrary.name : "所有资产库"}</h4>
           </div>
@@ -221,7 +238,7 @@ export function SystemTasksPage() {
 
       <article className="detail-card">
         <div className="section-head">
-          <div>
+          <div className="replica-chip-row task-page-context-row">
             <p className="eyebrow">任务面板</p>
             <h4>跨资产库传输列表</h4>
           </div>
