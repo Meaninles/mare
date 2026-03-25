@@ -1,5 +1,6 @@
 import type {
   CatalogAssetsResponse,
+  CatalogAssetQueryOptions,
   CatalogBatchRestoreResponse,
   CatalogDeleteEndpointResponse,
   CatalogDeleteReplicaResponse,
@@ -143,8 +144,26 @@ export async function runCatalogEndpointScan(baseUrl: string, endpointId: string
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/scans/endpoint`, { endpointId });
 }
 
-export async function listCatalogAssets(baseUrl: string, limit = 200): Promise<CatalogAssetsResponse> {
-  const response = await getJson<CatalogAssetsResponse>(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/assets?limit=${limit}`);
+export async function listCatalogAssets(
+  baseUrl: string,
+  options: CatalogAssetQueryOptions = {}
+): Promise<CatalogAssetsResponse> {
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 200));
+
+  if (options.query?.trim()) {
+    params.set("q", options.query.trim());
+  }
+  if (options.mediaType?.trim()) {
+    params.set("mediaType", options.mediaType.trim());
+  }
+  if (options.assetStatus?.trim()) {
+    params.set("status", options.assetStatus.trim());
+  }
+
+  const response = await getJson<CatalogAssetsResponse>(
+    `${normalizeBaseUrl(baseUrl)}/api/v1/catalog/assets?${params.toString()}`
+  );
 
   if (response.assets) {
     response.assets = response.assets.map((asset) => ({

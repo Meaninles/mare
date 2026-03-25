@@ -171,3 +171,104 @@ func TestStoreCRUDFlows(t *testing.T) {
 		t.Fatal("expected deleting endpoint with replica reference to fail, got nil")
 	}
 }
+
+func TestStoreSearchAssetsUsesFTSAndTracksAssetUpdates(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = store.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	assets := []Asset{
+		{
+			ID:             "asset-1",
+			LogicalPathKey: "projects/wedding/meeting-notes.wav",
+			DisplayName:    "Meeting Notes.wav",
+			MediaType:      "audio",
+			AssetStatus:    "ready",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		{
+			ID:             "asset-2",
+			LogicalPathKey: "projects/sunset/photo-001.jpg",
+			DisplayName:    "Sunset Hero.jpg",
+			MediaType:      "image",
+			AssetStatus:    "partial",
+			CreatedAt:      now.Add(time.Minute),
+			UpdatedAt:      now.Add(time.Minute),
+		},
+		{
+			ID:             "asset-3",
+			LogicalPathKey: "archive/meeting/old-recording.wav",
+			DisplayName:    "Old Recording.wav",
+			MediaType:      "audio",
+			AssetStatus:    "deleted",
+			CreatedAt:      now.Add(2 * time.Minute),
+			UpdatedAt:      now.Add(2 * time.Minute),
+		},
+	}
+
+	for _, asset := range assets {
+		if err := store.CreateAsset(ctx, asset); err != nil {
+			t.Fatalf("create asset %s: %v", asset.ID, err)
+		}
+	}
+
+	results, err := store.SearchAssets(ctx, AssetListOptions{
+		Limit:       20,
+		SearchQuery: "meeting",
+	})
+	if err != nil {
+		t.Fatalf("search assets by display name: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 visible search result for meeting, got %d", len(results))
+	}
+	if results[0].ID != "asset-1" {
+		t.Fatalf("expected asset-1 to match meeting search, got %s", results[0].ID)
+	}
+
+	pathResults, err := store.SearchAssets(ctx, AssetListOptions{
+		Limit:       20,
+		SearchQuery: "sunset/photo",
+		MediaType:   "image",
+		AssetStatus: "partial",
+	})
+	if err != nil {
+		t.Fatalf("search assets by path fragment: %v", err)
+	}
+	if len(pathResults) != 1 {
+		t.Fatalf("expected 1 filtered path result, got %d", len(pathResults))
+	}
+	if pathResults[0].ID != "asset-2" {
+		t.Fatalf("expected asset-2 for filtered path search, got %s", pathResults[0].ID)
+	}
+
+	updated := assets[1]
+	updated.DisplayName = "Harbor Sunset.jpg"
+	updated.LogicalPathKey = "projects/harbor/sunset-photo.jpg"
+	updated.UpdatedAt = now.Add(3 * time.Minute)
+	if err := store.UpdateAsset(ctx, updated); err != nil {
+		t.Fatalf("update asset search fields: %v", err)
+	}
+
+	updatedResults, err := store.SearchAssets(ctx, AssetListOptions{
+		Limit:       20,
+		SearchQuery: "harbor",
+	})
+	if err != nil {
+		t.Fatalf("search updated asset: %v", err)
+	}
+	if len(updatedResults) != 1 || updatedResults[0].ID != "asset-2" {
+		t.Fatalf("expected updated asset-2 to be searchable by new path, got %+v", updatedResults)
+	}
+}

@@ -162,4 +162,17 @@ type AssetRecord struct {
 	Replicas              []ReplicaRecord           `json:"replicas"`
 }
 
+type UnifiedSearchResultRecord struct {
+	Asset             AssetRecord `json:"asset"`
+	MatchKinds        []string    `json:"matchKinds"`
+	TranscriptSnippet *string     `json:"transcriptSnippet,omitempty"`
+	SemanticScore     *float64    `json:"semanticScore,omitempty"`
+}
+
+type UnifiedSearchResponse struct {
+	Query    string                    `json:"query"`
+	Results  []UnifiedSearchResultRecord `json:"results"`
+	Warnings []string                  `json:"warnings,omitempty"`
+}
+
 type TaskRecord = store.Task

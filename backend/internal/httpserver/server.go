@@ -44,6 +44,7 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/catalog/endpoints/", server.handleCatalogEndpointResource)
 	mux.HandleFunc("/api/v1/catalog/assets", server.handleCatalogAssets)
 	mux.HandleFunc("/api/v1/catalog/assets/", server.handleCatalogAssetResource)
+	mux.HandleFunc("/api/v1/catalog/search", server.handleCatalogUnifiedSearch)
 	mux.HandleFunc("/api/v1/catalog/replicas/delete", server.handleCatalogDeleteReplica)
 	mux.HandleFunc("/api/v1/catalog/tasks", server.handleCatalogTasks)
 	mux.HandleFunc("/api/v1/catalog/scans/full", server.handleCatalogFullScan)

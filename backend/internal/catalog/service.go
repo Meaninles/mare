@@ -39,6 +39,8 @@ type Service struct {
 	mediaConfig           MediaConfig
 	credentialVault       *credentials.Vault
 	autoQueueDerivedMedia bool
+	autoQueueSearchJobs   bool
+	searchBridge          SearchAIBridge
 	mediaJobKeys          sync.Map
 	deviceRoleSelections  sync.Map
 }
@@ -54,6 +56,7 @@ func NewService(
 
 	resolvedOptions := serviceOptions{
 		autoQueueDerivedMedia: true,
+		autoQueueSearchJobs:   true,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -77,6 +80,8 @@ func NewService(
 		mediaConfig:           normalizeMediaConfig(resolvedOptions.mediaConfig),
 		credentialVault:       credentialVault,
 		autoQueueDerivedMedia: resolvedOptions.autoQueueDerivedMedia,
+		autoQueueSearchJobs:   resolvedOptions.autoQueueSearchJobs,
+		searchBridge:          defaultSearchBridge(resolvedOptions.searchBridge),
 	}
 }
 
@@ -204,77 +209,7 @@ func (service *Service) ListAssets(ctx context.Context, limit, offset int) ([]As
 		return nil, err
 	}
 
-	expectedEndpoints, _, err := service.listManagedEnabledEndpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	allEndpoints, err := service.store.ListStorageEndpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-	allEndpointLookup := make(map[string]store.StorageEndpoint, len(allEndpoints))
-	for _, endpoint := range allEndpoints {
-		allEndpointLookup[endpoint.ID] = endpoint
-	}
-
-	records := make([]AssetRecord, 0, len(assets))
-	for _, asset := range assets {
-		replicas, replicaErr := service.store.ListReplicasByAssetID(ctx, asset.ID)
-		if replicaErr != nil {
-			return nil, replicaErr
-		}
-
-		replicaRecords, availableReplicaCount, missingReplicaCount, err := service.buildAssetReplicaRecords(
-			ctx,
-			replicas,
-			expectedEndpoints,
-			allEndpointLookup,
-			asset.LogicalPathKey,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		posterRecord, err := service.buildPosterRecord(ctx, asset)
-		if err != nil {
-			return nil, err
-		}
-
-		audioMetadata, err := service.buildAudioMetadataRecord(ctx, asset.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		var previewURL *string
-		if candidate, err := service.selectReadableReplica(ctx, replicas); err == nil && candidate != nil {
-			url := service.previewURL(asset.ID)
-			previewURL = &url
-		}
-
-		record := AssetRecord{
-			ID:                    asset.ID,
-			LogicalPathKey:        asset.LogicalPathKey,
-			CanonicalPath:         canonicalLogicalPath(asset.LogicalPathKey),
-			CanonicalDirectory:    canonicalDirectoryPath(asset.LogicalPathKey),
-			DisplayName:           asset.DisplayName,
-			MediaType:             asset.MediaType,
-			AssetStatus:           asset.AssetStatus,
-			PrimaryTimestamp:      asset.PrimaryTimestamp,
-			Poster:                posterRecord,
-			PreviewURL:            previewURL,
-			AudioMetadata:         audioMetadata,
-			CreatedAt:             asset.CreatedAt,
-			UpdatedAt:             asset.UpdatedAt,
-			AvailableReplicaCount: availableReplicaCount,
-			MissingReplicaCount:   missingReplicaCount,
-			Replicas:              replicaRecords,
-		}
-		records = append(records, record)
-		service.maybeQueueDerivedMedia(asset, replicas)
-	}
-
-	return records, nil
+	return service.buildAssetRecords(ctx, assets)
 }
 
 func (service *Service) ListTasks(ctx context.Context, limit, offset int) ([]store.Task, error) {

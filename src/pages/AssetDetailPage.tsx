@@ -111,16 +111,14 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const preferredOpenEndpointName = preferredOpenReplica
     ? endpointLookup.get(preferredOpenReplica.endpointId) ?? preferredOpenReplica.endpointId
     : undefined;
-  const availableEndpointNames = useMemo(() => {
-    return availableReplicas
-      .map((replica) => endpointLookup.get(replica.endpointId) ?? replica.endpointId)
-      .sort((left, right) => left.localeCompare(right, "zh-CN"));
-  }, [availableReplicas, endpointLookup]);
-  const missingEndpointNames = useMemo(() => {
-    return missingReplicas
-      .map((replica) => endpointLookup.get(replica.endpointId) ?? replica.endpointId)
-      .sort((left, right) => left.localeCompare(right, "zh-CN"));
-  }, [missingReplicas, endpointLookup]);
+  const endpointStatusEntries = [...asset.replicas]
+    .map((replica) => ({
+      replica,
+      endpointName: endpointLookup.get(replica.endpointId) ?? replica.endpointId
+    }))
+    .sort((left, right) => left.endpointName.localeCompare(right.endpointName, "zh-CN"));
+  const availableReplicaEntries = endpointStatusEntries.filter((entry) => entry.replica.existsFlag);
+  const missingReplicaEntries = endpointStatusEntries.filter((entry) => !entry.replica.existsFlag);
 
   function handlePlaceholderAction(action: string, endpointName?: string) {
     setActionNotice(`${action}${endpointName ? `：${endpointName}` : ""} 还会继续接入更明确的客户端动作。`);
@@ -304,13 +302,20 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
 
               <div className="asset-presence-groups">
                 <div className="asset-presence-group">
-                  <span>已有</span>
+                  <span>已存储</span>
                   <div className="replica-chip-row">
-                    {availableEndpointNames.length > 0 ? (
-                      availableEndpointNames.map((name) => (
-                        <span key={`available-${name}`} className="replica-chip success">
-                          {name}
-                        </span>
+                    {availableReplicaEntries.length > 0 ? (
+                      availableReplicaEntries.map(({ replica, endpointName }) => (
+                        <button
+                          key={`available-${replica.endpointId}`}
+                          type="button"
+                          className="replica-chip-button success"
+                          onClick={() => handleDeleteIntent(replica, endpointName)}
+                          disabled={deleteReplicaMutation.isPending}
+                          title={`从 ${endpointName} 删除`}
+                        >
+                          {endpointName}
+                        </button>
                       ))
                     ) : (
                       <span className="replica-chip neutral">暂无</span>
@@ -319,13 +324,20 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
                 </div>
 
                 <div className="asset-presence-group">
-                  <span>缺失</span>
+                  <span>未存储</span>
                   <div className="replica-chip-row">
-                    {missingEndpointNames.length > 0 ? (
-                      missingEndpointNames.map((name) => (
-                        <span key={`missing-${name}`} className="replica-chip warning">
-                          {name}
-                        </span>
+                    {missingReplicaEntries.length > 0 ? (
+                      missingReplicaEntries.map(({ replica, endpointName }) => (
+                        <button
+                          key={`missing-${replica.endpointId}`}
+                          type="button"
+                          className="replica-chip-button warning"
+                          onClick={() => void handleRestoreReplica(replica, endpointName)}
+                          disabled={restoreMutation.isPending || !recommendedSource}
+                          title={`同步到 ${endpointName}`}
+                        >
+                          {endpointName}
+                        </button>
                       ))
                     ) : (
                       <span className="replica-chip success">已完整</span>

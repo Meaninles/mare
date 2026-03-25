@@ -12,18 +12,32 @@ import {
   restoreCatalogAssetsToEndpoint,
   retryCatalogTask
 } from "../services/catalog";
-import type { CatalogAsset } from "../types/catalog";
+import type { CatalogAsset, CatalogAssetQueryOptions } from "../types/catalog";
 
 const backendUrl = getDefaultCatalogBackendUrl();
 
-export function useCatalogAssets(limit = 1000) {
+export function useCatalogAssets(options: CatalogAssetQueryOptions = {}) {
   const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+  const resolvedOptions = {
+    limit: options.limit ?? 1000,
+    query: options.query?.trim() ?? "",
+    mediaType: options.mediaType?.trim() ?? "",
+    assetStatus: options.assetStatus?.trim() ?? ""
+  };
 
   return useQuery({
-    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "assets", limit),
+    queryKey: buildLibraryQueryKey(
+      currentLibraryId,
+      "catalog",
+      "assets",
+      resolvedOptions.limit,
+      resolvedOptions.query,
+      resolvedOptions.mediaType,
+      resolvedOptions.assetStatus
+    ),
     enabled: isLibraryOpen,
     queryFn: async () => {
-      const response = await listCatalogAssets(backendUrl, limit);
+      const response = await listCatalogAssets(backendUrl, resolvedOptions);
       if (!response.success) {
         throw new Error(response.error ?? "无法读取资产列表。");
       }

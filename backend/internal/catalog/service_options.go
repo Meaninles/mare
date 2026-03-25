@@ -10,6 +10,8 @@ type serviceOptions struct {
 	mediaConfig           MediaConfig
 	credentialVault       *credentials.Vault
 	autoQueueDerivedMedia bool
+	autoQueueSearchJobs   bool
+	searchBridge          SearchAIBridge
 }
 
 func (config MediaConfig) apply(options *serviceOptions) {
@@ -38,4 +40,28 @@ func (option autoQueueDerivedMediaOption) apply(options *serviceOptions) {
 
 func WithAutoQueueDerivedMedia(enabled bool) ServiceOption {
 	return autoQueueDerivedMediaOption{enabled: enabled}
+}
+
+type autoQueueSearchJobsOption struct {
+	enabled bool
+}
+
+func (option autoQueueSearchJobsOption) apply(options *serviceOptions) {
+	options.autoQueueSearchJobs = option.enabled
+}
+
+func WithAutoQueueSearchJobs(enabled bool) ServiceOption {
+	return autoQueueSearchJobsOption{enabled: enabled}
+}
+
+type searchBridgeOption struct {
+	bridge SearchAIBridge
+}
+
+func (option searchBridgeOption) apply(options *serviceOptions) {
+	options.searchBridge = option.bridge
+}
+
+func WithSearchBridge(bridge SearchAIBridge) ServiceOption {
+	return searchBridgeOption{bridge: bridge}
 }

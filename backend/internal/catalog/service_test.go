@@ -341,6 +341,117 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	}
 }
 
+func TestSearchAssetsSupportsQueryAndFilterCombination(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	endpoint := store.StorageEndpoint{
+		ID:                 "endpoint-local",
+		Name:               "Local Media",
+		EndpointType:       string(connectors.EndpointTypeLocal),
+		RootPath:           `D:\Media`,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "local-media",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"rootPath":"D:\\Media"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+		t.Fatalf("create storage endpoint: %v", err)
+	}
+
+	assets := []store.Asset{
+		{
+			ID:             "asset-audio",
+			LogicalPathKey: "projects/meeting/final-mix.wav",
+			DisplayName:    "Final Mix.wav",
+			MediaType:      "audio",
+			AssetStatus:    "ready",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		{
+			ID:             "asset-video",
+			LogicalPathKey: "projects/meeting/final-cut.mp4",
+			DisplayName:    "Final Cut.mp4",
+			MediaType:      "video",
+			AssetStatus:    "partial",
+			CreatedAt:      now.Add(time.Minute),
+			UpdatedAt:      now.Add(time.Minute),
+		},
+	}
+
+	for _, asset := range assets {
+		if err := dataStore.CreateAsset(ctx, asset); err != nil {
+			t.Fatalf("create asset %s: %v", asset.ID, err)
+		}
+	}
+
+	for _, replica := range []store.Replica{
+		{
+			ID:            "replica-audio",
+			AssetID:       "asset-audio",
+			EndpointID:    endpoint.ID,
+			PhysicalPath:  `D:\Media\projects\meeting\final-mix.wav`,
+			ReplicaStatus: string(ReplicaStatusActive),
+			ExistsFlag:    true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "replica-video",
+			AssetID:       "asset-video",
+			EndpointID:    endpoint.ID,
+			PhysicalPath:  `D:\Media\projects\meeting\final-cut.mp4`,
+			ReplicaStatus: string(ReplicaStatusActive),
+			ExistsFlag:    true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := dataStore.CreateReplica(ctx, replica); err != nil {
+			t.Fatalf("create replica %s: %v", replica.ID, err)
+		}
+	}
+
+	service := NewService(dataStore, (&fakeConnectorFactory{
+		connectorsByEndpoint: map[string]*fakeConnector{
+			endpoint.ID: {
+				descriptor: connectors.Descriptor{
+					Name: endpoint.Name,
+					Type: connectors.EndpointTypeLocal,
+					Capabilities: connectors.Capabilities{
+						CanReadStream: true,
+					},
+				},
+			},
+		},
+	}).Build, WithAutoQueueDerivedMedia(false))
+
+	results, err := service.SearchAssets(ctx, "meeting/final", "video", "partial", 20, 0)
+	if err != nil {
+		t.Fatalf("search assets: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 combined search result, got %d", len(results))
+	}
+	if results[0].ID != "asset-video" {
+		t.Fatalf("expected asset-video, got %s", results[0].ID)
+	}
+}
+
 func TestSelectReadableReplicaSkipsIgnoredSystemPaths(t *testing.T) {
 	t.Parallel()
 

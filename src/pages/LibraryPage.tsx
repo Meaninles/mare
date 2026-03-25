@@ -1,17 +1,26 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import {
   AudioLines,
+  CheckSquare,
   ChevronRight,
   Clapperboard,
   Folder,
   FolderOpen,
   Home,
   Images,
-  SearchX
+  SearchX,
+  Square,
+  Trash2,
+  WandSparkles
 } from "lucide-react";
 import { AssetDetailPage } from "./AssetDetailPage";
-import { useCatalogAssets, useCatalogEndpoints } from "../hooks/useCatalog";
+import {
+  useCatalogAssets,
+  useCatalogBatchRestore,
+  useCatalogDeleteReplica,
+  useCatalogEndpoints
+} from "../hooks/useCatalog";
 import {
   formatCatalogDate,
   formatDurationSeconds,
@@ -104,19 +113,33 @@ export function LibraryPage() {
 function LibraryCatalogView() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const assetsQuery = useCatalogAssets();
-  const endpointsQuery = useCatalogEndpoints();
   const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("name");
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [selectedEndpointId, setSelectedEndpointId] = useState("");
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
   const searchQuery = searchParams.get("q")?.trim() ?? "";
   const currentDirectory = normalizeHierarchyPath(searchParams.get("dir")?.trim() ?? "");
-  const deferredSearchQuery = useDeferredValue(searchQuery.toLowerCase());
-  const isSearchMode = deferredSearchQuery.length > 0;
+  const isSearchMode = searchQuery.length > 0;
+  const assetsQuery = useCatalogAssets({
+    limit: 1000,
+    query: searchQuery,
+    mediaType: mediaFilter !== "all" ? mediaFilter : undefined,
+    assetStatus: statusFilter !== "all" ? statusFilter : undefined
+  });
+  const endpointsQuery = useCatalogEndpoints();
+  const batchRestoreMutation = useCatalogBatchRestore();
+  const deleteReplicaMutation = useCatalogDeleteReplica();
 
   const endpointLookup = useMemo(() => {
     return new Map((endpointsQuery.data ?? []).map((endpoint) => [endpoint.id, endpoint.name]));
+  }, [endpointsQuery.data]);
+  const managedEndpoints = useMemo(() => {
+    return [...(endpointsQuery.data ?? [])]
+      .filter((endpoint) => endpoint.roleMode.trim().toUpperCase() === "MANAGED")
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
   }, [endpointsQuery.data]);
 
   const decoratedAssets = useMemo(() => {
@@ -134,36 +157,7 @@ function LibraryCatalogView() {
     };
   }, [decoratedAssets]);
 
-  const filteredAssets = useMemo(() => {
-    return decoratedAssets.filter((item) => {
-      const { asset, directory, endpointNames } = item;
-
-      if (mediaFilter !== "all" && normalizeMediaType(asset.mediaType) !== mediaFilter) {
-        return false;
-      }
-
-      if (statusFilter !== "all" && getAssetStatusFilterValue(asset) !== statusFilter) {
-        return false;
-      }
-
-      if (!deferredSearchQuery) {
-        return true;
-      }
-
-      const haystack = [
-        asset.displayName,
-        asset.logicalPathKey,
-        asset.canonicalPath,
-        directory,
-        ...endpointNames
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(deferredSearchQuery);
-    });
-  }, [decoratedAssets, deferredSearchQuery, mediaFilter, statusFilter]);
+  const filteredAssets = decoratedAssets;
 
   const folderIndex = useMemo(() => buildFolderIndex(filteredAssets), [filteredAssets]);
 
@@ -192,12 +186,36 @@ function LibraryCatalogView() {
 
     return [...scopedAssets].sort((left, right) => compareAssets(left, right, sortOrder));
   }, [currentDirectory, filteredAssets, isSearchMode, sortOrder]);
+  const selectedAssets = useMemo(() => {
+    const selectedSet = new Set(selectedAssetIds);
+    return decoratedAssets.filter((item) => selectedSet.has(item.asset.id));
+  }, [decoratedAssets, selectedAssetIds]);
+  const visibleAssetIds = useMemo(() => visibleAssets.map((item) => item.asset.id), [visibleAssets]);
+  const selectedVisibleCount = useMemo(() => {
+    const selectedSet = new Set(selectedAssetIds);
+    return visibleAssetIds.filter((assetId) => selectedSet.has(assetId)).length;
+  }, [selectedAssetIds, visibleAssetIds]);
+  const bulkTargetEndpoint = useMemo(
+    () => managedEndpoints.find((endpoint) => endpoint.id === selectedEndpointId) ?? null,
+    [managedEndpoints, selectedEndpointId]
+  );
 
   const breadcrumbs = useMemo(() => getBreadcrumbs(currentDirectory), [currentDirectory]);
 
   const currentFolderSummary = !isSearchMode
     ? folderIndex.summaries.get(currentDirectory) ?? folderIndex.summaries.get("")
     : undefined;
+
+  useEffect(() => {
+    setSelectedEndpointId((current) =>
+      managedEndpoints.some((endpoint) => endpoint.id === current) ? current : managedEndpoints[0]?.id ?? ""
+    );
+  }, [managedEndpoints]);
+
+  useEffect(() => {
+    const validAssetIds = new Set(decoratedAssets.map((item) => item.asset.id));
+    setSelectedAssetIds((current) => current.filter((assetId) => validAssetIds.has(assetId)));
+  }, [decoratedAssets]);
 
   function openDirectory(path: string) {
     const nextParams = new URLSearchParams(searchParams);
@@ -210,6 +228,97 @@ function LibraryCatalogView() {
     }
 
     setSearchParams(nextParams);
+  }
+
+  function toggleAssetSelection(assetId: string) {
+    setSelectedAssetIds((current) =>
+      current.includes(assetId) ? current.filter((id) => id !== assetId) : [...current, assetId]
+    );
+  }
+
+  function toggleVisibleSelection() {
+    if (visibleAssetIds.length === 0) {
+      return;
+    }
+
+    setSelectedAssetIds((current) => {
+      const currentSet = new Set(current);
+      const allVisibleSelected = visibleAssetIds.every((assetId) => currentSet.has(assetId));
+      if (allVisibleSelected) {
+        return current.filter((assetId) => !visibleAssetIds.includes(assetId));
+      }
+
+      const next = new Set(current);
+      visibleAssetIds.forEach((assetId) => next.add(assetId));
+      return Array.from(next);
+    });
+  }
+
+  async function handleBatchSync() {
+    if (!bulkTargetEndpoint) {
+      setBulkNotice("请先选择一个目标端。");
+      return;
+    }
+    if (selectedAssetIds.length === 0) {
+      setBulkNotice("请先选择至少一个资产。");
+      return;
+    }
+
+    setBulkNotice(null);
+    try {
+      const summary = await batchRestoreMutation.mutateAsync({
+        targetEndpointId: bulkTargetEndpoint.id,
+        assetIds: selectedAssetIds
+      });
+      setBulkNotice(
+        `${bulkTargetEndpoint.name}：成功 ${summary.successCount}，跳过 ${summary.skippedCount}，失败 ${summary.failedCount}`
+      );
+    } catch (error) {
+      setBulkNotice(error instanceof Error ? error.message : "批量同步失败。");
+    }
+  }
+
+  async function handleBatchDelete() {
+    if (!bulkTargetEndpoint) {
+      setBulkNotice("请先选择一个删除端。");
+      return;
+    }
+    if (selectedAssets.length === 0) {
+      setBulkNotice("请先选择至少一个资产。");
+      return;
+    }
+
+    const deletableAssets = selectedAssets.filter((item) =>
+      item.asset.replicas.some((replica) => replica.endpointId === bulkTargetEndpoint.id && replica.existsFlag)
+    );
+    if (deletableAssets.length === 0) {
+      setBulkNotice(`${bulkTargetEndpoint.name} 上没有可删除的已存储副本。`);
+      return;
+    }
+    if (!window.confirm(`确认从 ${bulkTargetEndpoint.name} 删除 ${deletableAssets.length} 个已选资产的副本吗？`)) {
+      return;
+    }
+
+    setBulkNotice(null);
+    let successCount = 0;
+    let failedCount = 0;
+    const skippedCount = selectedAssets.length - deletableAssets.length;
+
+    for (const item of deletableAssets) {
+      try {
+        await deleteReplicaMutation.mutateAsync({
+          assetId: item.asset.id,
+          targetEndpointId: bulkTargetEndpoint.id
+        });
+        successCount += 1;
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    setBulkNotice(
+      `${bulkTargetEndpoint.name}：删除 ${successCount}，跳过 ${skippedCount}${failedCount > 0 ? `，失败 ${failedCount}` : ""}`
+    );
   }
 
   return (
@@ -290,6 +399,8 @@ function LibraryCatalogView() {
           </label>
         </div>
       </article>
+
+      {bulkNotice ? <p className="inline-note">{bulkNotice}</p> : null}
 
       {assetsQuery.isError ? (
         <article className="detail-card empty-state">
@@ -394,10 +505,79 @@ function LibraryCatalogView() {
             </div>
           )}
 
+          <div className="explorer-bulkbar">
+            <div className="replica-chip-row explorer-bulk-summary">
+              <span className="replica-chip neutral">已选 {selectedAssetIds.length}</span>
+              {bulkTargetEndpoint ? <span className="replica-chip neutral">目标 {bulkTargetEndpoint.name}</span> : null}
+            </div>
+
+            <div className="explorer-bulk-actions">
+              <button type="button" className="ghost-button" onClick={toggleVisibleSelection} disabled={visibleAssetIds.length === 0}>
+                {selectedVisibleCount === visibleAssetIds.length && visibleAssetIds.length > 0 ? (
+                  <CheckSquare size={16} />
+                ) : (
+                  <Square size={16} />
+                )}
+                当前可见
+              </button>
+
+              <button type="button" className="ghost-button" onClick={() => setSelectedAssetIds([])} disabled={selectedAssetIds.length === 0}>
+                清空
+              </button>
+
+              <label className="field explorer-bulk-field">
+                <span>目标端</span>
+                <select value={selectedEndpointId} onChange={(event) => setSelectedEndpointId(event.target.value)}>
+                  <option value="">请选择</option>
+                  {managedEndpoints.map((endpoint) => (
+                    <option key={endpoint.id} value={endpoint.id}>
+                      {endpoint.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void handleBatchSync()}
+                disabled={batchRestoreMutation.isPending || selectedAssetIds.length === 0 || !bulkTargetEndpoint}
+              >
+                <WandSparkles size={16} />
+                同步到端
+              </button>
+
+              <button
+                type="button"
+                className="ghost-button danger-text"
+                onClick={() => void handleBatchDelete()}
+                disabled={deleteReplicaMutation.isPending || selectedAssetIds.length === 0 || !bulkTargetEndpoint}
+              >
+                <Trash2 size={16} />
+                从端删除
+              </button>
+            </div>
+          </div>
+
           <div className="explorer-table-wrap">
             <table className="explorer-table">
               <thead>
                 <tr>
+                  <th className="explorer-select-col">
+                    <button
+                      type="button"
+                      className="explorer-select-toggle"
+                      onClick={toggleVisibleSelection}
+                      disabled={visibleAssetIds.length === 0}
+                      title={selectedVisibleCount === visibleAssetIds.length && visibleAssetIds.length > 0 ? "取消当前可见" : "选择当前可见"}
+                    >
+                      {selectedVisibleCount === visibleAssetIds.length && visibleAssetIds.length > 0 ? (
+                        <CheckSquare size={16} />
+                      ) : (
+                        <Square size={16} />
+                      )}
+                    </button>
+                  </th>
                   <th>名称</th>
                   <th>类型</th>
                   <th>状态</th>
@@ -413,7 +593,13 @@ function LibraryCatalogView() {
                 ))}
 
                 {visibleAssets.map((item) => (
-                  <ExplorerAssetRow key={item.asset.id} item={item} detailSearch={location.search} />
+                  <ExplorerAssetRow
+                    key={item.asset.id}
+                    item={item}
+                    detailSearch={location.search}
+                    selected={selectedAssetIds.includes(item.asset.id)}
+                    onToggleSelect={toggleAssetSelection}
+                  />
                 ))}
               </tbody>
             </table>
@@ -433,6 +619,7 @@ function ExplorerFolderRow({
 }) {
   return (
     <tr className="explorer-row folder-row">
+      <td className="explorer-select-cell" />
       <td>
         <div className="explorer-name-cell">
           <div className="explorer-icon explorer-folder-icon">
@@ -462,10 +649,14 @@ function ExplorerFolderRow({
 
 function ExplorerAssetRow({
   item,
-  detailSearch
+  detailSearch,
+  selected,
+  onToggleSelect
 }: {
   item: DecoratedAsset;
   detailSearch: string;
+  selected: boolean;
+  onToggleSelect: (assetId: string) => void;
 }) {
   const { asset } = item;
   const tone = getAssetTone(asset);
@@ -475,6 +666,16 @@ function ExplorerAssetRow({
 
   return (
     <tr className="explorer-row">
+      <td className="explorer-select-cell">
+        <button
+          type="button"
+          className={`explorer-selection-button${selected ? " is-selected" : ""}`}
+          onClick={() => onToggleSelect(asset.id)}
+          title={selected ? "取消选择" : "选择资产"}
+        >
+          {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+        </button>
+      </td>
       <td>
         <div className="explorer-name-cell">
           <div className={`explorer-icon tone-${tone}${asset.poster?.url ? " has-poster" : ""}`}>

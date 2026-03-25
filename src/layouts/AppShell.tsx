@@ -37,6 +37,12 @@ export function AppShell() {
         caption: "单个资产"
       };
     }
+    if (location.pathname === "/assets" && params.get("q")?.trim()) {
+      return {
+        label: "搜索",
+        caption: "统一检索入口"
+      };
+    }
 
     return getRouteMeta(location.pathname);
   }, [location.pathname, location.search]);

@@ -63,6 +63,35 @@ type AssetMediaMetadata struct {
 	UpdatedAt       time.Time
 }
 
+type AssetTranscript struct {
+	AssetID         string
+	TranscriptText  string
+	Language        *string
+	SourceVersionID *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type AssetSearchDocument struct {
+	ID         string
+	AssetID    string
+	SourceKind string
+	Content    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type AssetSemanticEmbedding struct {
+	ID              string
+	AssetID         string
+	FeatureKind     string
+	ModelName       string
+	EmbeddingJSON   string
+	SourceVersionID *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type ReplicaVersion struct {
 	ID             string
 	Size           int64

@@ -136,8 +136,19 @@ func (server *Server) handleCatalogAssets(w http.ResponseWriter, r *http.Request
 
 	limit := queryInt(r, "limit", 200)
 	offset := queryInt(r, "offset", 0)
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
+	assetStatus := strings.TrimSpace(r.URL.Query().Get("status"))
 
-	records, err := catalogService.ListAssets(r.Context(), limit, offset)
+	var (
+		records []catalog.AssetRecord
+		err     error
+	)
+	if searchQuery != "" || mediaType != "" || assetStatus != "" {
+		records, err = catalogService.SearchAssets(r.Context(), searchQuery, mediaType, assetStatus, limit, offset)
+	} else {
+		records, err = catalogService.ListAssets(r.Context(), limit, offset)
+	}
 	if err != nil {
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -185,6 +196,40 @@ func (server *Server) handleCatalogDeleteReplica(w http.ResponseWriter, r *http.
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"summary": summary,
+	})
+}
+
+func (server *Server) handleCatalogUnifiedSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	limit := queryInt(r, "limit", 30)
+	offset := queryInt(r, "offset", 0)
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
+	assetStatus := strings.TrimSpace(r.URL.Query().Get("status"))
+
+	response, err := catalogService.SearchLibrary(r.Context(), searchQuery, mediaType, assetStatus, limit, offset)
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"query":    response.Query,
+		"results":  response.Results,
+		"warnings": response.Warnings,
 	})
 }
 

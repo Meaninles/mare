@@ -119,6 +119,24 @@ func (service *Service) RetryTask(ctx context.Context, taskID string) (RetryTask
 		summary.Status = taskStatusSuccess
 		summary.Message = "media task retried successfully"
 		return summary, nil
+	case taskTypeAudioTranscript, taskTypeVideoTranscript, taskTypeImageSemantic, taskTypeVideoSemantic:
+		var payload struct {
+			AssetID string `json:"assetId"`
+		}
+		if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
+			return summary, fmt.Errorf("decode search task payload: %w", err)
+		}
+
+		newTask, retryErr := service.startSearchTask(ctx, payload.AssetID, task.TaskType)
+		summary.NewTaskID = newTask.ID
+		if retryErr != nil {
+			summary.Message = retryErr.Error()
+			return summary, retryErr
+		}
+
+		summary.Status = taskStatusSuccess
+		summary.Message = "search feature task retried successfully"
+		return summary, nil
 	default:
 		return summary, fmt.Errorf("task type %q does not support retry", task.TaskType)
 	}

@@ -267,6 +267,13 @@ export interface CatalogDeleteEndpointResponse {
   error?: string;
 }
 
+export interface CatalogAssetQueryOptions {
+  limit?: number;
+  query?: string;
+  mediaType?: string;
+  assetStatus?: string;
+}
+
 export interface CatalogAssetsResponse {
   success: boolean;
   assets?: CatalogAsset[];
