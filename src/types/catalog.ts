@@ -85,6 +85,32 @@ export interface CatalogAsset {
   replicas: CatalogReplica[];
 }
 
+export interface CatalogAssetTranscriptInsight {
+  text: string;
+  language?: string;
+  length: number;
+  updatedAt: string;
+}
+
+export interface CatalogSemanticLabel {
+  label: string;
+  score: number;
+}
+
+export interface CatalogAssetSemanticInsight {
+  featureKind: string;
+  modelName: string;
+  dimensions: number;
+  labels: CatalogSemanticLabel[];
+  updatedAt: string;
+}
+
+export interface CatalogAssetInsights {
+  transcript?: CatalogAssetTranscriptInsight;
+  semantic?: CatalogAssetSemanticInsight;
+  warnings?: string[];
+}
+
 export interface CatalogTask {
   id: string;
   taskType: string;
@@ -277,6 +303,12 @@ export interface CatalogAssetQueryOptions {
 export interface CatalogAssetsResponse {
   success: boolean;
   assets?: CatalogAsset[];
+  error?: string;
+}
+
+export interface CatalogAssetInsightsResponse {
+  success: boolean;
+  insights?: CatalogAssetInsights;
   error?: string;
 }
 

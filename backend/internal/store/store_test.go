@@ -272,3 +272,49 @@ func TestStoreSearchAssetsUsesFTSAndTracksAssetUpdates(t *testing.T) {
 		t.Fatalf("expected updated asset-2 to be searchable by new path, got %+v", updatedResults)
 	}
 }
+
+func TestStoreSearchAssetsFallsBackWhenFTSTableIsMissing(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = store.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	if err := store.CreateAsset(ctx, Asset{
+		ID:             "asset-fallback-1",
+		LogicalPathKey: "projects/fallback/demo-shot.jpg",
+		DisplayName:    "Demo Shot.jpg",
+		MediaType:      "image",
+		AssetStatus:    "ready",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE asset_search`); err != nil {
+		t.Fatalf("drop asset_search table: %v", err)
+	}
+
+	results, err := store.SearchAssets(ctx, AssetListOptions{
+		Limit:       20,
+		SearchQuery: "demo shot",
+	})
+	if err != nil {
+		t.Fatalf("search assets with like fallback: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 fallback search result, got %d", len(results))
+	}
+	if results[0].ID != "asset-fallback-1" {
+		t.Fatalf("expected fallback asset to match, got %s", results[0].ID)
+	}
+}

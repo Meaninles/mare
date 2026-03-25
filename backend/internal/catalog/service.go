@@ -42,6 +42,7 @@ type Service struct {
 	autoQueueSearchJobs   bool
 	searchBridge          SearchAIBridge
 	mediaJobKeys          sync.Map
+	searchCapabilityFlags sync.Map
 	deviceRoleSelections  sync.Map
 }
 

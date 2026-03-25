@@ -40,10 +40,9 @@ func (store *Store) SearchAssets(ctx context.Context, options AssetListOptions) 
 			SELECT
 				asset_id,
 				0 AS match_order,
-				MIN(bm25(asset_search, 1.0, 0.6)) AS match_rank
+				bm25(asset_search, 1.0, 0.6) AS match_rank
 			FROM asset_search
 			WHERE asset_search MATCH ?
-			GROUP BY asset_id
 
 			UNION ALL
 
@@ -110,6 +109,9 @@ func (store *Store) SearchAssets(ctx context.Context, options AssetListOptions) 
 		resolved.Offset,
 	)
 	if err != nil {
+		if shouldFallbackAssetSearch(err) {
+			return store.searchAssetsByLike(ctx, resolved)
+		}
 		return nil, fmt.Errorf("search assets: %w", err)
 	}
 	defer rows.Close()
@@ -342,4 +344,15 @@ func buildContainsPattern(value string) string {
 		`_`, `\_`,
 	)
 	return "%" + replacer.Replace(strings.ToLower(strings.TrimSpace(value))) + "%"
+}
+
+func shouldFallbackAssetSearch(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such table: asset_search") ||
+		strings.Contains(message, "no such module: fts5") ||
+		strings.Contains(message, "no such function: bm25")
 }

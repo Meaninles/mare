@@ -38,6 +38,14 @@ def main() -> int:
             )
             return write_response({"success": True, "embedding": payload})
 
+        if operation == "describe_vector":
+            payload = describe_vector(
+                vector_input=request.get("vector"),
+                label_entries=request.get("labels"),
+                top_k=request.get("topK"),
+            )
+            return write_response({"success": True, "description": payload})
+
         raise ValueError(f"unsupported operation: {operation}")
     except Exception as exc:
         return write_response(
@@ -143,7 +151,13 @@ def embed_video(input_path: str, ffmpeg_path: str) -> dict:
             "6",
             output_pattern,
         ]
-        completed = subprocess.run(command, capture_output=True, text=True)
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         if completed.returncode != 0:
             stderr = (completed.stderr or "").strip()
             raise RuntimeError(f"视频关键帧提取失败: {stderr or completed.returncode}")
@@ -157,6 +171,54 @@ def embed_video(input_path: str, ffmpeg_path: str) -> dict:
             "modelName": embed_image(frame_paths[0])["modelName"],
             "vector": normalize_vector(average_vectors(vectors)),
         }
+
+
+def describe_vector(vector_input, label_entries, top_k) -> dict:
+    model, processor, model_name, torch = get_clip_bundle()
+
+    vector = normalize_vector([float(value) for value in (vector_input or [])])
+    if not vector:
+        raise ValueError("vector is required")
+
+    labels = []
+    prompts = []
+    for entry in label_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label", "")).strip()
+        prompt = str(entry.get("prompt", "")).strip()
+        if not label or not prompt:
+            continue
+        labels.append(label)
+        prompts.append(prompt)
+
+    if not prompts:
+        raise ValueError("labels are required")
+
+    with torch.no_grad():
+        inputs = processor(text=prompts, return_tensors="pt", padding=True, truncation=True)
+        features = model.get_text_features(**inputs)
+
+    scored_labels = []
+    for index, label in enumerate(labels):
+        candidate = normalize_vector(features[index].cpu().tolist())
+        scored_labels.append(
+            {
+                "label": label,
+                "score": round(dot_product(vector, candidate), 6),
+            }
+        )
+
+    scored_labels.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+
+    resolved_top_k = int(top_k or 0)
+    if resolved_top_k <= 0:
+        resolved_top_k = min(6, len(scored_labels))
+
+    return {
+        "modelName": model_name,
+        "labels": scored_labels[:resolved_top_k],
+    }
 
 
 def get_clip_bundle():
@@ -211,6 +273,13 @@ def average_vectors(vectors):
     for index in range(length):
         averaged.append(sum(float(vector[index]) for vector in vectors) / len(vectors))
     return averaged
+
+
+def dot_product(left, right):
+    if not left or not right:
+        return 0.0
+    length = min(len(left), len(right))
+    return sum(float(left[index]) * float(right[index]) for index in range(length))
 
 
 def ensure_existing_file(input_path: str) -> None:

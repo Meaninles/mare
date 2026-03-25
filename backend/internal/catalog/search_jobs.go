@@ -24,8 +24,11 @@ const (
 
 	taskTypeAudioTranscript = "audio_transcript"
 	taskTypeVideoTranscript = "video_transcript"
-	taskTypeImageSemantic  = "image_semantic"
-	taskTypeVideoSemantic  = "video_semantic"
+	taskTypeImageSemantic   = "image_semantic"
+	taskTypeVideoSemantic   = "video_semantic"
+
+	searchCapabilityTranscript = "transcript"
+	searchCapabilitySemantic   = "semantic"
 )
 
 func (service *Service) maybeQueueSearchFeatures(asset store.Asset, replicas []store.Replica) {
@@ -37,18 +40,22 @@ func (service *Service) maybeQueueSearchFeatures(asset store.Asset, replicas []s
 
 	switch strings.ToLower(strings.TrimSpace(asset.MediaType)) {
 	case string(connectors.MediaTypeAudio):
-		if service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
+		if service.isSearchCapabilityEnabled(searchCapabilityTranscript) &&
+			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
 			service.queueSearchJob(asset.ID, taskTypeAudioTranscript)
 		}
 	case string(connectors.MediaTypeVideo):
-		if service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
+		if service.isSearchCapabilityEnabled(searchCapabilityTranscript) &&
+			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
 			service.queueSearchJob(asset.ID, taskTypeVideoTranscript)
 		}
-		if service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindVideo) {
+		if service.isSearchCapabilityEnabled(searchCapabilitySemantic) &&
+			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindVideo) {
 			service.queueSearchJob(asset.ID, taskTypeVideoSemantic)
 		}
 	case string(connectors.MediaTypeImage):
-		if service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindImage) {
+		if service.isSearchCapabilityEnabled(searchCapabilitySemantic) &&
+			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindImage) {
 			service.queueSearchJob(asset.ID, taskTypeImageSemantic)
 		}
 	}
@@ -108,6 +115,22 @@ func (service *Service) queueSearchJob(assetID string, taskType string) {
 	}()
 }
 
+func (service *Service) isSearchCapabilityEnabled(capability string) bool {
+	if strings.TrimSpace(capability) == "" {
+		return true
+	}
+
+	_, disabled := service.searchCapabilityFlags.Load(strings.TrimSpace(capability))
+	return !disabled
+}
+
+func (service *Service) disableSearchCapability(capability string) {
+	if strings.TrimSpace(capability) == "" {
+		return
+	}
+	service.searchCapabilityFlags.Store(strings.TrimSpace(capability), struct{}{})
+}
+
 func (service *Service) startSearchTask(ctx context.Context, assetID, taskType string) (store.Task, error) {
 	task, err := service.createCatalogTask(ctx, taskType, map[string]string{
 		"assetId":  assetID,
@@ -138,6 +161,23 @@ func (service *Service) runSearchTask(ctx context.Context, task store.Task, asse
 	resultText := resultSummary
 
 	if runErr != nil {
+		if skippedSummary, ok := service.searchTaskSkipSummary(taskType, runErr); ok {
+			resultText = skippedSummary
+			if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
+				Status:        taskStatusSuccess,
+				ResultSummary: &resultText,
+				RetryCount:    task.RetryCount,
+				StartedAt:     &startedAt,
+				FinishedAt:    &finishedAt,
+				UpdatedAt:     finishedAt,
+			}); err != nil {
+				return err
+			}
+
+			slog.Warn("search feature task skipped", "taskId", task.ID, "assetId", assetID, "taskType", taskType, "reason", skippedSummary)
+			return nil
+		}
+
 		errorText := runErr.Error()
 		if updateErr := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
 			Status:        taskStatusFailed,
@@ -168,6 +208,48 @@ func (service *Service) runSearchTask(ctx context.Context, task store.Task, asse
 
 	slog.Info("search feature task completed", "taskId", task.ID, "assetId", assetID, "taskType", taskType)
 	return nil
+}
+
+func (service *Service) searchTaskSkipSummary(taskType string, err error) (string, bool) {
+	reason := buildSearchTaskUnavailableReason(err)
+	if reason == "" {
+		return "", false
+	}
+
+	service.disableSearchCapability(searchCapabilityForTaskType(taskType))
+	return "已跳过后续同类 AI 解析任务：" + reason, true
+}
+
+func searchCapabilityForTaskType(taskType string) string {
+	switch strings.TrimSpace(taskType) {
+	case taskTypeAudioTranscript, taskTypeVideoTranscript:
+		return searchCapabilityTranscript
+	case taskTypeImageSemantic, taskTypeVideoSemantic:
+		return searchCapabilitySemantic
+	default:
+		return ""
+	}
+}
+
+func buildSearchTaskUnavailableReason(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "search_ai.requirements.txt"),
+		strings.Contains(message, "faster-whisper"),
+		strings.Contains(message, "transformers/torch"),
+		strings.Contains(message, "pillow"):
+		return "当前环境缺少搜索 AI 依赖，请安装 backend/tools/search_ai.requirements.txt"
+	case strings.Contains(message, "no such table: asset_transcripts"),
+		strings.Contains(message, "no such table: asset_search_documents"),
+		strings.Contains(message, "no such table: asset_semantic_embeddings"):
+		return "当前资产库尚未完成 AI 检索迁移，请重启应用后再试"
+	default:
+		return ""
+	}
 }
 
 func (service *Service) executeSearchTask(ctx context.Context, assetID, taskType string) (string, error) {

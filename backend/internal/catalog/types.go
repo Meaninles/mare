@@ -130,17 +130,17 @@ type AssetAudioMetadataRecord struct {
 }
 
 type ReplicaRecord struct {
-	ID                  string              `json:"id"`
-	EndpointID          string              `json:"endpointId"`
-	PhysicalPath        string              `json:"physicalPath"`
-	RelativePath        string              `json:"relativePath"`
-	LogicalDirectory    string              `json:"logicalDirectory"`
-	ResolvedDirectory   string              `json:"resolvedDirectory"`
-	MatchesLogicalPath  bool                `json:"matchesLogicalPath"`
-	ReplicaStatus       string              `json:"replicaStatus"`
-	ExistsFlag          bool                `json:"existsFlag"`
-	LastSeenAt          *time.Time          `json:"lastSeenAt,omitempty"`
-	Version             *AssetVersionRecord `json:"version,omitempty"`
+	ID                 string              `json:"id"`
+	EndpointID         string              `json:"endpointId"`
+	PhysicalPath       string              `json:"physicalPath"`
+	RelativePath       string              `json:"relativePath"`
+	LogicalDirectory   string              `json:"logicalDirectory"`
+	ResolvedDirectory  string              `json:"resolvedDirectory"`
+	MatchesLogicalPath bool                `json:"matchesLogicalPath"`
+	ReplicaStatus      string              `json:"replicaStatus"`
+	ExistsFlag         bool                `json:"existsFlag"`
+	LastSeenAt         *time.Time          `json:"lastSeenAt,omitempty"`
+	Version            *AssetVersionRecord `json:"version,omitempty"`
 }
 
 type AssetRecord struct {
@@ -162,6 +162,32 @@ type AssetRecord struct {
 	Replicas              []ReplicaRecord           `json:"replicas"`
 }
 
+type AssetTranscriptInsightRecord struct {
+	Text      string    `json:"text"`
+	Language  *string   `json:"language,omitempty"`
+	Length    int       `json:"length"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type AssetSemanticLabelRecord struct {
+	Label string  `json:"label"`
+	Score float64 `json:"score"`
+}
+
+type AssetSemanticInsightRecord struct {
+	FeatureKind string                     `json:"featureKind"`
+	ModelName   string                     `json:"modelName"`
+	Dimensions  int                        `json:"dimensions"`
+	Labels      []AssetSemanticLabelRecord `json:"labels"`
+	UpdatedAt   time.Time                  `json:"updatedAt"`
+}
+
+type AssetInsightsRecord struct {
+	Transcript *AssetTranscriptInsightRecord `json:"transcript,omitempty"`
+	Semantic   *AssetSemanticInsightRecord   `json:"semantic,omitempty"`
+	Warnings   []string                      `json:"warnings,omitempty"`
+}
+
 type UnifiedSearchResultRecord struct {
 	Asset             AssetRecord `json:"asset"`
 	MatchKinds        []string    `json:"matchKinds"`
@@ -170,9 +196,9 @@ type UnifiedSearchResultRecord struct {
 }
 
 type UnifiedSearchResponse struct {
-	Query    string                    `json:"query"`
+	Query    string                      `json:"query"`
 	Results  []UnifiedSearchResultRecord `json:"results"`
-	Warnings []string                  `json:"warnings,omitempty"`
+	Warnings []string                    `json:"warnings,omitempty"`
 }
 
 type TaskRecord = store.Task

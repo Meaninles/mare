@@ -1656,6 +1656,16 @@ a {
   margin: 0;
 }
 
+.asset-ai-card {
+  align-content: start;
+}
+
+.asset-ai-card-copy {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.7;
+}
+
 .asset-preview-card .asset-preview-visual {
   min-height: 220px;
   max-height: 320px;
@@ -2616,6 +2626,118 @@ a {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.asset-insights-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.asset-insights-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-ai-dialog-body,
+.asset-ai-warning-list,
+.asset-ai-section {
+  display: grid;
+  gap: 14px;
+}
+
+.asset-ai-empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: var(--card-background-subtle);
+}
+
+.asset-ai-empty.error {
+  border-color: rgba(215, 86, 102, 0.24);
+  background: rgba(215, 86, 102, 0.08);
+}
+
+.asset-ai-empty strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.asset-ai-empty p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.65;
+}
+
+.asset-ai-section {
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: var(--card-background-subtle);
+}
+
+.asset-ai-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-ai-section-head strong {
+  font-size: 1rem;
+}
+
+.asset-ai-transcript-block {
+  max-height: 260px;
+  overflow: auto;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--card-background);
+  line-height: 1.72;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.asset-ai-label-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.asset-ai-label-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--card-background);
+}
+
+.asset-ai-label-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-ai-label-head strong {
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.asset-ai-label-card span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  white-space: nowrap;
 }
 
 .nav-item-copy small {

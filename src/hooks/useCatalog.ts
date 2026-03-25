@@ -3,6 +3,7 @@ import { useLibraryContext } from "../context/LibraryContext";
 import { buildLibraryQueryKey, invalidateLibraryQueries } from "../lib/query-keys";
 import {
   deleteCatalogReplica,
+  getCatalogAssetInsights,
   getCatalogSyncOverview,
   getDefaultCatalogBackendUrl,
   listCatalogAssets,
@@ -64,6 +65,25 @@ export function useCatalogEndpoints() {
       return response.endpoints ?? [];
     },
     staleTime: 15_000
+  });
+}
+
+export function useCatalogAssetInsights(assetId: string, enabled = true) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+  const normalizedAssetId = assetId.trim();
+
+  return useQuery({
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "asset-insights", normalizedAssetId),
+    enabled: isLibraryOpen && enabled && normalizedAssetId.length > 0,
+    queryFn: async () => {
+      const response = await getCatalogAssetInsights(backendUrl, normalizedAssetId);
+      if (!response.success || !response.insights) {
+        throw new Error(response.error ?? "无法读取 AI 解析结果。");
+      }
+
+      return response.insights;
+    },
+    staleTime: 10_000,
   });
 }
 

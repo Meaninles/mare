@@ -15,6 +15,7 @@ type SearchAIBridge interface {
 	EmbedImage(ctx context.Context, inputPath string) (SearchEmbeddingOutput, error)
 	EmbedVideo(ctx context.Context, inputPath string, ffmpegPath string) (SearchEmbeddingOutput, error)
 	EmbedText(ctx context.Context, text string) (SearchEmbeddingOutput, error)
+	DescribeVector(ctx context.Context, vector []float64, prompts []SearchSemanticPrompt, topK int) (SearchSemanticDescriptionOutput, error)
 }
 
 type SearchTranscriptOutput struct {
@@ -28,6 +29,33 @@ type SearchEmbeddingOutput struct {
 	Vector    []float64
 }
 
+type SearchSemanticPrompt struct {
+	Label  string
+	Prompt string
+}
+
+type SearchSemanticLabel struct {
+	Label string
+	Score float64
+}
+
+type SearchSemanticDescriptionOutput struct {
+	ModelName string
+	Labels    []SearchSemanticLabel
+}
+
+type SearchBridgeError struct {
+	Message   string
+	ErrorType string
+}
+
+func (err *SearchBridgeError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return err.Message
+}
+
 type pythonSearchBridge struct {
 	pythonCmd  string
 	scriptPath string
@@ -35,18 +63,22 @@ type pythonSearchBridge struct {
 }
 
 type searchBridgeRequest struct {
-	Operation  string `json:"operation"`
-	InputPath  string `json:"inputPath,omitempty"`
-	Text       string `json:"text,omitempty"`
-	MediaType  string `json:"mediaType,omitempty"`
-	FFmpegPath string `json:"ffmpegPath,omitempty"`
+	Operation  string                   `json:"operation"`
+	InputPath  string                   `json:"inputPath,omitempty"`
+	Text       string                   `json:"text,omitempty"`
+	MediaType  string                   `json:"mediaType,omitempty"`
+	FFmpegPath string                   `json:"ffmpegPath,omitempty"`
+	Vector     []float64                `json:"vector,omitempty"`
+	Labels     []searchBridgeLabelInput `json:"labels,omitempty"`
+	TopK       int                      `json:"topK,omitempty"`
 }
 
 type searchBridgeResponse struct {
-	Success    bool                    `json:"success"`
-	Transcript *searchBridgeTranscript `json:"transcript,omitempty"`
-	Embedding  *searchBridgeEmbedding  `json:"embedding,omitempty"`
-	Error      searchBridgeError       `json:"error,omitempty"`
+	Success     bool                     `json:"success"`
+	Transcript  *searchBridgeTranscript  `json:"transcript,omitempty"`
+	Embedding   *searchBridgeEmbedding   `json:"embedding,omitempty"`
+	Description *searchBridgeDescription `json:"description,omitempty"`
+	Error       searchBridgeError        `json:"error,omitempty"`
 }
 
 type searchBridgeTranscript struct {
@@ -58,6 +90,21 @@ type searchBridgeTranscript struct {
 type searchBridgeEmbedding struct {
 	ModelName string    `json:"modelName,omitempty"`
 	Vector    []float64 `json:"vector,omitempty"`
+}
+
+type searchBridgeLabelInput struct {
+	Label  string `json:"label"`
+	Prompt string `json:"prompt"`
+}
+
+type searchBridgeDescription struct {
+	ModelName string                    `json:"modelName,omitempty"`
+	Labels    []searchBridgeLabelResult `json:"labels,omitempty"`
+}
+
+type searchBridgeLabelResult struct {
+	Label string  `json:"label"`
+	Score float64 `json:"score"`
 }
 
 type searchBridgeError struct {
@@ -133,6 +180,62 @@ func (bridge *pythonSearchBridge) EmbedText(ctx context.Context, text string) (S
 	})
 }
 
+func (bridge *pythonSearchBridge) DescribeVector(
+	ctx context.Context,
+	vector []float64,
+	prompts []SearchSemanticPrompt,
+	topK int,
+) (SearchSemanticDescriptionOutput, error) {
+	if len(vector) == 0 {
+		return SearchSemanticDescriptionOutput{}, fmt.Errorf("semantic vector is empty")
+	}
+
+	labelInputs := make([]searchBridgeLabelInput, 0, len(prompts))
+	for _, prompt := range prompts {
+		label := strings.TrimSpace(prompt.Label)
+		text := strings.TrimSpace(prompt.Prompt)
+		if label == "" || text == "" {
+			continue
+		}
+		labelInputs = append(labelInputs, searchBridgeLabelInput{
+			Label:  label,
+			Prompt: text,
+		})
+	}
+	if len(labelInputs) == 0 {
+		return SearchSemanticDescriptionOutput{}, fmt.Errorf("semantic prompts are empty")
+	}
+
+	response, err := bridge.call(ctx, searchBridgeRequest{
+		Operation: "describe_vector",
+		Vector:    vector,
+		Labels:    labelInputs,
+		TopK:      topK,
+	})
+	if err != nil {
+		return SearchSemanticDescriptionOutput{}, err
+	}
+	if response.Description == nil {
+		return SearchSemanticDescriptionOutput{}, fmt.Errorf("search ai bridge returned no semantic description")
+	}
+
+	labels := make([]SearchSemanticLabel, 0, len(response.Description.Labels))
+	for _, label := range response.Description.Labels {
+		if strings.TrimSpace(label.Label) == "" {
+			continue
+		}
+		labels = append(labels, SearchSemanticLabel{
+			Label: strings.TrimSpace(label.Label),
+			Score: label.Score,
+		})
+	}
+
+	return SearchSemanticDescriptionOutput{
+		ModelName: response.Description.ModelName,
+		Labels:    labels,
+	}, nil
+}
+
 func (bridge *pythonSearchBridge) embed(ctx context.Context, request searchBridgeRequest) (SearchEmbeddingOutput, error) {
 	response, err := bridge.call(ctx, request)
 	if err != nil {
@@ -191,7 +294,10 @@ func (bridge *pythonSearchBridge) call(ctx context.Context, request searchBridge
 		if message == "" {
 			message = execErr.Error()
 		}
-		return searchBridgeResponse{}, fmt.Errorf("search ai bridge execution failed: %s", message)
+		return searchBridgeResponse{}, &SearchBridgeError{
+			Message:   fmt.Sprintf("search ai bridge execution failed: %s", message),
+			ErrorType: strings.TrimSpace(response.Error.Type),
+		}
 	}
 
 	if !response.Success {
@@ -199,7 +305,10 @@ func (bridge *pythonSearchBridge) call(ctx context.Context, request searchBridge
 		if message == "" {
 			message = "search ai bridge failed"
 		}
-		return searchBridgeResponse{}, fmt.Errorf(message)
+		return searchBridgeResponse{}, &SearchBridgeError{
+			Message:   message,
+			ErrorType: strings.TrimSpace(response.Error.Type),
+		}
 	}
 
 	return response, nil

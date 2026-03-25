@@ -21,27 +21,13 @@ END;
 CREATE TRIGGER IF NOT EXISTS assets_search_ad
 AFTER DELETE ON assets
 BEGIN
-    INSERT INTO asset_search(asset_search, rowid, asset_id, display_name, logical_path_key)
-    VALUES (
-        'delete',
-        old.rowid,
-        old.id,
-        COALESCE(old.display_name, ''),
-        COALESCE(old.logical_path_key, '')
-    );
+    DELETE FROM asset_search WHERE rowid = old.rowid;
 END;
 
 CREATE TRIGGER IF NOT EXISTS assets_search_au
 AFTER UPDATE ON assets
 BEGIN
-    INSERT INTO asset_search(asset_search, rowid, asset_id, display_name, logical_path_key)
-    VALUES (
-        'delete',
-        old.rowid,
-        old.id,
-        COALESCE(old.display_name, ''),
-        COALESCE(old.logical_path_key, '')
-    );
+    DELETE FROM asset_search WHERE rowid = old.rowid;
 
     INSERT INTO asset_search(rowid, asset_id, display_name, logical_path_key)
     VALUES (

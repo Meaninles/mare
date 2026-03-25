@@ -18,6 +18,14 @@ export function getTaskTitle(taskType: string) {
       return "视频封面";
     case "audio_metadata":
       return "音频元数据";
+    case "audio_transcript":
+      return "音频转写";
+    case "video_transcript":
+      return "视频转写";
+    case "image_semantic":
+      return "图片语义解析";
+    case "video_semantic":
+      return "视频语义解析";
     case "delete_replica":
       return "删除副本";
     default:
@@ -90,7 +98,15 @@ export function matchesTaskFilter(task: CatalogTask, filter: TaskFilter) {
     case "import":
       return taskType === "import_execute";
     case "media":
-      return ["thumbnail", "video_cover", "audio_metadata"].includes(taskType);
+      return [
+        "thumbnail",
+        "video_cover",
+        "audio_metadata",
+        "audio_transcript",
+        "video_transcript",
+        "image_semantic",
+        "video_semantic"
+      ].includes(taskType);
     default:
       return true;
   }
@@ -108,7 +124,11 @@ export function canRetryTask(task: CatalogTask) {
     "import_execute",
     "thumbnail",
     "video_cover",
-    "audio_metadata"
+    "audio_metadata",
+    "audio_transcript",
+    "video_transcript",
+    "image_semantic",
+    "video_semantic"
   ].includes(safeLower(task.taskType));
 }
 

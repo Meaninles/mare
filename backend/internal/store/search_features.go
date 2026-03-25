@@ -219,6 +219,12 @@ func (store *Store) SearchTranscriptHits(ctx context.Context, options AssetListO
 		resolved.Offset,
 	)
 	if err != nil {
+		if shouldFallbackTranscriptSearch(err) {
+			return store.searchTranscriptHitsByLike(ctx, resolved)
+		}
+		if isTranscriptSearchUnavailable(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("search transcript hits: %w", err)
 	}
 	defer rows.Close()
@@ -275,11 +281,35 @@ func (store *Store) searchTranscriptHitsByLike(ctx context.Context, options Asse
 		options.Offset,
 	)
 	if err != nil {
+		if isTranscriptSearchUnavailable(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("search transcript hits by like: %w", err)
 	}
 	defer rows.Close()
 
 	return scanSearchDocumentHits(rows)
+}
+
+func shouldFallbackTranscriptSearch(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such table: asset_search_documents_fts") ||
+		strings.Contains(message, "no such module: fts5") ||
+		strings.Contains(message, "no such function: bm25") ||
+		strings.Contains(message, "wrong number of arguments to function snippet")
+}
+
+func isTranscriptSearchUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such table: asset_search_documents")
 }
 
 func (store *Store) SaveAssetSemanticEmbedding(ctx context.Context, embedding AssetSemanticEmbedding) error {

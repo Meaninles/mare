@@ -3,15 +3,20 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import {
   AlertTriangle,
   ArrowLeft,
+  BrainCircuit,
+  FileText,
   FolderOpen,
   LoaderCircle,
   RefreshCcw,
+  Tag,
   Trash2,
-  WandSparkles
+  WandSparkles,
+  X
 } from "lucide-react";
 import { AssetPreview } from "../components/media/AssetPreview";
 import {
   useCatalogAssets,
+  useCatalogAssetInsights,
   useCatalogDeleteReplica,
   useCatalogEndpoints,
   useCatalogRestoreAsset
@@ -28,7 +33,7 @@ import {
   getReplicaTone,
   normalizeMediaType
 } from "../lib/catalog-view";
-import type { CatalogEndpoint, CatalogReplica } from "../types/catalog";
+import type { CatalogAssetInsights, CatalogEndpoint, CatalogReplica } from "../types/catalog";
 
 type DeleteDialogState = {
   replica: CatalogReplica;
@@ -46,6 +51,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const restoreMutation = useCatalogRestoreAsset();
   const deleteReplicaMutation = useCatalogDeleteReplica();
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
   const assetId = assetIdOverride ?? routeAssetId ?? searchParams.get("assetId") ?? "";
 
@@ -63,6 +69,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const asset = useMemo(() => {
     return (assetsQuery.data ?? []).find((item) => item.id === assetId) ?? null;
   }, [assetId, assetsQuery.data]);
+  const insightsQuery = useCatalogAssetInsights(asset?.id ?? "", Boolean(asset));
 
   if (assetsQuery.isLoading) {
     return (
@@ -99,7 +106,10 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
 
   const availableReplicas = getAvailableReplicas(asset);
   const missingReplicas = getMissingReplicas(asset);
-  const isAudioAsset = normalizeMediaType(asset.mediaType) === "audio";
+  const normalizedMediaType = normalizeMediaType(asset.mediaType);
+  const isAudioAsset = normalizedMediaType === "audio";
+  const supportsTranscript = normalizedMediaType === "audio" || normalizedMediaType === "video";
+  const supportsSemantic = normalizedMediaType === "image" || normalizedMediaType === "video";
   const recommendedSource = choosePreferredRestoreSource(availableReplicas, endpointsQuery.data ?? []);
   const primaryPath = asset.canonicalPath ?? asset.logicalPathKey;
   const primaryDirectory =
@@ -391,6 +401,40 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
             {actionNotice ? <p className="inline-note asset-action-note">{actionNotice}</p> : null}
           </article>
 
+          <article className="detail-card asset-ai-card">
+            <div className="section-head">
+              <div>
+                <h4>AI 解析</h4>
+                <p className="eyebrow">转写与语义</p>
+              </div>
+            </div>
+
+            <p className="asset-ai-card-copy">
+              可查看自动生成的转写文本、语义标签和模型信息，方便快速确认这份资产已经被系统理解到什么程度。
+            </p>
+
+            <div className="replica-chip-row">
+              {supportsTranscript ? (
+                <span className={`replica-chip ${insightsQuery.data?.transcript ? "success" : "warning"}`}>
+                  {insightsQuery.data?.transcript ? "已生成转写" : "转写待生成"}
+                </span>
+              ) : null}
+              {supportsSemantic ? (
+                <span className={`replica-chip ${insightsQuery.data?.semantic ? "success" : "warning"}`}>
+                  {insightsQuery.data?.semantic ? "已生成语义" : "语义待生成"}
+                </span>
+              ) : null}
+              {insightsQuery.data?.warnings?.length ? (
+                <span className="replica-chip warning">提示 {insightsQuery.data.warnings.length}</span>
+              ) : null}
+            </div>
+
+            <button type="button" className="ghost-button" onClick={() => setAnalysisOpen(true)}>
+              <BrainCircuit size={16} />
+              查看 AI 解析
+            </button>
+          </article>
+
           <article className="detail-card asset-preview-card">
             <div className="section-head">
               <div>
@@ -414,6 +458,14 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
           }
         }}
         onConfirm={() => void handleConfirmDelete()}
+      />
+      <AssetInsightsDialog
+        open={analysisOpen}
+        assetName={asset.displayName}
+        insights={insightsQuery.data}
+        isLoading={insightsQuery.isLoading}
+        error={insightsQuery.error instanceof Error ? insightsQuery.error.message : null}
+        onClose={() => setAnalysisOpen(false)}
       />
     </section>
   );
@@ -630,6 +682,157 @@ function ConfirmDeleteReplicaDialog({
             )}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetInsightsDialog({
+  open,
+  assetName,
+  insights,
+  isLoading,
+  error,
+  onClose
+}: {
+  open: boolean;
+  assetName: string;
+  insights?: CatalogAssetInsights;
+  isLoading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  const transcript = insights?.transcript;
+  const semantic = insights?.semantic;
+  const warnings = insights?.warnings ?? [];
+  const semanticTitle = semantic?.featureKind === "video" ? "视频语义" : "图像语义";
+
+  return (
+    <div className="dialog-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="dialog-card asset-insights-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="asset-insights-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-header">
+          <div className="asset-insights-head">
+            <span className="status-pill subtle">AI 解析</span>
+            <button type="button" className="ghost-button icon-button" onClick={onClose} aria-label="关闭 AI 解析">
+              <X size={16} />
+            </button>
+          </div>
+          <h4 id="asset-insights-title">查看 AI 解析结果</h4>
+          <p>{assetName}</p>
+        </div>
+
+        {isLoading ? (
+          <div className="asset-ai-empty">
+            <LoaderCircle size={18} className="spin" />
+            <div>
+              <strong>正在读取 AI 解析</strong>
+              <p>系统正在整理这份资产的转写文本、语义标签与模型信息。</p>
+            </div>
+          </div>
+        ) : null}
+
+        {!isLoading && error ? (
+          <div className="asset-ai-empty error">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>暂时无法读取 AI 解析</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {!isLoading && !error && !transcript && !semantic ? (
+          <div className="asset-ai-dialog-body">
+            <div className="asset-ai-empty">
+              <BrainCircuit size={18} />
+              <div>
+                <strong>当前还没有可用的 AI 解析结果</strong>
+                <p>可以先确认搜索 AI 依赖已安装，或等待后台完成转写与语义任务。</p>
+              </div>
+            </div>
+            {warnings.length > 0 ? (
+              <div className="asset-ai-warning-list">
+                {warnings.map((warning) => (
+                  <p key={warning} className="inline-note">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!isLoading && !error && (transcript || semantic) ? (
+          <div className="asset-ai-dialog-body">
+            {warnings.length > 0 ? (
+              <div className="asset-ai-warning-list">
+                {warnings.map((warning) => (
+                  <p key={warning} className="inline-note">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+
+            {transcript ? (
+              <section className="asset-ai-section">
+                <div className="asset-ai-section-head">
+                  <FileText size={16} />
+                  <strong>转写文本</strong>
+                </div>
+
+                <div className="replica-chip-row">
+                  <span className="replica-chip neutral">长度 {transcript.length}</span>
+                  {transcript.language ? <span className="replica-chip neutral">语言 {transcript.language}</span> : null}
+                  <span className="replica-chip neutral">更新于 {formatCatalogDate(transcript.updatedAt)}</span>
+                </div>
+
+                <div className="asset-ai-transcript-block">{transcript.text}</div>
+              </section>
+            ) : null}
+
+            {semantic ? (
+              <section className="asset-ai-section">
+                <div className="asset-ai-section-head">
+                  <BrainCircuit size={16} />
+                  <strong>{semanticTitle}</strong>
+                </div>
+
+                <div className="replica-chip-row">
+                  {semantic.modelName ? <span className="replica-chip neutral">{semantic.modelName}</span> : null}
+                  <span className="replica-chip neutral">维度 {semantic.dimensions}</span>
+                  <span className="replica-chip neutral">更新于 {formatCatalogDate(semantic.updatedAt)}</span>
+                </div>
+
+                {semantic.labels.length > 0 ? (
+                  <div className="asset-ai-label-grid">
+                    {semantic.labels.map((label) => (
+                      <div key={`${label.label}-${label.score}`} className="asset-ai-label-card">
+                        <div className="asset-ai-label-head">
+                          <Tag size={14} />
+                          <strong>{label.label}</strong>
+                        </div>
+                        <span>{Math.round(label.score * 100)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted-copy">当前只有语义向量，暂时还没有可显示的标签结果。</p>
+                )}
+              </section>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

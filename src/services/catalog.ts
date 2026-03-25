@@ -1,6 +1,7 @@
 import type {
   CatalogAssetsResponse,
   CatalogAssetQueryOptions,
+  CatalogAssetInsightsResponse,
   CatalogBatchRestoreResponse,
   CatalogDeleteEndpointResponse,
   CatalogDeleteReplicaResponse,
@@ -179,6 +180,13 @@ export async function listCatalogAssets(
   }
 
   return response;
+}
+
+export async function getCatalogAssetInsights(
+  baseUrl: string,
+  assetId: string
+): Promise<CatalogAssetInsightsResponse> {
+  return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/assets/${encodeURIComponent(assetId)}/insights`);
 }
 
 export async function deleteCatalogReplica(

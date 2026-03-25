@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -287,6 +288,24 @@ func (server *Server) handleCatalogAssetResource(w http.ResponseWriter, r *http.
 			return
 		}
 		server.serveMediaFile(w, r, mediaResource)
+	case "insights":
+		insights, err := catalogService.GetAssetInsights(r.Context(), assetID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		server.writeJSON(w, http.StatusOK, map[string]any{
+			"success":  true,
+			"insights": insights,
+		})
 	default:
 		http.NotFound(w, r)
 	}
