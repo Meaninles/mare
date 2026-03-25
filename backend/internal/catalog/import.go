@@ -129,6 +129,8 @@ type ImportExecutionSummary struct {
 	SuccessCount      int                   `json:"successCount"`
 	PartialCount      int                   `json:"partialCount"`
 	FailedCount       int                   `json:"failedCount"`
+	ProgressPercent   int                   `json:"progressPercent"`
+	ProgressLabel     string                `json:"progressLabel,omitempty"`
 	StartedAt         time.Time             `json:"startedAt"`
 	FinishedAt        time.Time             `json:"finishedAt"`
 	Items             []ImportExecutionItem `json:"items"`

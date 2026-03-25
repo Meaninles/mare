@@ -11,6 +11,9 @@ import type {
   CatalogRetryResponse,
   CatalogScanResponse,
   CatalogSyncOverviewResponse,
+  CatalogTransferTaskActionResponse,
+  CatalogTransferTaskDetailResponse,
+  CatalogTransferTasksResponse,
   CatalogTasksResponse
 } from "../types/catalog";
 
@@ -22,12 +25,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 async function getJson<TResponse>(url: string): Promise<TResponse> {
-  const response = await fetch(url);
+  const response = await request(url);
   return readJsonResponse<TResponse>(response);
 }
 
 async function postJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
-  const response = await fetch(url, {
+  const response = await request(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -39,7 +42,7 @@ async function postJson<TResponse>(url: string, payload: unknown): Promise<TResp
 }
 
 async function putJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
-  const response = await fetch(url, {
+  const response = await request(url, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json"
@@ -51,11 +54,19 @@ async function putJson<TResponse>(url: string, payload: unknown): Promise<TRespo
 }
 
 async function deleteJson<TResponse>(url: string): Promise<TResponse> {
-  const response = await fetch(url, {
+  const response = await request(url, {
     method: "DELETE"
   });
 
   return readJsonResponse<TResponse>(response);
+}
+
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw normalizeNetworkError(url, error);
+  }
 }
 
 async function readJsonResponse<TResponse>(response: Response): Promise<TResponse> {
@@ -69,6 +80,22 @@ async function readJsonResponse<TResponse>(response: Response): Promise<TRespons
         ? `后端返回了非 JSON 响应（HTTP ${response.status}）：${snippet}`
         : `后端返回了空响应（HTTP ${response.status}）。`
     );
+  }
+}
+
+function normalizeNetworkError(url: string, error: unknown) {
+  if (error instanceof Error && /Failed to fetch/i.test(error.message)) {
+    return new Error(`无法连接到目录服务（${resolveOrigin(url)}）。请确认后端已启动，并且当前资产库已经成功打开。`);
+  }
+
+  return error instanceof Error ? error : new Error("请求目录服务失败。");
+}
+
+function resolveOrigin(url: string) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
   }
 }
 
@@ -205,6 +232,41 @@ export async function listCatalogTasks(baseUrl: string, limit = 100): Promise<Ca
     response.tasks = response.tasks.map((task) => normalizeCatalogTask(task as unknown as Record<string, unknown>));
   }
   return response;
+}
+
+export async function listCatalogTransferTasks(
+  baseUrl: string,
+  limit = 120
+): Promise<CatalogTransferTasksResponse> {
+  return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers?limit=${limit}`);
+}
+
+export async function getCatalogTransferTaskDetail(
+  baseUrl: string,
+  taskId: string
+): Promise<CatalogTransferTaskDetailResponse> {
+  return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/${encodeURIComponent(taskId)}`);
+}
+
+export async function pauseCatalogTransferTasks(
+  baseUrl: string,
+  taskIds: string[]
+): Promise<CatalogTransferTaskActionResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/pause`, { taskIds });
+}
+
+export async function resumeCatalogTransferTasks(
+  baseUrl: string,
+  taskIds: string[]
+): Promise<CatalogTransferTaskActionResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/resume`, { taskIds });
+}
+
+export async function deleteCatalogTransferTasks(
+  baseUrl: string,
+  taskIds: string[]
+): Promise<CatalogTransferTaskActionResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/delete`, { taskIds });
 }
 
 export async function getCatalogSyncOverview(baseUrl: string): Promise<CatalogSyncOverviewResponse> {

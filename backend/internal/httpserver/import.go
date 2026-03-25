@@ -172,7 +172,7 @@ func (server *Server) handleImportExecute(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	summary, err := catalogService.ExecuteImport(r.Context(), request)
+	summary, err := catalogService.QueueImportExecution(r.Context(), request)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": err == nil,
 		"summary": summary,

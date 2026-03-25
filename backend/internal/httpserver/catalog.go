@@ -20,6 +20,10 @@ type retrySyncTaskRequest struct {
 	TaskID string `json:"taskId"`
 }
 
+type transferTaskActionRequest struct {
+	TaskIDs []string `json:"taskIds"`
+}
+
 func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Request) {
 	catalogService, ok := server.requireCatalog(w)
 	if !ok {
@@ -340,6 +344,127 @@ func (server *Server) handleCatalogTasks(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (server *Server) handleCatalogTransfers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	limit := queryInt(r, "limit", 120)
+	result, err := catalogService.ListTransferTasks(r.Context(), limit)
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"result":  result,
+	})
+}
+
+func (server *Server) handleCatalogTransferResource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	taskID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/v1/catalog/transfers/"))
+	if taskID == "" || strings.Contains(taskID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	result, err := catalogService.GetTransferTaskDetail(r.Context(), taskID)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, sql.ErrNoRows) {
+			statusCode = http.StatusNotFound
+		}
+		server.writeJSON(w, statusCode, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"result":  result,
+	})
+}
+
+func (server *Server) handleCatalogTransferPause(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogTransferAction(w, r, "pause")
+}
+
+func (server *Server) handleCatalogTransferResume(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogTransferAction(w, r, "resume")
+}
+
+func (server *Server) handleCatalogTransferDelete(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogTransferAction(w, r, "delete")
+}
+
+func (server *Server) handleCatalogTransferAction(w http.ResponseWriter, r *http.Request, action string) {
+	if r.Method != http.MethodPost {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	var request transferTaskActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "invalid JSON payload",
+		})
+		return
+	}
+
+	var (
+		summary catalog.TransferTaskActionSummary
+		err     error
+	)
+	switch action {
+	case "pause":
+		summary, err = catalogService.PauseTransferTasks(r.Context(), request.TaskIDs)
+	case "resume":
+		summary, err = catalogService.ResumeTransferTasks(r.Context(), request.TaskIDs)
+	case "delete":
+		summary, err = catalogService.DeleteTransferTasks(r.Context(), request.TaskIDs)
+	default:
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   "unsupported transfer action",
+		})
+		return
+	}
+
+	server.writeJSON(w, http.StatusOK, map[string]any{
+		"success": err == nil,
+		"summary": summary,
+		"error":   errorText(err),
+	})
+}
+
 func (server *Server) handleCatalogSyncOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -386,7 +511,7 @@ func (server *Server) handleCatalogRestoreAsset(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	summary, err := catalogService.RestoreAsset(r.Context(), request)
+	summary, err := catalogService.QueueRestoreAsset(r.Context(), request)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if errors.Is(err, strconv.ErrSyntax) {
@@ -426,7 +551,7 @@ func (server *Server) handleCatalogRestoreBatch(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	summary, err := catalogService.RestoreAssetsToEndpoint(r.Context(), request)
+	summary, err := catalogService.QueueRestoreAssetsToEndpoint(r.Context(), request)
 	server.writeJSON(w, http.StatusOK, map[string]any{
 		"success": err == nil,
 		"summary": summary,

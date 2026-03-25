@@ -53,6 +53,15 @@ pub async fn update_library_record(
 }
 
 #[tauri::command]
+pub async fn set_library_pinned(
+    id: String,
+    pinned: bool,
+    core: State<'_, AppCore>,
+) -> Result<RegisteredLibrary, AppError> {
+    core.set_library_pinned(id, pinned).await
+}
+
+#[tauri::command]
 pub async fn delete_library_record(
     id: String,
     core: State<'_, AppCore>,

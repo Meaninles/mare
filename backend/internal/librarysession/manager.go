@@ -151,6 +151,7 @@ func (manager *Manager) CloseLibrary(_ context.Context) (Status, error) {
 	manager.mu.Unlock()
 
 	if previous != nil {
+		previous.catalog.Close()
 		if err := previous.store.Close(); err != nil {
 			slog.Warn("failed to close library store", "path", previous.path, "error", err)
 		}
@@ -199,6 +200,10 @@ func (manager *Manager) buildRuntime(path string, create bool) (*runtime, error)
 		_ = dataStore.Close()
 		return nil, err
 	}
+	if err := catalogService.Start(context.Background()); err != nil {
+		_ = dataStore.Close()
+		return nil, err
+	}
 
 	return &runtime{
 		path:           path,
@@ -219,6 +224,7 @@ func (manager *Manager) swapRuntime(next *runtime) {
 	manager.mu.Unlock()
 
 	if previous != nil {
+		previous.catalog.Close()
 		if err := previous.store.Close(); err != nil {
 			slog.Warn("failed to close previous library store", "path", previous.path, "error", err)
 		}

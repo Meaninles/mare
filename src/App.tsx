@@ -6,7 +6,6 @@ import { StandaloneShell } from "./layouts/StandaloneShell";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { ImportCenterPage } from "./pages/ImportCenterPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { LibraryManagerPage } from "./pages/LibraryManagerPage";
 import { MediaLabPage } from "./pages/MediaLabPage";
 import { RemovableTesterPage } from "./pages/RemovableTesterPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -22,7 +21,7 @@ export function App() {
       <Route element={<StandaloneShell />}>
         <Route index element={<Navigate to="/welcome" replace />} />
         <Route path="/welcome" element={<WelcomePage />} />
-        <Route path="/library-manager" element={<LibraryManagerPage />} />
+        <Route path="/library-manager" element={<Navigate to="/welcome" replace />} />
         <Route path="/system-tasks" element={<SystemTasksPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

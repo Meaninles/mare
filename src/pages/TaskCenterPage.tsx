@@ -5,6 +5,7 @@ import { useSystemLogs } from "../hooks/useSystemLogs";
 import { formatCatalogDate } from "../lib/catalog-view";
 import {
   canRetryTask,
+  getTaskDisplaySummary,
   getTaskFilterLabel,
   getTaskStatusLabel,
   getTaskSummary,
@@ -236,7 +237,7 @@ export function TaskCenterPage() {
                     <span>重试次数 {task.retryCount}</span>
                   </div>
 
-                  {task.resultSummary ? <p className="muted-copy">{task.resultSummary}</p> : null}
+                  {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
                   {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
 
                   {canRetryTask(task) ? (
@@ -266,13 +267,16 @@ export function TaskCenterPage() {
             </div>
 
             <div className="task-log-toolbar">
-              <select value={logLevel} onChange={(event) => setLogLevel(event.target.value as SystemLogLevel)}>
-                {logLevels.map((level) => (
-                  <option key={level} value={level}>
-                    {level === "all" ? "全部级别" : level === "warn" ? "WARN" : level.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+              <div className="compact-filter-control task-log-filter">
+                <TerminalSquare size={16} aria-hidden="true" />
+                <select aria-label="按日志级别筛选" value={logLevel} onChange={(event) => setLogLevel(event.target.value as SystemLogLevel)}>
+                  {logLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {level === "all" ? "全部级别" : level === "warn" ? "WARN" : level.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <button type="button" className="ghost-button" onClick={() => void logsQuery.refetch()}>
                 <RefreshCcw size={14} />
@@ -407,7 +411,7 @@ function CollapsibleTaskSection({
                 {task.finishedAt ? <span>结束于 {formatCatalogDate(task.finishedAt)}</span> : null}
               </div>
 
-              {task.resultSummary ? <p className="muted-copy">{task.resultSummary}</p> : null}
+              {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
               {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
               {renderActions ? <div className="action-row">{renderActions(task)}</div> : null}
             </article>

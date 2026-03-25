@@ -2,18 +2,22 @@
 import json
 import os
 import posixpath
+import shutil
 import sys
 import traceback
-import urllib.request
 from datetime import datetime, timezone
 
 from p115client import P115Client
 from p115client.tool.attr import normalize_attr_web
+from p115client.tool.upload import P115MultipartUpload
 from p115qrcode import qrcode_result, qrcode_status, qrcode_token, qrcode_url
 
 
 DEFAULT_APP_TYPE = "windows"
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 300
+DEFAULT_UPLOAD_PART_SIZE = 10 * 1024 * 1024
+DEFAULT_DOWNLOAD_USER_AGENT = "Mozilla/5.0"
+UPLOAD_SESSION_SUFFIX = ".mam-115-upload.json"
 QR_STATUS_LABELS = {
     0: "waiting",
     1: "scanned",
@@ -293,6 +297,25 @@ def resolve_download_app(app_type: str) -> str:
     return app_type
 
 
+def resolve_download_app_candidates(app_type: str) -> list[str]:
+    candidates = [
+        resolve_download_app(app_type),
+        "web",
+        "web2",
+        "chrome",
+        "android",
+    ]
+    normalized = []
+    seen = set()
+    for value in candidates:
+        value = (value or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
 def extract_download_url(value) -> str:
     if isinstance(value, str):
         candidate = value.strip()
@@ -353,6 +376,71 @@ def extract_download_headers(value) -> dict[str, str]:
     return headers
 
 
+def build_upload_headers(client: P115Client) -> dict[str, str]:
+    headers = {}
+    for key, value in (getattr(client, "headers", None) or {}).items():
+        if value is None:
+            continue
+        headers[str(key)] = str(value)
+    return headers
+
+
+def upload_state_path(source_file: str) -> str:
+    return f"{source_file}{UPLOAD_SESSION_SUFFIX}"
+
+
+def load_upload_state(source_file: str, destination_path: str, parent_id: int, file_name: str) -> dict | None:
+    state_path = upload_state_path(source_file)
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        try:
+            os.remove(state_path)
+        except OSError:
+            pass
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    if normalize_rel_path(str(payload.get("destinationPath") or "")) != destination_path:
+        return None
+    if int(payload.get("parentId") or 0) != parent_id:
+        return None
+    if str(payload.get("fileName") or "") != file_name:
+        return None
+    if not isinstance(payload.get("callback"), dict):
+        return None
+    if not str(payload.get("url") or "").strip():
+        return None
+    if not str(payload.get("uploadId") or "").strip():
+        return None
+    return payload
+
+
+def save_upload_state(source_file: str, destination_path: str, parent_id: int, file_name: str, uploader: P115MultipartUpload):
+    payload = {
+        "destinationPath": destination_path,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "url": uploader.url,
+        "callback": uploader.callback,
+        "uploadId": uploader.upload_id,
+    }
+    with open(upload_state_path(source_file), "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+
+
+def clear_upload_state(source_file: str):
+    try:
+        os.remove(upload_state_path(source_file))
+    except OSError:
+        pass
+
+
 def do_copy_in(client: P115Client, root_id: int, app_type: str, request: dict) -> dict:
     destination_path = normalize_rel_path(request.get("destinationPath", ""))
     if not destination_path:
@@ -365,30 +453,43 @@ def do_copy_in(client: P115Client, root_id: int, app_type: str, request: dict) -
     parent_path = posixpath.dirname(destination_path)
     file_name = posixpath.basename(destination_path)
     ensure_dir(client, root_id, parent_path)
-
-    try:
-        existing = resolve_entry(client, root_id, destination_path)
-        if existing and not existing.get("isDir"):
-            ensure_state(client.fs_delete(existing["id"]))
-    except FileNotFoundError:
-        pass
-
     parent_id = resolve_dir_id(client, root_id, parent_path)
-    resp = client.upload_file(
-        file=source_file,
-        pid=parent_id,
-        filename=file_name,
-        endpoint="https://oss-cn-shenzhen.aliyuncs.com",
-    )
-    if should_retry_upload_with_multipart(resp):
-        resp = client.upload_file(
-            file=source_file,
+    session = load_upload_state(source_file, destination_path, parent_id, file_name)
+
+    if session is None:
+        try:
+            existing = resolve_entry(client, root_id, destination_path)
+            if existing and not existing.get("isDir"):
+                ensure_state(client.fs_delete(existing["id"]))
+        except FileNotFoundError:
+            pass
+
+    if session is not None:
+        uploader = P115MultipartUpload(session["url"], source_file, session["callback"], str(session["uploadId"]))
+    else:
+        uploader = P115MultipartUpload.from_path(
+            source_file,
             pid=parent_id,
             filename=file_name,
-            partsize=10 * 1024 * 1024,
             endpoint="https://oss-cn-shenzhen.aliyuncs.com",
+            headers=build_upload_headers(client),
         )
+        if isinstance(uploader, dict):
+            ensure_state(uploader)
+            clear_upload_state(source_file)
+            return resolve_entry(client, root_id, destination_path)
+        save_upload_state(source_file, destination_path, parent_id, file_name, uploader)
+
+    try:
+        for _ in uploader.iter_upload(partsize=DEFAULT_UPLOAD_PART_SIZE):
+            pass
+        resp = uploader.complete()
+    except Exception:
+        save_upload_state(source_file, destination_path, parent_id, file_name, uploader)
+        raise
+
     ensure_state(resp)
+    clear_upload_state(source_file)
     return resolve_entry(client, root_id, destination_path)
 
 
@@ -402,16 +503,28 @@ def do_copy_out(client: P115Client, root_id: int, app_type: str, request: dict) 
     entry = resolve_entry(client, root_id, source_path)
     if entry.get("isDir"):
         raise IsADirectoryError(source_path)
-    url_payload = client.download_url(entry["pickcode"], app=resolve_download_app(app_type))
-    download_url = extract_download_url(url_payload)
-    request_headers = extract_download_headers(url_payload)
-    if not any(str(key).lower() == "cookie" for key in request_headers):
-        request_headers["Cookie"] = str(client.cookies_str)
-    if not any(str(key).lower() == "user-agent" for key in request_headers):
-        request_headers["User-Agent"] = "Mozilla/5.0"
-    http_request = urllib.request.Request(download_url, headers=request_headers)
-    with urllib.request.urlopen(http_request, timeout=resolve_download_timeout_seconds()) as response, open(download_file, "wb") as output:
-        output.write(response.read())
+    last_error = None
+    for candidate_app in resolve_download_app_candidates(app_type):
+        try:
+            url_payload = client.download_url(
+                entry["pickcode"],
+                app=candidate_app,
+                user_agent=DEFAULT_DOWNLOAD_USER_AGENT,
+            )
+            stream = client.open(
+                url_payload,
+                headers={"User-Agent": DEFAULT_DOWNLOAD_USER_AGENT},
+            )
+            try:
+                with open(download_file, "wb") as output:
+                    shutil.copyfileobj(stream, output, length=1024 * 1024)
+            finally:
+                stream.close()
+            return {"downloadFile": download_file}
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
     return {"downloadFile": download_file}
 
 

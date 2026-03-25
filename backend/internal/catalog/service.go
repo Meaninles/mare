@@ -44,6 +44,12 @@ type Service struct {
 	mediaJobKeys          sync.Map
 	searchCapabilityFlags sync.Map
 	deviceRoleSelections  sync.Map
+	transferTaskControls  sync.Map
+	transferWake          chan struct{}
+	transferStop          chan struct{}
+	transferLoopOnce      sync.Once
+	transferCloseOnce     sync.Once
+	transferWorkerGroup   sync.WaitGroup
 }
 
 func NewService(
@@ -83,6 +89,8 @@ func NewService(
 		autoQueueDerivedMedia: resolvedOptions.autoQueueDerivedMedia,
 		autoQueueSearchJobs:   resolvedOptions.autoQueueSearchJobs,
 		searchBridge:          defaultSearchBridge(resolvedOptions.searchBridge),
+		transferWake:          make(chan struct{}, 1),
+		transferStop:          make(chan struct{}),
 	}
 }
 

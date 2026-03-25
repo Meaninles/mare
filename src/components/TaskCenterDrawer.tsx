@@ -8,6 +8,7 @@ import { useRemovableNoticeState } from "../hooks/useRemovableNoticeState";
 import { formatCatalogDate } from "../lib/catalog-view";
 import {
   canRetryTask,
+  getTaskDisplaySummary,
   getTaskStatusLabel,
   getTaskSummary,
   getTaskTitle,
@@ -299,7 +300,7 @@ function CollapsibleTaskSection({
               </div>
 
               {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
-              {task.resultSummary ? <p className="muted-copy clamp-2">{task.resultSummary}</p> : null}
+              {getTaskDisplaySummary(task) ? <p className="muted-copy clamp-2">{getTaskDisplaySummary(task)}</p> : null}
               {renderActions ? <div className="action-row">{renderActions(task)}</div> : null}
             </article>
           ))}

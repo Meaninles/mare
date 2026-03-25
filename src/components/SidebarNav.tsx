@@ -3,10 +3,12 @@ import {
   ArrowDownToLine,
   ChevronLeft,
   FolderTree,
+  LibraryBig,
   RefreshCcw,
   Server
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useLibraryContext } from "../context/LibraryContext";
 import type { NavigationItem } from "../types/navigation";
 import { MareLogo } from "./MareLogo";
 
@@ -48,6 +50,7 @@ export function getRouteMeta(pathname: string) {
 
 export function SidebarNav() {
   const location = useLocation();
+  const { currentLibrary } = useLibraryContext();
 
   return (
     <aside className="sidebar sidebar-rail">
@@ -58,6 +61,18 @@ export function SidebarNav() {
             <p className="eyebrow">Mare</p>
           </div>
         </div>
+
+        {currentLibrary ? (
+          <div className="rail-library-context" title={currentLibrary.name}>
+            <span className="rail-library-context-icon">
+              <LibraryBig size={15} strokeWidth={1.9} />
+            </span>
+            <div className="rail-library-context-copy">
+              <small>当前资产库</small>
+              <strong>{currentLibrary.name}</strong>
+            </div>
+          </div>
+        ) : null}
 
         <NavLink
           to="/welcome"

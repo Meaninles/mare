@@ -79,9 +79,9 @@ impl DatabaseManager {
         let rows = if let Some(limit) = limit {
             sqlx::query(
                 r#"
-                SELECT id, name, path, created_at, updated_at, last_opened_at
+                SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
                 FROM libraries
-                ORDER BY COALESCE(last_opened_at, updated_at) DESC, updated_at DESC, name COLLATE NOCASE ASC
+                ORDER BY is_pinned DESC, COALESCE(last_opened_at, updated_at) DESC, updated_at DESC, name COLLATE NOCASE ASC
                 LIMIT ?1
                 "#,
             )
@@ -91,9 +91,9 @@ impl DatabaseManager {
         } else {
             sqlx::query(
                 r#"
-                SELECT id, name, path, created_at, updated_at, last_opened_at
+                SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
                 FROM libraries
-                ORDER BY COALESCE(last_opened_at, updated_at) DESC, updated_at DESC, name COLLATE NOCASE ASC
+                ORDER BY is_pinned DESC, COALESCE(last_opened_at, updated_at) DESC, updated_at DESC, name COLLATE NOCASE ASC
                 "#,
             )
             .fetch_all(&self.pool)
@@ -113,7 +113,7 @@ impl DatabaseManager {
 
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, created_at, updated_at, last_opened_at
+            SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
             FROM libraries
             WHERE id = ?1
             LIMIT 1
@@ -207,7 +207,49 @@ impl DatabaseManager {
         let active_id = self.active_library_id().await?;
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, created_at, updated_at, last_opened_at
+            SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
+            FROM libraries
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(&id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.row_to_library(row, active_id.as_deref())
+    }
+
+    pub async fn set_library_pinned(
+        &self,
+        id: String,
+        pinned: bool,
+    ) -> Result<RegisteredLibrary, AppError> {
+        let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM libraries WHERE id = ?1")
+            .bind(&id)
+            .fetch_one(&self.pool)
+            .await?;
+
+        if exists == 0 {
+            return Err(AppError::Message(format!("library not found: {id}")));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE libraries
+            SET is_pinned = ?1
+            WHERE id = ?2
+            "#,
+        )
+        .bind(if pinned { 1_i64 } else { 0_i64 })
+        .bind(&id)
+        .execute(&self.pool)
+        .await?;
+
+        let active_id = self.active_library_id().await?;
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
             FROM libraries
             WHERE id = ?1
             LIMIT 1
@@ -251,7 +293,7 @@ impl DatabaseManager {
 
         let existing = sqlx::query(
             r#"
-            SELECT id, name, path, created_at, updated_at, last_opened_at
+            SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
             FROM libraries
             WHERE path = ?1
             LIMIT 1
@@ -280,8 +322,8 @@ impl DatabaseManager {
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
                 r#"
-                INSERT INTO libraries (id, name, path, created_at, updated_at, last_opened_at)
-                VALUES (?1, ?2, ?3, ?4, ?4, ?4)
+                INSERT INTO libraries (id, name, path, created_at, updated_at, last_opened_at, is_pinned)
+                VALUES (?1, ?2, ?3, ?4, ?4, ?4, 0)
                 "#,
             )
             .bind(&id)
@@ -300,7 +342,7 @@ impl DatabaseManager {
         let active_id = self.active_library_id().await?;
         let row = sqlx::query(
             r#"
-            SELECT id, name, path, created_at, updated_at, last_opened_at
+            SELECT id, name, path, created_at, updated_at, last_opened_at, is_pinned
             FROM libraries
             WHERE id = ?1
             LIMIT 1
@@ -362,6 +404,7 @@ impl DatabaseManager {
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             last_opened_at: row.try_get("last_opened_at")?,
+            is_pinned: row.try_get::<i64, _>("is_pinned")? != 0,
         })
     }
 }

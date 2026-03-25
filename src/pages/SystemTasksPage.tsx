@@ -253,9 +253,9 @@ export function SystemTasksPage() {
             </label>
 
             <div className="transfer-filter-group">
-              <label className="field transfer-filter-field">
-                <span>资产库</span>
-                <select value={libraryFilter} onChange={(event) => setLibraryFilter(event.target.value)}>
+              <div className="transfer-filter-field compact-filter-control">
+                <FolderOpen size={16} aria-hidden="true" />
+                <select aria-label="按资产库筛选" value={libraryFilter} onChange={(event) => setLibraryFilter(event.target.value)}>
                   <option value="all">所有资产库</option>
                   {(librariesQuery.data ?? []).map((library) => (
                     <option key={library.id} value={library.id}>
@@ -263,29 +263,29 @@ export function SystemTasksPage() {
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
 
-              <label className="field transfer-filter-field">
-                <span>任务类别</span>
-                <select value={laneFilter} onChange={(event) => setLaneFilter(event.target.value as LaneFilter)}>
+              <div className="transfer-filter-field compact-filter-control">
+                <Workflow size={16} aria-hidden="true" />
+                <select aria-label="按任务类别筛选" value={laneFilter} onChange={(event) => setLaneFilter(event.target.value as LaneFilter)}>
                   {laneFilters.map((filter) => (
                     <option key={filter.value} value={filter.value}>
                       {filter.label}
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
 
-              <label className="field transfer-filter-field">
-                <span>状态</span>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+              <div className="transfer-filter-field compact-filter-control">
+                <CheckCircle2 size={16} aria-hidden="true" />
+                <select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
                   {statusFilters.map((filter) => (
                     <option key={filter.value} value={filter.value}>
                       {filter.label}
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
             </div>
           </div>
         </div>

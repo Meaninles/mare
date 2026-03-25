@@ -5,6 +5,7 @@ export interface RegisteredLibrary {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string;
+  isPinned: boolean;
   isActive: boolean;
 }
 

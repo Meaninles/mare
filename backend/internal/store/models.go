@@ -141,6 +141,43 @@ type TaskStatusUpdate struct {
 	UpdatedAt     time.Time
 }
 
+type TransferTaskItem struct {
+	ID                     string
+	TaskID                 string
+	ItemIndex              int
+	GroupKey               string
+	Direction              string
+	SourceKind             string
+	SourceEndpointID       string
+	SourceEndpointType     string
+	SourceIdentitySignature string
+	SourceLabel            string
+	SourcePath             string
+	TargetEndpointID       string
+	TargetEndpointType     string
+	TargetLabel            string
+	TargetPath             string
+	AssetID                *string
+	LogicalPathKey         string
+	DisplayName            string
+	MediaType              string
+	Status                 string
+	Phase                  string
+	TotalBytes             int64
+	StagedBytes            int64
+	CommittedBytes         int64
+	ProgressPercent        int
+	ScanRevision           string
+	StagingPath            string
+	TargetTempPath         string
+	ErrorMessage           *string
+	MetadataJSON           string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	StartedAt              *time.Time
+	FinishedAt             *time.Time
+}
+
 type ImportRule struct {
 	ID                string
 	RuleType          string

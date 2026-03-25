@@ -63,6 +63,14 @@ func (store *Store) GetTaskByID(ctx context.Context, id string) (Task, error) {
 	return scanTask(row)
 }
 
+func (store *Store) DeleteTaskByID(ctx context.Context, id string) error {
+	_, err := store.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	return nil
+}
+
 func (store *Store) ListTasks(ctx context.Context, limit, offset int) ([]Task, error) {
 	rows, err := store.db.QueryContext(
 		ctx,

@@ -2,13 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLibraryContext } from "../context/LibraryContext";
 import { buildLibraryQueryKey, invalidateLibraryQueries } from "../lib/query-keys";
 import {
+  deleteCatalogTransferTasks,
   deleteCatalogReplica,
   getCatalogAssetInsights,
   getCatalogSyncOverview,
+  getCatalogTransferTaskDetail,
   getDefaultCatalogBackendUrl,
   listCatalogAssets,
   listCatalogEndpoints,
   listCatalogTasks,
+  listCatalogTransferTasks,
+  pauseCatalogTransferTasks,
+  resumeCatalogTransferTasks,
   restoreCatalogAsset,
   restoreCatalogAssetsToEndpoint,
   retryCatalogTask
@@ -113,6 +118,51 @@ export function useCatalogTasks(limit = 100) {
   });
 }
 
+export function useTransferTasks(limit = 120) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+
+  return useQuery({
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "transfers", limit),
+    enabled: isLibraryOpen,
+    queryFn: async () => {
+      const response = await listCatalogTransferTasks(backendUrl, limit);
+      if (!response.success || !response.result) {
+        throw new Error(response.error ?? "无法读取传输任务。");
+      }
+
+      return response.result;
+    },
+    staleTime: 0,
+    refetchInterval: 1_500,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always"
+  });
+}
+
+export function useTransferTaskDetail(taskId: string) {
+  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+  const normalizedTaskId = taskId.trim();
+
+  return useQuery({
+    queryKey: buildLibraryQueryKey(currentLibraryId, "catalog", "transfer-detail", normalizedTaskId),
+    enabled: isLibraryOpen && normalizedTaskId.length > 0,
+    queryFn: async () => {
+      const response = await getCatalogTransferTaskDetail(backendUrl, normalizedTaskId);
+      if (!response.success || !response.result) {
+        throw new Error(response.error ?? "无法读取传输任务详情。");
+      }
+
+      return response.result;
+    },
+    staleTime: 0,
+    refetchInterval: 1_500,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always"
+  });
+}
+
 export function useCatalogSyncOverview() {
   const { currentLibraryId, isLibraryOpen } = useLibraryContext();
 
@@ -170,7 +220,10 @@ export function useCatalogBatchRestore() {
         throw new Error(response.error ?? "批量补齐失败。");
       }
 
-      return response.summary;
+      return {
+        ...response.summary,
+        items: response.summary.items ?? []
+      };
     },
     onSettled: () => {
       void invalidateCatalogQueries(queryClient, currentLibraryId);
@@ -231,6 +284,63 @@ export function useCatalogRetryTask() {
 
 export function useCatalogRetrySyncTask() {
   return useCatalogRetryTask();
+}
+
+export function usePauseTransferTasks() {
+  const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
+
+  return useMutation({
+    mutationFn: async (taskIds: string[]) => {
+      const response = await pauseCatalogTransferTasks(backendUrl, taskIds);
+      if (!response.summary) {
+        throw new Error(response.error ?? "暂停传输任务失败。");
+      }
+
+      return response.summary;
+    },
+    onSuccess: async () => {
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    }
+  });
+}
+
+export function useResumeTransferTasks() {
+  const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
+
+  return useMutation({
+    mutationFn: async (taskIds: string[]) => {
+      const response = await resumeCatalogTransferTasks(backendUrl, taskIds);
+      if (!response.summary) {
+        throw new Error(response.error ?? "恢复传输任务失败。");
+      }
+
+      return response.summary;
+    },
+    onSuccess: async () => {
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    }
+  });
+}
+
+export function useDeleteTransferTasks() {
+  const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
+
+  return useMutation({
+    mutationFn: async (taskIds: string[]) => {
+      const response = await deleteCatalogTransferTasks(backendUrl, taskIds);
+      if (!response.summary) {
+        throw new Error(response.error ?? "删除传输任务失败。");
+      }
+
+      return response.summary;
+    },
+    onSuccess: async () => {
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    }
+  });
 }
 
 async function invalidateCatalogQueries(

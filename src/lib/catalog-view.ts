@@ -74,9 +74,10 @@ export function getAssetTone(asset: CatalogAsset): AssetTone {
     case "ready":
       return "success";
     case "partial":
-    case "single":
     case "processing":
       return "warning";
+    case "single":
+      return "danger";
     case "conflict":
     case "pending_delete":
       return "neutral";

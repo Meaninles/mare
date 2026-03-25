@@ -49,6 +49,18 @@ type DeleteDialogState = {
   isLastAvailableReplica: boolean;
 };
 
+type RestoreDialogState =
+  | {
+      kind: "single";
+      replica: CatalogReplica;
+      endpointName: string;
+    }
+  | {
+      kind: "batch";
+      replicas: CatalogReplica[];
+      endpointNames: string[];
+    };
+
 type AssetInsightStatus = "ready" | "syncing" | "processing" | "failed" | "pending";
 
 export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string }) {
@@ -64,6 +76,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [restoreDialog, setRestoreDialog] = useState<RestoreDialogState | null>(null);
   const assetId = assetIdOverride ?? routeAssetId ?? searchParams.get("assetId") ?? "";
 
   const backSearch = useMemo(() => {
@@ -164,6 +177,9 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const preferredOpenEndpointName = preferredOpenReplica
     ? endpointLookup.get(preferredOpenReplica.endpointId) ?? preferredOpenReplica.endpointId
     : undefined;
+  const recommendedSourceName = recommendedSource
+    ? endpointLookup.get(recommendedSource.endpointId) ?? recommendedSource.endpointId
+    : "不可用";
   const endpointStatusEntries = [...asset.replicas]
     .map((replica) => ({
       replica,
@@ -183,6 +199,42 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
       replica,
       endpointName,
       isLastAvailableReplica: availableReplicas.length === 1 && replica.existsFlag
+    });
+  }
+
+  function handleRestoreReplicaIntent(replica: CatalogReplica, endpointName: string) {
+    if (!recommendedSource) {
+      setActionNotice("当前没有可用的健康源副本。");
+      return;
+    }
+
+    if (!asset) {
+      return;
+    }
+
+    setActionNotice(null);
+    setRestoreDialog({
+      kind: "single",
+      replica,
+      endpointName
+    });
+  }
+
+  function handleRestoreMissingReplicasIntent() {
+    if (!asset || missingReplicas.length === 0) {
+      return;
+    }
+
+    if (!recommendedSource) {
+      setActionNotice("当前没有可用的健康源副本。");
+      return;
+    }
+
+    setActionNotice(null);
+    setRestoreDialog({
+      kind: "batch",
+      replicas: missingReplicas,
+      endpointNames: missingReplicaEntries.map((entry) => entry.endpointName)
     });
   }
 
@@ -206,11 +258,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
         targetEndpointId: replica.endpointId
       });
 
-      setActionNotice(
-        summary.skipped
-          ? `${endpointName} 已经是最新状态。`
-          : `${currentAsset.displayName} 已恢复到 ${endpointName}。`
-      );
+      setActionNotice(summary.progressLabel || `${currentAsset.displayName} 已加入传输队列，将恢复到 ${endpointName}。`);
     } catch (error) {
       setActionNotice(error instanceof Error ? error.message : "恢复失败。");
     }
@@ -255,31 +303,41 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
     }
 
     setActionNotice(null);
-    let successCount = 0;
-    let skippedCount = 0;
+    let queuedCount = 0;
     let failedCount = 0;
 
     for (const replica of missingReplicas) {
       try {
-        const summary = await restoreMutation.mutateAsync({
+        await restoreMutation.mutateAsync({
           assetId: asset.id,
           sourceEndpointId: recommendedSource.endpointId,
           targetEndpointId: replica.endpointId
         });
-
-        if (summary.skipped) {
-          skippedCount += 1;
-        } else {
-          successCount += 1;
-        }
+        queuedCount += 1;
       } catch {
         failedCount += 1;
       }
     }
 
     setActionNotice(
-      `已补齐 ${successCount} 个端点${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ""}${failedCount > 0 ? `，失败 ${failedCount} 个` : ""}。`
+      `已加入 ${queuedCount} 个恢复任务${failedCount > 0 ? `，失败 ${failedCount} 个` : ""}。可在同步中心继续管理。`
     );
+  }
+
+  async function handleConfirmRestore() {
+    if (!restoreDialog) {
+      return;
+    }
+
+    const currentDialog = restoreDialog;
+    setRestoreDialog(null);
+
+    if (currentDialog.kind === "single") {
+      await handleRestoreReplica(currentDialog.replica, currentDialog.endpointName);
+      return;
+    }
+
+    await handleRestoreMissingReplicas();
   }
 
   return (
@@ -329,7 +387,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
                     <button
                       type="button"
                       className="primary-button"
-                      onClick={() => void handleRestoreMissingReplicas()}
+                      onClick={() => handleRestoreMissingReplicasIntent()}
                       disabled={restoreMutation.isPending || !recommendedSource}
                     >
                       {restoreMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <WandSparkles size={16} />}
@@ -385,7 +443,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
                           key={`missing-${replica.endpointId}`}
                           type="button"
                           className="replica-chip-button warning"
-                          onClick={() => void handleRestoreReplica(replica, endpointName)}
+                          onClick={() => handleRestoreReplicaIntent(replica, endpointName)}
                           disabled={restoreMutation.isPending || !recommendedSource}
                           title={`同步到 ${endpointName}`}
                         >
@@ -499,6 +557,18 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
         </aside>
       </div>
 
+      <ConfirmRestoreReplicaDialog
+        state={restoreDialog}
+        assetName={asset.displayName}
+        sourceEndpointName={recommendedSourceName}
+        pending={restoreMutation.isPending}
+        onCancel={() => {
+          if (!restoreMutation.isPending) {
+            setRestoreDialog(null);
+          }
+        }}
+        onConfirm={() => void handleConfirmRestore()}
+      />
       <ConfirmDeleteReplicaDialog
         state={deleteDialog}
         pending={deleteReplicaMutation.isPending}
@@ -786,6 +856,80 @@ function ConfirmDeleteReplicaDialog({
               <>
                 <Trash2 size={16} />
                 确认删除
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmRestoreReplicaDialog({
+  state,
+  assetName,
+  sourceEndpointName,
+  pending,
+  onCancel,
+  onConfirm
+}: {
+  state: RestoreDialogState | null;
+  assetName: string;
+  sourceEndpointName: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!state) {
+    return null;
+  }
+
+  const isBatch = state.kind === "batch";
+  const title = isBatch ? "确认开始补齐缺失端点？" : "确认开始同步到这个端点？";
+  const description = isBatch
+    ? `确认后将为《${assetName}》补齐 ${state.replicas.length} 个缺失端点，任务会进入传输中心继续执行。`
+    : `确认后将从 ${sourceEndpointName} 开始为《${assetName}》同步副本，任务会进入传输中心继续执行。`;
+  const targetSummary = isBatch ? state.endpointNames.join("、") : state.endpointName;
+  const targetPath = !isBatch ? state.replica.physicalPath || "按资产标准路径落位" : `${state.replicas.length} 个目标端点`;
+
+  return (
+    <div className="dialog-overlay" role="presentation">
+      <div className="dialog-card" role="dialog" aria-modal="true" aria-labelledby="restore-replica-title">
+        <div className="dialog-header">
+          <span className="status-pill subtle">{isBatch ? "补齐缺失" : "开始同步"}</span>
+          <h4 id="restore-replica-title">{title}</h4>
+          <p>{description}</p>
+        </div>
+
+        <div className="dialog-meta">
+          <div>
+            <span>同步来源</span>
+            <strong>{sourceEndpointName}</strong>
+          </div>
+          <div>
+            <span>{isBatch ? "目标端点" : "同步到"}</span>
+            <strong>{targetSummary}</strong>
+          </div>
+          <div>
+            <span>{isBatch ? "任务数量" : "目标路径"}</span>
+            <strong>{targetPath}</strong>
+          </div>
+        </div>
+
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onCancel} disabled={pending}>
+            取消
+          </button>
+          <button type="button" className="primary-button" onClick={onConfirm} disabled={pending}>
+            {pending ? (
+              <>
+                <LoaderCircle size={16} className="spin" />
+                正在加入任务
+              </>
+            ) : (
+              <>
+                <WandSparkles size={16} />
+                确认开始同步
               </>
             )}
           </button>

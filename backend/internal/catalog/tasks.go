@@ -34,6 +34,23 @@ func (service *Service) RetryTask(ctx context.Context, taskID string) (RetryTask
 
 	slog.Info("retrying task", "taskId", task.ID, "taskType", task.TaskType)
 
+	if isTransferTaskType(task.TaskType) {
+		actionSummary, resumeErr := service.ResumeTransferTasks(ctx, []string{task.ID})
+		summary.NewTaskID = task.ID
+		if resumeErr != nil {
+			summary.Message = resumeErr.Error()
+			return summary, resumeErr
+		}
+		if actionSummary.Updated == 0 {
+			summary.Message = "transfer task is not resumable"
+			return summary, fmt.Errorf("task %q is not resumable", task.ID)
+		}
+
+		summary.Status = taskStatusSuccess
+		summary.Message = "transfer task resumed successfully"
+		return summary, nil
+	}
+
 	switch strings.TrimSpace(task.TaskType) {
 	case taskTypeRestoreAsset:
 		var request RestoreAssetRequest

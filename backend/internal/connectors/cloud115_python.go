@@ -173,19 +173,35 @@ func (client *Cloud115PythonClient) StatEntry(ctx context.Context, rootID string
 }
 
 func (client *Cloud115PythonClient) CopyIn(ctx context.Context, rootID string, destinationPath string, source io.Reader) (FileEntry, error) {
-	tempFile, err := os.CreateTemp("", "mam-115-upload-*")
-	if err != nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to create temporary upload file", true, err)
-	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
+	var (
+		tempPath   string
+		shouldKeep bool
+	)
 
-	if _, copyErr := io.Copy(tempFile, source); copyErr != nil {
-		tempFile.Close()
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to stage upload content", true, copyErr)
+	if sourceFile, ok := source.(*os.File); ok {
+		if stat, statErr := sourceFile.Stat(); statErr == nil && !stat.IsDir() {
+			tempPath = sourceFile.Name()
+			shouldKeep = true
+		}
 	}
-	if closeErr := tempFile.Close(); closeErr != nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to close staged upload content", true, closeErr)
+
+	if strings.TrimSpace(tempPath) == "" {
+		tempFile, err := os.CreateTemp("", "mam-115-upload-*")
+		if err != nil {
+			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to create temporary upload file", true, err)
+		}
+		tempPath = tempFile.Name()
+		if !shouldKeep {
+			defer os.Remove(tempPath)
+		}
+
+		if _, copyErr := io.Copy(tempFile, source); copyErr != nil {
+			tempFile.Close()
+			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to stage upload content", true, copyErr)
+		}
+		if closeErr := tempFile.Close(); closeErr != nil {
+			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to close staged upload content", true, closeErr)
+		}
 	}
 
 	response, callErr := client.call(ctx, cloud115BridgeRequest{

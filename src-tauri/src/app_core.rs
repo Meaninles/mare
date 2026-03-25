@@ -117,6 +117,14 @@ impl AppCore {
         self.database.update_library_record(id, path, name).await
     }
 
+    pub async fn set_library_pinned(
+        &self,
+        id: String,
+        pinned: bool,
+    ) -> Result<RegisteredLibrary, AppError> {
+        self.database.set_library_pinned(id, pinned).await
+    }
+
     pub async fn delete_library_record(&self, id: String) -> Result<(), AppError> {
         self.database.delete_library_record(id).await
     }

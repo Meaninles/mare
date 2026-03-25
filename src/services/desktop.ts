@@ -46,6 +46,10 @@ export async function updateLibraryRecord(payload: {
   return invoke<RegisteredLibrary>("update_library_record", payload);
 }
 
+export async function setLibraryPinned(id: string, pinned: boolean): Promise<RegisteredLibrary> {
+  return invoke<RegisteredLibrary>("set_library_pinned", { id, pinned });
+}
+
 export async function deleteLibraryRecord(id: string): Promise<void> {
   return invoke<void>("delete_library_record", { id });
 }

@@ -24,6 +24,7 @@ pub struct RegisteredLibrary {
     pub created_at: String,
     pub updated_at: String,
     pub last_opened_at: Option<String>,
+    pub is_pinned: bool,
     pub is_active: bool,
 }
 

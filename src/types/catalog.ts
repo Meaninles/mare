@@ -125,6 +125,98 @@ export interface CatalogTask {
   finishedAt?: string;
 }
 
+export interface CatalogTransferTaskStats {
+  generatedAt: string;
+  totalTasks: number;
+  queuedTasks: number;
+  runningTasks: number;
+  pausedTasks: number;
+  failedTasks: number;
+  successTasks: number;
+  uploadTasks: number;
+  downloadTasks: number;
+  syncTasks: number;
+  totalItems: number;
+  runningItems: number;
+  pausedItems: number;
+  failedItems: number;
+  successItems: number;
+  skippedItems: number;
+  totalBytes: number;
+  completedBytes: number;
+}
+
+export interface CatalogTransferTaskRecord {
+  id: string;
+  taskType: string;
+  title: string;
+  direction: string;
+  status: string;
+  sourceLabel?: string;
+  targetLabel?: string;
+  progressPercent: number;
+  progressLabel?: string;
+  currentItemName?: string;
+  totalItems: number;
+  queuedItems: number;
+  runningItems: number;
+  pausedItems: number;
+  failedItems: number;
+  successItems: number;
+  skippedItems: number;
+  totalBytes: number;
+  completedBytes: number;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface CatalogTransferTaskItemRecord {
+  id: string;
+  taskId: string;
+  itemIndex: number;
+  groupKey: string;
+  direction: string;
+  displayName: string;
+  mediaType: string;
+  sourceLabel?: string;
+  sourcePath: string;
+  targetLabel?: string;
+  targetPath: string;
+  assetId?: string;
+  logicalPathKey?: string;
+  status: string;
+  phase: string;
+  progressPercent: number;
+  totalBytes: number;
+  transferredBytes: number;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface CatalogTransferTaskListResult {
+  generatedAt: string;
+  stats: CatalogTransferTaskStats;
+  tasks: CatalogTransferTaskRecord[];
+}
+
+export interface CatalogTransferTaskDetailRecord {
+  task: CatalogTransferTaskRecord;
+  items: CatalogTransferTaskItemRecord[];
+}
+
+export interface CatalogTransferTaskActionSummary {
+  requested: number;
+  updated: number;
+  taskIds: string[];
+  message: string;
+}
+
 export interface CatalogDeleteReplicaSummary {
   taskId: string;
   assetId: string;
@@ -204,6 +296,8 @@ export interface CatalogRestoreAssetSummary {
   createdReplica: boolean;
   updatedReplica: boolean;
   skipped: boolean;
+  progressPercent?: number;
+  progressLabel?: string;
   startedAt: string;
   finishedAt: string;
   error?: string;
@@ -228,6 +322,8 @@ export interface CatalogBatchRestoreSummary {
   successCount: number;
   failedCount: number;
   skippedCount: number;
+  progressPercent?: number;
+  progressLabel?: string;
   items: CatalogBatchRestoreItem[];
   startedAt: string;
   finishedAt: string;
@@ -315,6 +411,24 @@ export interface CatalogAssetInsightsResponse {
 export interface CatalogTasksResponse {
   success: boolean;
   tasks?: CatalogTask[];
+  error?: string;
+}
+
+export interface CatalogTransferTasksResponse {
+  success: boolean;
+  result?: CatalogTransferTaskListResult;
+  error?: string;
+}
+
+export interface CatalogTransferTaskDetailResponse {
+  success: boolean;
+  result?: CatalogTransferTaskDetailRecord;
+  error?: string;
+}
+
+export interface CatalogTransferTaskActionResponse {
+  success: boolean;
+  summary?: CatalogTransferTaskActionSummary;
   error?: string;
 }
 

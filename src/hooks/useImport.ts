@@ -123,7 +123,10 @@ export function useExecuteImport() {
         throw new Error(response.error ?? "导入执行失败。");
       }
 
-      return response.summary;
+      return {
+        ...response.summary,
+        items: response.summary.items ?? []
+      };
     },
     onSuccess: async () => {
       await invalidateLibraryQueries(queryClient, currentLibraryId);

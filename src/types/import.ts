@@ -79,6 +79,8 @@ export interface ImportExecutionSummary {
   successCount: number;
   partialCount: number;
   failedCount: number;
+  progressPercent?: number;
+  progressLabel?: string;
   startedAt: string;
   finishedAt: string;
   items: ImportExecutionItem[];

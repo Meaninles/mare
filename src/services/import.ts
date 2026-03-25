@@ -16,12 +16,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 async function getJson<TResponse>(url: string): Promise<TResponse> {
-  const response = await fetch(url);
+  const response = await request(url);
   return readJsonResponse<TResponse>(response);
 }
 
 async function postJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
-  const response = await fetch(url, {
+  const response = await request(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -30,6 +30,14 @@ async function postJson<TResponse>(url: string, payload: unknown): Promise<TResp
   });
 
   return readJsonResponse<TResponse>(response);
+}
+
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw normalizeNetworkError(url, error);
+  }
 }
 
 async function readJsonResponse<TResponse>(response: Response): Promise<TResponse> {
@@ -43,6 +51,22 @@ async function readJsonResponse<TResponse>(response: Response): Promise<TRespons
         ? `后端返回了非 JSON 响应（HTTP ${response.status}）：${snippet}`
         : `后端返回了空响应（HTTP ${response.status}）。`
     );
+  }
+}
+
+function normalizeNetworkError(url: string, error: unknown) {
+  if (error instanceof Error && /Failed to fetch/i.test(error.message)) {
+    return new Error(`无法连接到导入服务（${resolveOrigin(url)}）。请确认后端已启动，并且当前资产库已经成功打开。`);
+  }
+
+  return error instanceof Error ? error : new Error("请求导入服务失败。");
+}
+
+function resolveOrigin(url: string) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
   }
 }
 

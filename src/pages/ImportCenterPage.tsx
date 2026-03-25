@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useCatalogEndpoints, useCatalogTasks } from "../hooks/useCatalog";
 import { useExecuteImport, useImportDevices, useImportRules, useImportSource, useSaveImportRules, useSelectImportDeviceRole } from "../hooks/useImport";
 import { formatCatalogDate, formatFileSize } from "../lib/catalog-view";
+import { getTaskDisplaySummary } from "../lib/task-center";
 import type { CatalogEndpoint, CatalogTask } from "../types/catalog";
 import type { ImportBrowseMediaType, ImportExecutionSummary, ImportRuleInput, ImportSourceEntry } from "../types/import";
 
@@ -148,9 +149,7 @@ export function ImportCenterPage() {
       entryPaths: selectedEntries.map((entry) => entry.relativePath)
     });
     setLastSummary(summary);
-    if (summary.failedCount === 0 && summary.partialCount === 0) {
-      setSelectedPaths([]);
-    }
+    setSelectedPaths([]);
   }
 
   function toggleEntrySelection(relativePath: string) {
@@ -475,10 +474,17 @@ export function ImportCenterPage() {
               <article className="rule-card">
                 <div className="rule-card-head">
                   <strong>{lastSummary.deviceLabel || "导入执行"}</strong>
-                  <span className={`status-pill ${lastSummary.failedCount > 0 || lastSummary.partialCount > 0 ? "warning" : "success"}`}>{lastSummary.failedCount > 0 || lastSummary.partialCount > 0 ? "部分完成" : "导入成功"}</span>
+                  <span className={`status-pill ${getRunTone(lastSummary.status)}`}>{getRunLabel(lastSummary.status)}</span>
                 </div>
-                <p>共处理 {lastSummary.totalFiles} 个文件，成功 {lastSummary.successCount} 个，部分完成 {lastSummary.partialCount} 个，失败 {lastSummary.failedCount} 个。</p>
+                <p>{lastSummary.progressLabel || `已将 ${lastSummary.totalFiles} 个文件加入可靠传输队列，可在同步中心继续管理。`}</p>
                 {lastSummary.error ? <p className="error-copy">{lastSummary.error}</p> : null}
+                {!lastSummary.error ? (
+                  <div className="action-row">
+                    <Link to="/sync" className="ghost-button">
+                      打开同步中心
+                    </Link>
+                  </div>
+                ) : null}
               </article>
               {lastSummary.items.length > 0 ? (
                 <div className="import-summary-list">
@@ -541,9 +547,9 @@ function EmptyBlock({ icon, title, copy }: { icon: ReactNode; title: string; cop
 function ImportTaskCard({ task }: { task: CatalogTask }) {
   return (
     <article className="task-card sync-task-card">
-      <div className="task-card-head"><div><strong>{task.taskType === "import_execute" ? "导入执行" : task.taskType}</strong><p>{task.id}</p></div><span className={`status-pill ${getTaskTone(task.status)}`}>{getTaskLabel(task.status)}</span></div>
+      <div className="task-card-head"><div><strong>{task.taskType === "import_execute" ? "导入执行" : task.taskType}</strong><p>{task.id}</p></div><span className={`status-pill ${getTaskTone(task.status)}`}>{task.status.trim().toLowerCase() === "queued" ? "排队中" : getTaskLabel(task.status)}</span></div>
       <div className="task-card-meta"><span>创建于 {formatCatalogDate(task.createdAt)}</span><span>更新于 {formatCatalogDate(task.updatedAt)}</span></div>
-      {task.resultSummary ? <p className="muted-copy clamp-2">{task.resultSummary}</p> : null}
+      {getTaskDisplaySummary(task) ? <p className="muted-copy clamp-2">{getTaskDisplaySummary(task)}</p> : null}
       {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
     </article>
   );
@@ -573,10 +579,16 @@ function getRunLabel(status: string) {
   switch (status.toLowerCase()) {
     case "success":
       return "成功";
+    case "queued":
+      return "排队中";
     case "running":
       return "进行中";
     case "pending":
       return "等待中";
+    case "paused":
+      return "已暂停";
+    case "canceled":
+      return "已取消";
     case "partial":
       return "部分完成";
     default:
@@ -590,6 +602,9 @@ function getRunTone(status: string) {
     case "failed":
     case "error":
       return "danger";
+    case "paused":
+    case "canceled":
+      return "neutral";
     default:
       return "warning";
   }

@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useLocation, useOutletContext, useSearchParams } from "react-router-dom";
 import {
+  ArrowUpDown,
   AudioLines,
+  BellRing,
   CheckSquare,
-  ChevronRight,
   Clapperboard,
   Folder,
   FolderOpen,
   Home,
   Images,
+  Search,
   SearchX,
   Square,
   Trash2,
   WandSparkles
 } from "lucide-react";
 import { AssetDetailPage } from "./AssetDetailPage";
+import type { AppShellOutletContext } from "../layouts/AppShell";
 import {
   useCatalogAssets,
   useCatalogBatchRestore,
@@ -26,14 +29,12 @@ import {
   formatDurationSeconds,
   formatFileSize,
   getAssetStatusFilterValue,
-  getAssetStatusLabel,
   getAssetTone,
   getAvailableReplicaCount,
   getMediaTypeLabel,
   getMissingReplicaCount,
   normalizeMediaType
 } from "../lib/catalog-view";
-import type { AssetTone } from "../lib/catalog-view";
 import type { CatalogAsset } from "../types/catalog";
 
 const collator = new Intl.Collator("zh-CN", {
@@ -70,8 +71,13 @@ type DecoratedAsset = {
   directory: string;
   sortTimestamp: number;
   sizeLabel: string;
-  locationLabel: string;
-  endpointNames: string[];
+  endpointStates: EndpointState[];
+};
+
+type EndpointState = {
+  id: string;
+  name: string;
+  exists: boolean;
 };
 
 type FolderSummary = {
@@ -113,6 +119,8 @@ export function LibraryPage() {
 function LibraryCatalogView() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { openTaskCenter, notificationCount, hasNotificationAlert } =
+    useOutletContext<AppShellOutletContext>();
   const [mediaFilter, setMediaFilter] = useState<MediaFilterValue>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("name");
@@ -121,6 +129,7 @@ function LibraryCatalogView() {
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
   const searchQuery = searchParams.get("q")?.trim() ?? "";
+  const [searchValue, setSearchValue] = useState(searchQuery);
   const currentDirectory = normalizeHierarchyPath(searchParams.get("dir")?.trim() ?? "");
   const isSearchMode = searchQuery.length > 0;
   const assetsQuery = useCatalogAssets({
@@ -162,6 +171,10 @@ function LibraryCatalogView() {
   const folderIndex = useMemo(() => buildFolderIndex(filteredAssets), [filteredAssets]);
 
   useEffect(() => {
+    setSearchValue(searchQuery);
+  }, [searchQuery]);
+
+  useEffect(() => {
     if (isSearchMode || !currentDirectory || folderIndex.summaries.has(currentDirectory)) {
       return;
     }
@@ -199,9 +212,6 @@ function LibraryCatalogView() {
     () => managedEndpoints.find((endpoint) => endpoint.id === selectedEndpointId) ?? null,
     [managedEndpoints, selectedEndpointId]
   );
-
-  const breadcrumbs = useMemo(() => getBreadcrumbs(currentDirectory), [currentDirectory]);
-
   const currentFolderSummary = !isSearchMode
     ? folderIndex.summaries.get(currentDirectory) ?? folderIndex.summaries.get("")
     : undefined;
@@ -225,6 +235,21 @@ function LibraryCatalogView() {
       nextParams.set("dir", normalized);
     } else {
       nextParams.delete("dir");
+    }
+
+    setSearchParams(nextParams);
+  }
+
+  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextParams = new URLSearchParams(searchParams);
+    const normalizedQuery = searchValue.trim();
+
+    if (normalizedQuery) {
+      nextParams.set("q", normalizedQuery);
+    } else {
+      nextParams.delete("q");
     }
 
     setSearchParams(nextParams);
@@ -270,9 +295,8 @@ function LibraryCatalogView() {
         targetEndpointId: bulkTargetEndpoint.id,
         assetIds: selectedAssetIds
       });
-      setBulkNotice(
-        `${bulkTargetEndpoint.name}：成功 ${summary.successCount}，跳过 ${summary.skippedCount}，失败 ${summary.failedCount}`
-      );
+      setSelectedAssetIds([]);
+      setBulkNotice(summary.progressLabel || `已将 ${selectedAssetIds.length} 个资产加入传输队列，目标为 ${bulkTargetEndpoint.name}。`);
     } catch (error) {
       setBulkNotice(error instanceof Error ? error.message : "批量同步失败。");
     }
@@ -323,44 +347,53 @@ function LibraryCatalogView() {
 
   return (
     <section className="page-stack">
-      <article className="hero-card library-hero">
-        <div className="library-hero-copy">
-          <p className="eyebrow">统一资产库</p>
-          <h3>资产</h3>
-          <p>
-            目录、子目录、文件行和元数据列都放回同一个列表里。你可以像看电脑文件夹一样看资产库，同时保留副本、状态和存储位置这些跨端信息。
-          </p>
-        </div>
-
-        <div className="hero-metrics">
-          <MetricCard label="资产总数" value={summary.totalAssets} tone="neutral" />
-          <MetricCard label="完整可用" value={summary.readyAssets} tone="success" />
-          <MetricCard label="部分缺失" value={summary.partialAssets} tone="warning" />
-          <MetricCard label="仅单端存在" value={summary.singleAssets} tone="neutral" />
-        </div>
-      </article>
-
-      <article className="detail-card catalog-toolbar">
-          <div className="catalog-toolbar-head">
-            <div>
-              <p className="eyebrow">资源管理器</p>
-              <h4>列表</h4>
-            </div>
-
-            <div className="toolbar-search-state">
-              {searchQuery ? (
-                <span>搜索 {filteredAssets.length}</span>
+      <article className="detail-card compact-page-header library-page-header">
+        <div className="compact-page-header-main">
+          <div className="compact-page-header-title">
+            <h3>资产</h3>
+            <div className="replica-chip-row compact-page-header-metrics">
+              <span className="replica-chip neutral">资产总数 {summary.totalAssets}</span>
+              <span className="replica-chip success">完整可用 {summary.readyAssets}</span>
+              <span className="replica-chip warning">部分缺失 {summary.partialAssets}</span>
+              <span className="replica-chip danger">仅单端存在 {summary.singleAssets}</span>
+              {isSearchMode ? (
+                <span className="replica-chip neutral">搜索结果 {filteredAssets.length}</span>
               ) : (
-                <span>
-                  {!isSearchMode ? `目录 ${visibleFolders.length}` : "目录"}
-                  {" · "}
-                  文件 {visibleAssets.length}
-                </span>
+                <>
+                  <span className="replica-chip neutral">子目录 {visibleFolders.length}</span>
+                  <span className="replica-chip neutral">文件 {visibleAssets.length}</span>
+                  {currentDirectory && currentFolderSummary ? (
+                    <span className="replica-chip neutral">目录内资产 {currentFolderSummary.assetCount}</span>
+                  ) : null}
+                </>
               )}
             </div>
           </div>
 
-        <div className="filter-stack">
+          <div className="toolbar-search-state">
+            {searchQuery ? (
+              <span>搜索 {filteredAssets.length}</span>
+            ) : (
+              <span>
+                {!isSearchMode ? `目录 ${visibleFolders.length}` : "目录"}
+                {" · "}
+                文件 {visibleAssets.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="compact-page-header-actions">
+          <form className="shell-search shell-search-minimal library-page-search" onSubmit={handleSearchSubmit}>
+            <Search size={17} strokeWidth={1.9} />
+            <input
+              value={searchValue}
+              onChange={(event) => setSearchValue(event.target.value)}
+              placeholder="搜索资产"
+              aria-label="搜索资产"
+            />
+          </form>
+
           <div className="segmented-group" aria-label="媒体类型筛选">
             {mediaFilters.map((filter) => (
               <button
@@ -387,16 +420,33 @@ function LibraryCatalogView() {
             ))}
           </div>
 
-          <label className="field catalog-sort-field">
-            <span>排序</span>
-            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
+          <div className="catalog-sort-field compact-filter-control compact-sort-control">
+            <ArrowUpDown size={16} aria-hidden="true" />
+            <select
+              aria-label="排序方式"
+              value={sortOrder}
+              onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+            >
               {sortOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}
             </select>
-          </label>
+          </div>
+
+          <button
+            type="button"
+            className={`ghost-button icon-button shell-action-button task-center-icon library-page-notice-button${
+              hasNotificationAlert ? " has-alert" : ""
+            }`}
+            onClick={openTaskCenter}
+            aria-label="打开通知中心"
+            title="通知中心"
+          >
+            <BellRing size={18} />
+            {notificationCount > 0 ? <span className="task-center-badge">{notificationCount}</span> : null}
+          </button>
         </div>
       </article>
 
@@ -434,76 +484,31 @@ function LibraryCatalogView() {
 
       {!assetsQuery.isLoading && !assetsQuery.isError && filteredAssets.length > 0 ? (
         <article className="detail-card explorer-shell">
-          <div className="explorer-header">
-            <div>
-              <p className="eyebrow">{isSearchMode ? "搜索结果" : "目录视图"}</p>
-              <h4>{isSearchMode ? "跨目录搜索结果" : currentDirectory ? getPathBaseName(currentDirectory) : "资产库根目录"}</h4>
-            </div>
+          {!isSearchMode && currentDirectory ? (
+            <div className="explorer-pathbar">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => openDirectory(getParentDirectory(currentDirectory))}
+              >
+                <FolderOpen size={16} />
+                返回上级
+              </button>
 
-            <div className="explorer-summary">
-              {!isSearchMode ? <span className="explorer-summary-pill">子目录 {visibleFolders.length}</span> : null}
-              <span className="explorer-summary-pill">文件 {visibleAssets.length}</span>
-              <span className="explorer-summary-pill">匹配资产 {filteredAssets.length}</span>
-              {!isSearchMode && currentFolderSummary ? (
-                <span className="explorer-summary-pill">目录内资产 {currentFolderSummary.assetCount}</span>
-              ) : null}
-            </div>
-          </div>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => openDirectory("")}
+              >
+                <Home size={16} />
+                根目录
+              </button>
 
-          {!isSearchMode ? (
-            <div className="explorer-toolbar">
-              <div className="explorer-actions">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => openDirectory("")}
-                  disabled={!currentDirectory}
-                >
-                  <Home size={16} />
-                  回到根目录
-                </button>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => openDirectory(getParentDirectory(currentDirectory))}
-                  disabled={!currentDirectory}
-                >
-                  <FolderOpen size={16} />
-                  返回上级
-                </button>
-              </div>
-
-              <nav className="explorer-breadcrumbs" aria-label="当前目录路径">
-                <button
-                  type="button"
-                  className={`breadcrumb-button${currentDirectory ? "" : " active"}`}
-                  onClick={() => openDirectory("")}
-                >
-                  <Home size={14} />
-                  根目录
-                </button>
-
-                {breadcrumbs.map((crumb) => (
-                  <div key={crumb.path} className="breadcrumb-item">
-                    <ChevronRight size={14} />
-                    <button
-                      type="button"
-                      className={`breadcrumb-button${crumb.path === currentDirectory ? " active" : ""}`}
-                      onClick={() => openDirectory(crumb.path)}
-                    >
-                      {crumb.label}
-                    </button>
-                  </div>
-                ))}
-              </nav>
+              <span className="status-pill subtle explorer-path-pill" title={currentDirectory}>
+                {currentDirectory}
+              </span>
             </div>
-          ) : (
-            <div className="explorer-search-banner">
-              <span className="status-pill subtle">搜索</span>
-              <strong>{searchQuery}</strong>
-              <span>{filteredAssets.length}</span>
-            </div>
-          )}
+          ) : null}
 
           <div className="explorer-bulkbar">
             <div className="replica-chip-row explorer-bulk-summary">
@@ -512,6 +517,21 @@ function LibraryCatalogView() {
             </div>
 
             <div className="explorer-bulk-actions">
+              <div className="catalog-sort-field compact-filter-control compact-sort-control explorer-sort-control">
+                <ArrowUpDown size={16} aria-hidden="true" />
+                <select
+                  aria-label="鎺掑簭鏂瑰紡"
+                  value={sortOrder}
+                  onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+                >
+                  {sortOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <button type="button" className="ghost-button" onClick={toggleVisibleSelection} disabled={visibleAssetIds.length === 0}>
                 {selectedVisibleCount === visibleAssetIds.length && visibleAssetIds.length > 0 ? (
                   <CheckSquare size={16} />
@@ -695,39 +715,35 @@ function ExplorerAssetRow({
         </div>
       </td>
       <td>{getMediaTypeLabel(asset.mediaType)}</td>
-      <td className="explorer-status-cell">
-        <span className={`status-pill ${tone}`}>{getAssetStatusLabel(asset)}</span>
+      <td className="explorer-source-cell">
+        <div className="source-status-list" aria-label="数据源状态">
+          {item.endpointStates.map((endpoint) => (
+            <span
+              key={endpoint.id}
+              className={`source-status-chip ${endpoint.exists ? "is-online" : "is-offline"}`}
+              title={`${endpoint.name} ${endpoint.exists ? "可用" : "缺失"}`}
+            >
+              <span className="source-status-dot" aria-hidden="true" />
+              <span className="source-status-name">{endpoint.name}</span>
+            </span>
+          ))}
+        </div>
       </td>
       <td>{formatCatalogDate(getAssetTimestamp(asset))}</td>
       <td>{item.sizeLabel}</td>
-      <td>{formatReplicaSummary(asset)}</td>
-      <td>{item.locationLabel}</td>
     </tr>
-  );
-}
-
-function MetricCard({ label, value, tone }: { label: string; value: number; tone: AssetTone }) {
-  return (
-    <article className={`metric-card tone-${tone}`}>
-      <p>{label}</p>
-      <strong>{value}</strong>
-    </article>
   );
 }
 
 function decorateAsset(asset: CatalogAsset, endpointLookup: Map<string, string>): DecoratedAsset {
   const directory = resolveAssetDirectory(asset);
-  const endpointNames = uniqueText(
-    asset.replicas.map((replica) => endpointLookup.get(replica.endpointId) ?? replica.endpointId)
-  );
 
   return {
     asset,
     directory,
     sortTimestamp: resolveAssetTimestampValue(asset),
     sizeLabel: getAssetInfoLabel(asset),
-    locationLabel: formatEndpointSummary(endpointNames),
-    endpointNames
+    endpointStates: buildEndpointStates(asset, endpointLookup)
   };
 }
 
@@ -914,19 +930,6 @@ function formatEndpointSummary(endpointNames: string[]) {
   return `${endpointNames.slice(0, 2).join(" / ")} +${endpointNames.length - 2}`;
 }
 
-function getBreadcrumbs(path: string) {
-  const segments = splitHierarchyPath(path);
-  const breadcrumbs: Array<{ path: string; label: string }> = [];
-  let currentPath = "";
-
-  for (const segment of segments) {
-    currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-    breadcrumbs.push({ path: currentPath, label: segment });
-  }
-
-  return breadcrumbs;
-}
-
 function getParentDirectory(path: string) {
   const segments = splitHierarchyPath(path);
   if (segments.length <= 1) {
@@ -934,6 +937,31 @@ function getParentDirectory(path: string) {
   }
 
   return segments.slice(0, -1).join("/");
+}
+
+function buildEndpointStates(asset: CatalogAsset, endpointLookup: Map<string, string>): EndpointState[] {
+  const states = new Map<string, EndpointState>();
+
+  for (const replica of asset.replicas) {
+    const existing = states.get(replica.endpointId);
+    const nextState: EndpointState = {
+      id: replica.endpointId,
+      name: endpointLookup.get(replica.endpointId) ?? replica.endpointId,
+      exists: replica.existsFlag
+    };
+
+    if (!existing || (!existing.exists && replica.existsFlag)) {
+      states.set(replica.endpointId, nextState);
+    }
+  }
+
+  return [...states.values()].sort((left, right) => {
+    if (left.exists !== right.exists) {
+      return left.exists ? -1 : 1;
+    }
+
+    return collator.compare(left.name, right.name);
+  });
 }
 
 function getPathDirectory(path?: string) {

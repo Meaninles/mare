@@ -17,11 +17,11 @@ export function getTaskTitle(taskType: string) {
     case "scan_endpoint":
       return "端点扫描";
     case "restore_asset":
-      return "恢复资产";
+      return "恢复传输";
     case "restore_batch":
-      return "批量补齐";
+      return "批量同步";
     case "import_execute":
-      return "导入执行";
+      return "导入传输";
     case "thumbnail":
       return "图片缩略图";
     case "video_cover":
@@ -45,10 +45,16 @@ export function getTaskTitle(taskType: string) {
 
 export function getTaskStatusLabel(status: string) {
   switch (safeLower(status)) {
+    case "queued":
+      return "排队中";
     case "pending":
       return "等待中";
     case "running":
       return "进行中";
+    case "paused":
+      return "已暂停";
+    case "canceled":
+      return "已取消";
     case "retrying":
       return "重试中";
     case "failed":
@@ -67,6 +73,9 @@ export function getTaskTone(status: string) {
   }
   if (isFailedTaskStatus(status)) {
     return "danger";
+  }
+  if (["paused", "canceled"].includes(safeLower(status))) {
+    return "neutral";
   }
   return "warning";
 }
@@ -174,7 +183,7 @@ export function safeLower(value?: string) {
 }
 
 export function isTaskActiveStatus(status?: string) {
-  return ["pending", "running", "retrying"].includes(safeLower(status));
+  return ["queued", "pending", "running", "retrying"].includes(safeLower(status));
 }
 
 export function isFailedTaskStatus(status?: string) {
@@ -214,6 +223,17 @@ export function taskMatchesAsset(task: CatalogTask, assetId: string, taskTypes: 
 
   const payload = parseTaskPayload(task.payload);
   return getPayloadString(payload, "assetId", "AssetID") === normalizedAssetId;
+}
+
+export function getTaskDisplaySummary(task: CatalogTask) {
+  const parsedSummary = parseTaskSummary(task.resultSummary);
+  if (parsedSummary?.progressLabel) {
+    return parsedSummary.progressLabel;
+  }
+  if (parsedSummary?.title && parsedSummary.title !== getTaskTitle(task.taskType)) {
+    return parsedSummary.title;
+  }
+  return task.resultSummary;
 }
 
 function compareTasksForVisibility(left: CatalogTask, right: CatalogTask) {
@@ -276,6 +296,27 @@ function parseTaskPayload(payload: string) {
   try {
     const parsed = JSON.parse(trimmed);
     return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseTaskSummary(summary?: string) {
+  const trimmed = summary?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+
+    return {
+      title: getPayloadString(parsed, "title"),
+      progressLabel: getPayloadString(parsed, "progressLabel")
+    };
   } catch {
     return null;
   }
