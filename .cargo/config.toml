@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# Use LLVM's bundled multithreaded linker to reduce Windows link time in Tauri builds.
+linker = "rust-lld"

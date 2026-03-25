@@ -1,7 +1,8 @@
 node_modules/
 dist/
 .npm-cache/
-.cargo/
+.cargo/*
+!.cargo/config.toml
 .rustup/
 .vs/
 .tools/
