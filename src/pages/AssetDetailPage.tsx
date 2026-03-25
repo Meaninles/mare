@@ -19,7 +19,8 @@ import {
   useCatalogAssetInsights,
   useCatalogDeleteReplica,
   useCatalogEndpoints,
-  useCatalogRestoreAsset
+  useCatalogRestoreAsset,
+  useCatalogTasks
 } from "../hooks/useCatalog";
 import {
   formatCatalogDate,
@@ -33,13 +34,22 @@ import {
   getReplicaTone,
   normalizeMediaType
 } from "../lib/catalog-view";
-import type { CatalogAssetInsights, CatalogEndpoint, CatalogReplica } from "../types/catalog";
+import {
+  findLatestMatchingTask,
+  isFailedTaskStatus,
+  isSuccessfulTaskStatus,
+  isTaskActiveStatus,
+  taskMatchesAsset
+} from "../lib/task-center";
+import type { CatalogAssetInsights, CatalogEndpoint, CatalogReplica, CatalogTask } from "../types/catalog";
 
 type DeleteDialogState = {
   replica: CatalogReplica;
   endpointName: string;
   isLastAvailableReplica: boolean;
 };
+
+type AssetInsightStatus = "ready" | "syncing" | "processing" | "failed" | "pending";
 
 export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string }) {
   const { assetId: routeAssetId } = useParams();
@@ -48,6 +58,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const [searchParams] = useSearchParams();
   const assetsQuery = useCatalogAssets();
   const endpointsQuery = useCatalogEndpoints();
+  const tasksQuery = useCatalogTasks(500);
   const restoreMutation = useCatalogRestoreAsset();
   const deleteReplicaMutation = useCatalogDeleteReplica();
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -69,7 +80,7 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const asset = useMemo(() => {
     return (assetsQuery.data ?? []).find((item) => item.id === assetId) ?? null;
   }, [assetId, assetsQuery.data]);
-  const insightsQuery = useCatalogAssetInsights(asset?.id ?? "", Boolean(asset));
+  const rawInsightsQuery = useCatalogAssetInsights(assetId, assetId.trim().length > 0);
 
   if (assetsQuery.isLoading) {
     return (
@@ -110,6 +121,38 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
   const isAudioAsset = normalizedMediaType === "audio";
   const supportsTranscript = normalizedMediaType === "audio" || normalizedMediaType === "video";
   const supportsSemantic = normalizedMediaType === "image" || normalizedMediaType === "video";
+  const latestTranscriptTask = useMemo(
+    () =>
+      findLatestMatchingTask(
+        tasksQuery.data ?? [],
+        (task) => supportsTranscript && taskMatchesAsset(task, asset.id, ["audio_transcript", "video_transcript"])
+      ),
+    [asset.id, supportsTranscript, tasksQuery.data]
+  );
+  const latestSemanticTask = useMemo(
+    () =>
+      findLatestMatchingTask(
+        tasksQuery.data ?? [],
+        (task) => supportsSemantic && taskMatchesAsset(task, asset.id, ["image_semantic", "video_semantic"])
+      ),
+    [asset.id, supportsSemantic, tasksQuery.data]
+  );
+  const transcriptStatus = resolveInsightStatus(Boolean(rawInsightsQuery.data?.transcript), latestTranscriptTask);
+  const semanticStatus = resolveInsightStatus(Boolean(rawInsightsQuery.data?.semantic), latestSemanticTask);
+  const insightsData = useMemo(
+    () =>
+      analysisOpen
+        ? rawInsightsQuery.data
+        : buildDisplayInsights(rawInsightsQuery.data, transcriptStatus, semanticStatus, latestTranscriptTask, latestSemanticTask),
+    [analysisOpen, latestSemanticTask, latestTranscriptTask, rawInsightsQuery.data, semanticStatus, transcriptStatus]
+  );
+  const insightsQuery = useMemo(
+    () => ({
+      ...rawInsightsQuery,
+      data: insightsData
+    }),
+    [insightsData, rawInsightsQuery]
+  );
   const recommendedSource = choosePreferredRestoreSource(availableReplicas, endpointsQuery.data ?? []);
   const primaryPath = asset.canonicalPath ?? asset.logicalPathKey;
   const primaryDirectory =
@@ -429,7 +472,14 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
               ) : null}
             </div>
 
-            <button type="button" className="ghost-button" onClick={() => setAnalysisOpen(true)}>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => {
+                void rawInsightsQuery.refetch();
+                setAnalysisOpen(true);
+              }}
+            >
               <BrainCircuit size={16} />
               查看 AI 解析
             </button>
@@ -469,6 +519,64 @@ export function AssetDetailPage({ assetIdOverride }: { assetIdOverride?: string 
       />
     </section>
   );
+}
+
+function buildDisplayInsights(
+  insights: CatalogAssetInsights | undefined,
+  transcriptStatus: AssetInsightStatus,
+  semanticStatus: AssetInsightStatus,
+  latestTranscriptTask?: CatalogTask,
+  latestSemanticTask?: CatalogTask
+) {
+  const nextInsights: CatalogAssetInsights = insights ? { ...insights } : {};
+
+  if (!nextInsights.transcript && transcriptStatus === "syncing") {
+    nextInsights.transcript = {
+      text: "",
+      length: 0,
+      updatedAt: getTaskInsightTimestamp(latestTranscriptTask)
+    };
+  }
+
+  if (!nextInsights.semantic && semanticStatus === "syncing") {
+    nextInsights.semantic = {
+      featureKind: "",
+      modelName: "",
+      dimensions: 0,
+      labels: [],
+      updatedAt: getTaskInsightTimestamp(latestSemanticTask)
+    };
+  }
+
+  return Object.keys(nextInsights).length > 0 ? nextInsights : undefined;
+}
+
+function resolveInsightStatus(hasInsight: boolean, latestTask?: CatalogTask): AssetInsightStatus {
+  if (hasInsight) {
+    return "ready";
+  }
+
+  if (!latestTask) {
+    return "pending";
+  }
+
+  if (isTaskActiveStatus(latestTask.status)) {
+    return "processing";
+  }
+
+  if (isSuccessfulTaskStatus(latestTask.status)) {
+    return "syncing";
+  }
+
+  if (isFailedTaskStatus(latestTask.status)) {
+    return "failed";
+  }
+
+  return "pending";
+}
+
+function getTaskInsightTimestamp(task?: CatalogTask) {
+  return task?.finishedAt ?? task?.updatedAt ?? task?.startedAt ?? task?.createdAt ?? new Date().toISOString();
 }
 
 function choosePreferredRestoreSource(replicas: CatalogReplica[], endpoints: CatalogEndpoint[]) {
@@ -797,7 +905,7 @@ function AssetInsightsDialog({
                   <span className="replica-chip neutral">更新于 {formatCatalogDate(transcript.updatedAt)}</span>
                 </div>
 
-                <div className="asset-ai-transcript-block">{transcript.text}</div>
+                <div className="asset-ai-transcript-block">{transcript.text || "未检测到可用转写文本"}</div>
               </section>
             ) : null}
 

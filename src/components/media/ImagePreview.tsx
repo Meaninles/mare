@@ -1,5 +1,6 @@
 import { Expand, ImageOff, X } from "lucide-react";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 export function ImagePreview({ src, alt }: { src?: string; alt: string }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -27,22 +28,31 @@ export function ImagePreview({ src, alt }: { src?: string; alt: string }) {
         </span>
       </button>
 
-      {isOpen ? (
-        <div className="media-lightbox" role="dialog" aria-modal="true" aria-label={`${alt} 预览`} onClick={() => setIsOpen(false)}>
-          <button
-            type="button"
-            className="media-lightbox-close"
-            aria-label="关闭图片预览"
-            onClick={() => setIsOpen(false)}
-          >
-            <X size={18} />
-          </button>
+      {isOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="media-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${alt} 预览`}
+              onClick={() => setIsOpen(false)}
+            >
+              <button
+                type="button"
+                className="media-lightbox-close"
+                aria-label="关闭图片预览"
+                onClick={() => setIsOpen(false)}
+              >
+                <X size={18} />
+              </button>
 
-          <div className="media-lightbox-panel" onClick={(event) => event.stopPropagation()}>
-            <img src={src} alt={alt} className="media-lightbox-image" />
-          </div>
-        </div>
-      ) : null}
+              <div className="media-lightbox-panel" onClick={(event) => event.stopPropagation()}>
+                <img src={src} alt={alt} className="media-lightbox-image" />
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }

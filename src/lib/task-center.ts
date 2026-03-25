@@ -1,6 +1,16 @@
 import type { CatalogTask } from "../types/catalog";
 
-export type TaskFilter = "all" | "running" | "failed" | "scan" | "sync" | "import" | "media";
+export type TaskFilter = "all" | "running" | "failed" | "completed" | "scan" | "sync" | "import" | "media";
+
+const mediaAssetScopedTaskTypes = new Set([
+  "thumbnail",
+  "video_cover",
+  "audio_metadata",
+  "audio_transcript",
+  "video_transcript",
+  "image_semantic",
+  "video_semantic"
+]);
 
 export function getTaskTitle(taskType: string) {
   switch (safeLower(taskType)) {
@@ -52,15 +62,13 @@ export function getTaskStatusLabel(status: string) {
 }
 
 export function getTaskTone(status: string) {
-  switch (safeLower(status)) {
-    case "success":
-      return "success";
-    case "failed":
-    case "error":
-      return "danger";
-    default:
-      return "warning";
+  if (isSuccessfulTaskStatus(status)) {
+    return "success";
   }
+  if (isFailedTaskStatus(status)) {
+    return "danger";
+  }
+  return "warning";
 }
 
 export function getTaskFilterLabel(filter: TaskFilter) {
@@ -69,6 +77,8 @@ export function getTaskFilterLabel(filter: TaskFilter) {
       return "进行中";
     case "failed":
       return "失败";
+    case "completed":
+      return "已完成";
     case "scan":
       return "扫描";
     case "sync":
@@ -84,13 +94,14 @@ export function getTaskFilterLabel(filter: TaskFilter) {
 
 export function matchesTaskFilter(task: CatalogTask, filter: TaskFilter) {
   const taskType = safeLower(task.taskType);
-  const status = safeLower(task.status);
 
   switch (filter) {
     case "running":
-      return ["pending", "running", "retrying"].includes(status);
+      return isTaskActiveStatus(task.status);
     case "failed":
-      return ["failed", "error"].includes(status);
+      return isFailedTaskStatus(task.status);
+    case "completed":
+      return isSuccessfulTaskStatus(task.status);
     case "scan":
       return taskType === "scan_endpoint";
     case "sync":
@@ -113,7 +124,7 @@ export function matchesTaskFilter(task: CatalogTask, filter: TaskFilter) {
 }
 
 export function canRetryTask(task: CatalogTask) {
-  if (!["failed", "error"].includes(safeLower(task.status))) {
+  if (!isFailedTaskStatus(task.status)) {
     return false;
   }
 
@@ -136,10 +147,151 @@ export function getTaskSummary(tasks: CatalogTask[]) {
   return {
     running: tasks.filter((task) => matchesTaskFilter(task, "running")).length,
     failed: tasks.filter((task) => matchesTaskFilter(task, "failed")).length,
-    completed: tasks.filter((task) => safeLower(task.status) === "success").length
+    completed: tasks.filter((task) => isSuccessfulTaskStatus(task.status)).length
   };
+}
+
+export function getVisibleTasks(tasks: CatalogTask[]) {
+  const seen = new Set<string>();
+  const sortedTasks = [...tasks].sort(compareTasksForVisibility);
+  const visibleTasks: CatalogTask[] = [];
+
+  for (const task of sortedTasks) {
+    const key = getTaskGroupingKey(task);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    visibleTasks.push(task);
+  }
+
+  return visibleTasks;
 }
 
 export function safeLower(value?: string) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+export function isTaskActiveStatus(status?: string) {
+  return ["pending", "running", "retrying"].includes(safeLower(status));
+}
+
+export function isFailedTaskStatus(status?: string) {
+  return ["failed", "error"].includes(safeLower(status));
+}
+
+export function isSuccessfulTaskStatus(status?: string) {
+  return safeLower(status) === "success";
+}
+
+export function findLatestMatchingTask(tasks: CatalogTask[], predicate: (task: CatalogTask) => boolean) {
+  let selected: CatalogTask | undefined;
+
+  for (const task of tasks) {
+    if (!predicate(task)) {
+      continue;
+    }
+
+    if (!selected || compareTasksForVisibility(task, selected) < 0) {
+      selected = task;
+    }
+  }
+
+  return selected;
+}
+
+export function taskMatchesAsset(task: CatalogTask, assetId: string, taskTypes: string[]) {
+  const normalizedAssetId = assetId.trim();
+  if (!normalizedAssetId) {
+    return false;
+  }
+
+  const normalizedTaskTypes = new Set(taskTypes.map((taskType) => safeLower(taskType)).filter(Boolean));
+  if (normalizedTaskTypes.size > 0 && !normalizedTaskTypes.has(safeLower(task.taskType))) {
+    return false;
+  }
+
+  const payload = parseTaskPayload(task.payload);
+  return getPayloadString(payload, "assetId", "AssetID") === normalizedAssetId;
+}
+
+function compareTasksForVisibility(left: CatalogTask, right: CatalogTask) {
+  const leftActive = isTaskActiveStatus(left.status);
+  const rightActive = isTaskActiveStatus(right.status);
+
+  if (leftActive !== rightActive) {
+    return leftActive ? -1 : 1;
+  }
+
+  return compareTasksByRecency(left, right);
+}
+
+function compareTasksByRecency(left: CatalogTask, right: CatalogTask) {
+  return getTaskTimestamp(right) - getTaskTimestamp(left);
+}
+
+function getTaskTimestamp(task: CatalogTask) {
+  const timestamp = task.updatedAt || task.finishedAt || task.startedAt || task.createdAt;
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getTaskGroupingKey(task: CatalogTask) {
+  const taskType = safeLower(task.taskType) || "task";
+  const payload = parseTaskPayload(task.payload);
+
+  if (mediaAssetScopedTaskTypes.has(taskType)) {
+    const assetId = getPayloadString(payload, "assetId", "AssetID");
+    if (assetId) {
+      return `${taskType}:asset:${assetId}`;
+    }
+  }
+
+  if (taskType === "scan_endpoint") {
+    const endpointId = getPayloadString(payload, "endpointId", "EndpointID");
+    if (endpointId) {
+      return `${taskType}:endpoint:${endpointId}`;
+    }
+  }
+
+  if (taskType === "restore_asset" || taskType === "delete_replica") {
+    const assetId = getPayloadString(payload, "assetId", "AssetID");
+    const sourceEndpointId = getPayloadString(payload, "sourceEndpointId", "SourceEndpointID");
+    const targetEndpointId = getPayloadString(payload, "targetEndpointId", "TargetEndpointID");
+    if (assetId) {
+      return `${taskType}:asset:${assetId}:source:${sourceEndpointId ?? ""}:target:${targetEndpointId ?? ""}`;
+    }
+  }
+
+  return `${taskType}:task:${task.id}`;
+}
+
+function parseTaskPayload(payload: string) {
+  const trimmed = payload.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getPayloadString(payload: Record<string, unknown> | null, ...keys: string[]) {
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

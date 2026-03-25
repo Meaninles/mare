@@ -1902,6 +1902,9 @@ a {
 }
 
 .media-lightbox-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   max-width: min(1240px, 92vw);
   max-height: 88vh;
 }
@@ -2930,6 +2933,23 @@ a {
 .task-drawer-section {
   display: grid;
   gap: 12px;
+}
+
+.task-section-collapsible-head {
+  align-items: center;
+}
+
+.task-section-collapsed-note {
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 18px;
+  background: var(--card-background-subtle);
+}
+
+.task-section-collapsed-note p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.6;
 }
 
 .task-drawer-footer {

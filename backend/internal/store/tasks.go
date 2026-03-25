@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -85,6 +86,27 @@ func (store *Store) ListTasks(ctx context.Context, limit, offset int) ([]Task, e
 	}
 
 	return tasks, rows.Err()
+}
+
+func (store *Store) GetLatestTaskByTypeAndAssetID(ctx context.Context, taskType, assetID string) (Task, error) {
+	trimmedTaskType := strings.TrimSpace(taskType)
+	trimmedAssetID := strings.TrimSpace(assetID)
+	if trimmedTaskType == "" || trimmedAssetID == "" {
+		return Task{}, sql.ErrNoRows
+	}
+
+	row := store.db.QueryRowContext(
+		ctx,
+		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
+		 FROM tasks
+		 WHERE task_type = ?
+		   AND payload LIKE ?
+		 ORDER BY updated_at DESC, created_at DESC
+		 LIMIT 1`,
+		trimmedTaskType,
+		`%"assetId":"`+trimmedAssetID+`"%`,
+	)
+	return scanTask(row)
 }
 
 func scanTask(scanner rowScanner) (Task, error) {

@@ -35,27 +35,34 @@ func (service *Service) maybeQueueSearchFeatures(asset store.Asset, replicas []s
 	if !service.autoQueueSearchJobs {
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(asset.AssetStatus), string(AssetStatusDeleted)) {
+		return
+	}
 
 	backgroundCtx := context.Background()
 
 	switch strings.ToLower(strings.TrimSpace(asset.MediaType)) {
 	case string(connectors.MediaTypeAudio):
 		if service.isSearchCapabilityEnabled(searchCapabilityTranscript) &&
-			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
+			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) &&
+			service.shouldAutoQueueSearchTask(backgroundCtx, asset.ID, taskTypeAudioTranscript) {
 			service.queueSearchJob(asset.ID, taskTypeAudioTranscript)
 		}
 	case string(connectors.MediaTypeVideo):
 		if service.isSearchCapabilityEnabled(searchCapabilityTranscript) &&
-			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) {
+			service.needsTranscriptGeneration(backgroundCtx, asset.ID, replicas) &&
+			service.shouldAutoQueueSearchTask(backgroundCtx, asset.ID, taskTypeVideoTranscript) {
 			service.queueSearchJob(asset.ID, taskTypeVideoTranscript)
 		}
 		if service.isSearchCapabilityEnabled(searchCapabilitySemantic) &&
-			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindVideo) {
+			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindVideo) &&
+			service.shouldAutoQueueSearchTask(backgroundCtx, asset.ID, taskTypeVideoSemantic) {
 			service.queueSearchJob(asset.ID, taskTypeVideoSemantic)
 		}
 	case string(connectors.MediaTypeImage):
 		if service.isSearchCapabilityEnabled(searchCapabilitySemantic) &&
-			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindImage) {
+			service.needsSemanticEmbeddingGeneration(backgroundCtx, asset.ID, replicas, semanticFeatureKindImage) &&
+			service.shouldAutoQueueSearchTask(backgroundCtx, asset.ID, taskTypeImageSemantic) {
 			service.queueSearchJob(asset.ID, taskTypeImageSemantic)
 		}
 	}
@@ -98,6 +105,23 @@ func (service *Service) needsSemanticEmbeddingGeneration(
 	}
 
 	return !sameNullableString(embedding.SourceVersionID, candidate.replica.VersionID)
+}
+
+func (service *Service) shouldAutoQueueSearchTask(ctx context.Context, assetID, taskType string) bool {
+	latestTask, err := service.store.GetLatestTaskByTypeAndAssetID(ctx, taskType, assetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	if err != nil {
+		return true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(latestTask.Status)) {
+	case taskStatusPending, taskStatusRunning, taskStatusRetrying, taskStatusFailed, "error":
+		return false
+	default:
+		return true
+	}
 }
 
 func (service *Service) queueSearchJob(assetID string, taskType string) {
@@ -163,9 +187,11 @@ func (service *Service) runSearchTask(ctx context.Context, task store.Task, asse
 	if runErr != nil {
 		if skippedSummary, ok := service.searchTaskSkipSummary(taskType, runErr); ok {
 			resultText = skippedSummary
+			errorText := skippedSummary
 			if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-				Status:        taskStatusSuccess,
+				Status:        taskStatusFailed,
 				ResultSummary: &resultText,
+				ErrorMessage:  &errorText,
 				RetryCount:    task.RetryCount,
 				StartedAt:     &startedAt,
 				FinishedAt:    &finishedAt,
@@ -174,8 +200,8 @@ func (service *Service) runSearchTask(ctx context.Context, task store.Task, asse
 				return err
 			}
 
-			slog.Warn("search feature task skipped", "taskId", task.ID, "assetId", assetID, "taskType", taskType, "reason", skippedSummary)
-			return nil
+			slog.Warn("search feature task auto-paused", "taskId", task.ID, "assetId", assetID, "taskType", taskType, "reason", skippedSummary)
+			return runErr
 		}
 
 		errorText := runErr.Error()
@@ -210,25 +236,13 @@ func (service *Service) runSearchTask(ctx context.Context, task store.Task, asse
 	return nil
 }
 
-func (service *Service) searchTaskSkipSummary(taskType string, err error) (string, bool) {
+func (service *Service) searchTaskSkipSummary(_ string, err error) (string, bool) {
 	reason := buildSearchTaskUnavailableReason(err)
 	if reason == "" {
 		return "", false
 	}
 
-	service.disableSearchCapability(searchCapabilityForTaskType(taskType))
-	return "已跳过后续同类 AI 解析任务：" + reason, true
-}
-
-func searchCapabilityForTaskType(taskType string) string {
-	switch strings.TrimSpace(taskType) {
-	case taskTypeAudioTranscript, taskTypeVideoTranscript:
-		return searchCapabilityTranscript
-	case taskTypeImageSemantic, taskTypeVideoSemantic:
-		return searchCapabilitySemantic
-	default:
-		return ""
-	}
+	return "自动任务已暂停：" + reason + "。处理完成后可在任务中心手动重试。", true
 }
 
 func buildSearchTaskUnavailableReason(err error) string {
@@ -246,7 +260,7 @@ func buildSearchTaskUnavailableReason(err error) string {
 	case strings.Contains(message, "no such table: asset_transcripts"),
 		strings.Contains(message, "no such table: asset_search_documents"),
 		strings.Contains(message, "no such table: asset_semantic_embeddings"):
-		return "当前资产库尚未完成 AI 检索迁移，请重启应用后再试"
+		return "当前资产库尚未完成 AI 搜索迁移，请重启应用后再试"
 	default:
 		return ""
 	}
@@ -301,23 +315,48 @@ func (service *Service) generateTranscript(
 		ffmpegPath = resolvedFFmpegPath
 	}
 
+	if strings.EqualFold(strings.TrimSpace(asset.MediaType), string(connectors.MediaTypeVideo)) {
+		if hasAudioTrack, probeErr := service.detectAudioTrack(ctx, localPath); probeErr == nil && !hasAudioTrack {
+			return service.saveTranscriptResult(ctx, asset, candidate.replica.VersionID, "", nil, "", "视频没有可转写音轨")
+		}
+	}
+
 	output, err := service.searchBridge.Transcribe(ctx, localPath, asset.MediaType, ffmpegPath)
 	if err != nil {
 		return "", err
 	}
 
+	transcriptText := strings.TrimSpace(output.Text)
+	var language *string
+	if trimmedLanguage := strings.TrimSpace(output.Language); trimmedLanguage != "" {
+		language = stringPointer(trimmedLanguage)
+	}
+
+	warning := ""
+	if transcriptText == "" {
+		warning = "未检测到可转写语音"
+	}
+
+	return service.saveTranscriptResult(ctx, asset, candidate.replica.VersionID, transcriptText, language, output.ModelName, warning)
+}
+
+func (service *Service) saveTranscriptResult(
+	ctx context.Context,
+	asset store.Asset,
+	sourceVersionID *string,
+	transcriptText string,
+	language *string,
+	modelName string,
+	warning string,
+) (string, error) {
 	now := time.Now().UTC()
-	language := stringPointer(strings.TrimSpace(output.Language))
 	transcript := store.AssetTranscript{
 		AssetID:         asset.ID,
-		TranscriptText:  strings.TrimSpace(output.Text),
+		TranscriptText:  strings.TrimSpace(transcriptText),
 		Language:        language,
-		SourceVersionID: candidate.replica.VersionID,
+		SourceVersionID: sourceVersionID,
 		CreatedAt:       now,
 		UpdatedAt:       now,
-	}
-	if transcript.TranscriptText == "" {
-		return "", errors.New("transcription result is empty")
 	}
 	if err := service.store.SaveAssetTranscript(ctx, transcript); err != nil {
 		return "", err
@@ -333,17 +372,42 @@ func (service *Service) generateTranscript(
 		return "", err
 	}
 
-	summary, err := json.Marshal(map[string]any{
+	summaryPayload := map[string]any{
 		"kind":      searchDocumentKindTranscript,
 		"language":  transcript.Language,
-		"modelName": output.ModelName,
+		"modelName": strings.TrimSpace(modelName),
 		"length":    len([]rune(transcript.TranscriptText)),
-	})
+	}
+	if trimmedWarning := strings.TrimSpace(warning); trimmedWarning != "" {
+		summaryPayload["warning"] = trimmedWarning
+	}
+
+	summary, err := json.Marshal(summaryPayload)
 	if err != nil {
 		return "", err
 	}
 
 	return string(summary), nil
+}
+
+func (service *Service) detectAudioTrack(ctx context.Context, localPath string) (bool, error) {
+	if ffprobePath, err := service.resolveFFprobeBinary(); err == nil {
+		if result, probeErr := probeAudioWithFFprobe(ffprobePath, localPath); probeErr == nil {
+			return audioProbeHasStream(result), nil
+		}
+	}
+
+	if ffmpegPath, err := service.resolveFFmpegBinary(); err == nil {
+		if result, probeErr := probeAudioWithFFmpeg(ctx, ffmpegPath, localPath); probeErr == nil {
+			return audioProbeHasStream(result), nil
+		}
+	}
+
+	return true, errors.New("audio track probe unavailable")
+}
+
+func audioProbeHasStream(result audioProbeResult) bool {
+	return result.CodecName != nil || result.SampleRateHz != nil || result.ChannelCount != nil
 }
 
 func (service *Service) generateSemanticEmbedding(

@@ -13,13 +13,13 @@ import { useLibraryContext } from "../context/LibraryContext";
 import { useCatalogTasks } from "../hooks/useCatalog";
 import { useImportDevices } from "../hooks/useImport";
 import { useRemovableNoticeState } from "../hooks/useRemovableNoticeState";
-import { getTaskSummary } from "../lib/task-center";
+import { getTaskSummary, getVisibleTasks } from "../lib/task-center";
 
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentLibrary, currentLibraryId } = useLibraryContext();
-  const tasksQuery = useCatalogTasks(20);
+  const tasksQuery = useCatalogTasks(500);
   const devicesQuery = useImportDevices();
   const [searchValue, setSearchValue] = useState("");
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
@@ -47,7 +47,7 @@ export function AppShell() {
     return getRouteMeta(location.pathname);
   }, [location.pathname, location.search]);
 
-  const taskSummary = useMemo(() => getTaskSummary(tasksQuery.data ?? []), [tasksQuery.data]);
+  const taskSummary = useMemo(() => getTaskSummary(getVisibleTasks(tasksQuery.data ?? [])), [tasksQuery.data]);
   const removableNotices = useRemovableNoticeState(devicesQuery.data ?? [], currentLibraryId);
   const notificationCount = taskSummary.failed + removableNotices.unreadCount;
 

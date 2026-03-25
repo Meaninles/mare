@@ -83,7 +83,11 @@ export function useCatalogAssetInsights(assetId: string, enabled = true) {
 
       return response.insights;
     },
-    staleTime: 10_000,
+    staleTime: 0,
+    refetchInterval: 1_500,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always"
   });
 }
 
@@ -102,7 +106,7 @@ export function useCatalogTasks(limit = 100) {
       return response.tasks ?? [];
     },
     staleTime: 0,
-    refetchInterval: 500,
+    refetchInterval: 300,
     refetchIntervalInBackground: true,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always"

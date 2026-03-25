@@ -279,7 +279,13 @@ func (bridge *pythonSearchBridge) call(ctx context.Context, request searchBridge
 	}
 	command.Env = env
 
-	output, execErr := command.CombinedOutput()
+	output, execErr := command.Output()
+	stderrOutput := ""
+	if execErr != nil {
+		if exitErr, ok := execErr.(*exec.ExitError); ok {
+			stderrOutput = strings.TrimSpace(string(exitErr.Stderr))
+		}
+	}
 
 	var response searchBridgeResponse
 	if len(output) > 0 {
@@ -288,6 +294,9 @@ func (bridge *pythonSearchBridge) call(ctx context.Context, request searchBridge
 
 	if execErr != nil {
 		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = stderrOutput
+		}
 		if message == "" {
 			message = strings.TrimSpace(string(output))
 		}

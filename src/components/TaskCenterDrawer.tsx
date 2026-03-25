@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, BellRing, CheckCircle2, HardDrive, LoaderCircle, RefreshCcw, Upload, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
@@ -6,25 +6,39 @@ import { useCatalogRetryTask, useCatalogTasks } from "../hooks/useCatalog";
 import { useImportDevices, useSelectImportDeviceRole } from "../hooks/useImport";
 import { useRemovableNoticeState } from "../hooks/useRemovableNoticeState";
 import { formatCatalogDate } from "../lib/catalog-view";
-import { canRetryTask, getTaskStatusLabel, getTaskSummary, getTaskTitle, getTaskTone, matchesTaskFilter } from "../lib/task-center";
+import {
+  canRetryTask,
+  getTaskStatusLabel,
+  getTaskSummary,
+  getTaskTitle,
+  getTaskTone,
+  getVisibleTasks,
+  matchesTaskFilter
+} from "../lib/task-center";
 import type { CatalogTask } from "../types/catalog";
 import type { ImportDeviceRole, ImportDeviceRecord } from "../types/import";
 
 export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const { currentLibraryId } = useLibraryContext();
-  const tasksQuery = useCatalogTasks(24);
+  const [showRunningTasks, setShowRunningTasks] = useState(false);
+  const [showFailedTasks, setShowFailedTasks] = useState(false);
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const tasksQuery = useCatalogTasks(500);
   const devicesQuery = useImportDevices();
   const retryMutation = useCatalogRetryTask();
   const selectRoleMutation = useSelectImportDeviceRole();
-  const tasks = tasksQuery.data ?? [];
+  const tasks = useMemo(() => getVisibleTasks(tasksQuery.data ?? []), [tasksQuery.data]);
   const devices = devicesQuery.data ?? [];
   const summary = getTaskSummary(tasks);
   const removableNotices = useRemovableNoticeState(devices, currentLibraryId);
 
-  const runningTasks = tasks.filter((task) => matchesTaskFilter(task, "running"));
-  const failedTasks = tasks.filter((task) => matchesTaskFilter(task, "failed"));
-  const completedTasks = tasks.filter((task) => task.status.trim().toLowerCase() === "success").slice(0, 6);
+  const runningTasks = useMemo(() => tasks.filter((task) => matchesTaskFilter(task, "running")), [tasks]);
+  const failedTasks = useMemo(() => tasks.filter((task) => matchesTaskFilter(task, "failed")), [tasks]);
+  const completedTasks = useMemo(
+    () => tasks.filter((task) => task.status.trim().toLowerCase() === "success").slice(0, 12),
+    [tasks]
+  );
 
   if (!open) {
     return null;
@@ -60,10 +74,10 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
         <div className="task-drawer-head">
           <div>
             <p className="eyebrow">通知</p>
-            <h3 id="task-center-title">通知中心</h3>
+            <h3 id="task-center-title">任务中心</h3>
           </div>
 
-          <button type="button" className="ghost-button icon-button" onClick={onClose} aria-label="关闭通知中心">
+          <button type="button" className="ghost-button icon-button" onClick={onClose} aria-label="关闭任务中心">
             <X size={18} />
           </button>
         </div>
@@ -88,7 +102,7 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
                 <LoaderCircle size={20} className="spin" />
                 <div>
                   <strong>正在检查可移动设备</strong>
-                  <p>已连接但尚未分配用途的设备会出现在这里。</p>
+                  <p>已连接但尚未分配用途的设备会显示在这里。</p>
                 </div>
               </div>
             ) : null}
@@ -108,7 +122,7 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
                 <BellRing size={20} />
                 <div>
                   <strong>当前没有新的设备提醒</strong>
-                  <p>已阅读过的设备不会再在每次刷新后弹出打断你。</p>
+                  <p>已经看过的设备不会在每次刷新后反复打断你。</p>
                 </div>
               </div>
             ) : null}
@@ -130,7 +144,7 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
                     </div>
 
                     <p className="muted-copy">
-                      这台设备已经连接，但还没有在本次会话中确定用途。你可以直接标记已读，也可以指定为导入源或管理存储。
+                      这台设备已经连接，但还没有在本次会话里确定用途。你可以直接标记已读，也可以指定为导入源或管理存储。
                     </p>
 
                     <div className="action-row">
@@ -169,18 +183,24 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
             ) : null}
           </section>
 
-          <TaskSection
+          <CollapsibleTaskSection
             title="进行中的任务"
             emptyTitle="当前没有活动任务"
             emptyCopy="等待中、进行中和重试中的任务会显示在这里。"
+            collapsedCopy={`当前有 ${summary.running} 个进行中的任务，点击展开查看详情。`}
             tasks={runningTasks}
+            open={showRunningTasks}
+            onToggle={() => setShowRunningTasks((value) => !value)}
           />
 
-          <TaskSection
+          <CollapsibleTaskSection
             title="失败任务"
             emptyTitle="当前没有失败任务"
             emptyCopy="扫描、恢复、导入或媒体任务失败后，可以直接在这里重试。"
+            collapsedCopy={`当前有 ${summary.failed} 个失败任务，点击展开查看和重试。`}
             tasks={failedTasks}
+            open={showFailedTasks}
+            onToggle={() => setShowFailedTasks((value) => !value)}
             renderActions={(task) =>
               canRetryTask(task) ? (
                 <button
@@ -196,17 +216,20 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
             }
           />
 
-          <TaskSection
+          <CollapsibleTaskSection
             title="最近完成"
             emptyTitle="暂时还没有完成任务"
-            emptyCopy="成功完成的任务会短暂保留在这里，方便快速确认。"
+            emptyCopy="成功完成的任务会保留在这里，方便你回看刚刚已经处理好的项目。"
+            collapsedCopy={`已完成 ${summary.completed} 个任务，点击展开查看最近完成的记录。`}
             tasks={completedTasks}
+            open={showCompletedTasks}
+            onToggle={() => setShowCompletedTasks((value) => !value)}
           />
         </div>
 
         <div className="task-drawer-footer">
           <Link to="/system-tasks" className="ghost-button" onClick={onClose}>
-            打开传输任务
+            打开系统任务
           </Link>
           <Link to="/sync" className="primary-button" onClick={onClose}>
             打开同步中心
@@ -217,26 +240,36 @@ export function TaskCenterDrawer({ open, onClose }: { open: boolean; onClose: ()
   );
 }
 
-function TaskSection({
+function CollapsibleTaskSection({
   title,
   emptyTitle,
   emptyCopy,
+  collapsedCopy,
   tasks,
+  open,
+  onToggle,
   renderActions
 }: {
   title: string;
   emptyTitle: string;
   emptyCopy: string;
+  collapsedCopy: string;
   tasks: CatalogTask[];
+  open: boolean;
+  onToggle: () => void;
   renderActions?: (task: CatalogTask) => ReactNode;
 }) {
   return (
     <section className="task-drawer-section">
-      <div className="section-head">
+      <div className="section-head task-section-collapsible-head">
         <div>
           <p className="eyebrow">任务</p>
           <h4>{title}</h4>
         </div>
+
+        <button type="button" className="ghost-button" aria-expanded={open} onClick={onToggle}>
+          {open ? "收起" : "展开"}
+        </button>
       </div>
 
       {tasks.length === 0 ? (
@@ -247,7 +280,7 @@ function TaskSection({
             <p>{emptyCopy}</p>
           </div>
         </div>
-      ) : (
+      ) : open ? (
         <div className="task-list">
           {tasks.map((task) => (
             <article key={task.id} className="task-card sync-task-card">
@@ -267,10 +300,13 @@ function TaskSection({
 
               {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
               {task.resultSummary ? <p className="muted-copy clamp-2">{task.resultSummary}</p> : null}
-
               {renderActions ? <div className="action-row">{renderActions(task)}</div> : null}
             </article>
           ))}
+        </div>
+      ) : (
+        <div className="task-section-collapsed-note">
+          <p>{collapsedCopy}</p>
         </div>
       )}
     </section>

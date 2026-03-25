@@ -134,3 +134,107 @@ func TestGetAssetInsightsReturnsTranscriptAndSemanticLabels(t *testing.T) {
 		t.Fatalf("expected top semantic label 会议演讲, got %s", insights.Semantic.Labels[0].Label)
 	}
 }
+
+func TestGetAssetInsightsKeepsEmptyTranscriptRecord(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+
+	asset := store.Asset{
+		ID:             "asset-insights-empty-transcript",
+		LogicalPathKey: "projects/demo/silent.mp4",
+		DisplayName:    "silent.mp4",
+		MediaType:      "video",
+		AssetStatus:    "ready",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := dataStore.CreateAsset(ctx, asset); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	if err := dataStore.SaveAssetTranscript(ctx, store.AssetTranscript{
+		AssetID:        asset.ID,
+		TranscriptText: "",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("save empty transcript: %v", err)
+	}
+
+	service := NewService(dataStore, nil, WithAutoQueueSearchJobs(false))
+
+	insights, err := service.GetAssetInsights(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("get asset insights: %v", err)
+	}
+	if insights.Transcript == nil {
+		t.Fatal("expected transcript insight to exist even when transcript text is empty")
+	}
+	if insights.Transcript.Text != "" {
+		t.Fatalf("expected transcript text to remain empty, got %q", insights.Transcript.Text)
+	}
+	if insights.Transcript.Length != 0 {
+		t.Fatalf("expected transcript length 0, got %d", insights.Transcript.Length)
+	}
+	if len(insights.Warnings) == 0 {
+		t.Fatal("expected empty transcript warning to be returned")
+	}
+}
+
+func TestResolveSemanticLabelsAggregatesPromptVariantsAndSuppressesGenericAnimalLabel(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(
+		nil,
+		nil,
+		WithSearchBridge(&fakeInsightsSearchBridge{
+			descriptionOutput: SearchSemanticDescriptionOutput{
+				ModelName: "openai/clip-vit-base-patch32",
+				Labels: []SearchSemanticLabel{
+					{Label: "猫咪特写", Score: 0.86},
+					{Label: "猫咪特写", Score: 0.82},
+					{Label: "猫咪特写", Score: 0.84},
+					{Label: "动物宠物", Score: 0.8},
+					{Label: "动物宠物", Score: 0.79},
+					{Label: "动物宠物", Score: 0.78},
+					{Label: "旅行街拍", Score: 0.21},
+				},
+			},
+		}),
+	)
+
+	labels, warning, err := service.resolveSemanticLabels(
+		context.Background(),
+		semanticFeatureKindImage,
+		"openai/clip-vit-base-patch32",
+		[]float64{0.2, 0.3, 0.4},
+	)
+	if err != nil {
+		t.Fatalf("resolve semantic labels: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("expected no warning, got %s", warning)
+	}
+	if len(labels) == 0 {
+		t.Fatal("expected semantic labels")
+	}
+	if labels[0].Label != "猫咪特写" {
+		t.Fatalf("expected top label 猫咪特写, got %s", labels[0].Label)
+	}
+	for _, label := range labels {
+		if label.Label == "动物宠物" {
+			t.Fatalf("expected generic animal label to be suppressed, got %+v", labels)
+		}
+	}
+}

@@ -167,6 +167,31 @@ func TestStoreCRUDFlows(t *testing.T) {
 		t.Fatalf("expected task status success, got %s", tasks[0].Status)
 	}
 
+	latestTask, err := store.GetLatestTaskByTypeAndAssetID(ctx, "scan", "")
+	if err == nil {
+		t.Fatal("expected empty asset id lookup to fail, got nil")
+	}
+
+	searchTask := Task{
+		ID:        "task-2",
+		TaskType:  "video_semantic",
+		Status:    "failed",
+		Payload:   `{"assetId":"asset-1","taskType":"video_semantic"}`,
+		CreatedAt: now.Add(2 * time.Minute),
+		UpdatedAt: now.Add(2 * time.Minute),
+	}
+	if err := store.CreateTask(ctx, searchTask); err != nil {
+		t.Fatalf("create search task: %v", err)
+	}
+
+	latestTask, err = store.GetLatestTaskByTypeAndAssetID(ctx, "video_semantic", asset.ID)
+	if err != nil {
+		t.Fatalf("get latest task by type and asset id: %v", err)
+	}
+	if latestTask.ID != searchTask.ID {
+		t.Fatalf("expected latest task %s, got %s", searchTask.ID, latestTask.ID)
+	}
+
 	if err := store.DeleteStorageEndpoint(ctx, endpoint.ID); err == nil {
 		t.Fatal("expected deleting endpoint with replica reference to fail, got nil")
 	}

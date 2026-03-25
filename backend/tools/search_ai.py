@@ -84,7 +84,10 @@ def transcribe_media(input_path: str, ffmpeg_path: str) -> dict:
         model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
         _WHISPER_CACHE[cache_key] = model
 
-    segments, info = model.transcribe(input_path, beam_size=1, vad_filter=True)
+    try:
+        segments, info = model.transcribe(input_path, beam_size=1, vad_filter=True)
+    except IndexError as exc:
+        raise RuntimeError("媒体音轨无法被 faster-whisper 正常读取，请确认文件包含可解码音轨") from exc
     text_parts = []
     for segment in segments:
         value = str(getattr(segment, "text", "")).strip()
@@ -92,6 +95,13 @@ def transcribe_media(input_path: str, ffmpeg_path: str) -> dict:
             text_parts.append(value)
 
     transcript_text = " ".join(text_parts).strip()
+    if not transcript_text:
+        return {
+            "text": "",
+            "language": getattr(info, "language", "") or "",
+            "modelName": model_name,
+        }
+
     if not transcript_text:
         raise RuntimeError("未生成可用转写文本")
 
@@ -109,7 +119,7 @@ def embed_text(text: str) -> dict:
     model, processor, model_name, torch = get_clip_bundle()
     with torch.no_grad():
         inputs = processor(text=[text], return_tensors="pt", padding=True, truncation=True)
-        features = model.get_text_features(**inputs)
+        features = resolve_feature_rows(model.get_text_features(**inputs))
 
     vector = normalize_vector(features[0].cpu().tolist())
     return {"modelName": model_name, "vector": vector}
@@ -128,7 +138,7 @@ def embed_image(input_path: str) -> dict:
         image = image.convert("RGB")
         with torch.no_grad():
             inputs = processor(images=image, return_tensors="pt")
-            features = model.get_image_features(**inputs)
+            features = resolve_feature_rows(model.get_image_features(**inputs))
 
     vector = normalize_vector(features[0].cpu().tolist())
     return {"modelName": model_name, "vector": vector}
@@ -197,7 +207,7 @@ def describe_vector(vector_input, label_entries, top_k) -> dict:
 
     with torch.no_grad():
         inputs = processor(text=prompts, return_tensors="pt", padding=True, truncation=True)
-        features = model.get_text_features(**inputs)
+        features = resolve_feature_rows(model.get_text_features(**inputs))
 
     scored_labels = []
     for index, label in enumerate(labels):
@@ -261,6 +271,23 @@ def normalize_vector(values):
     if norm == 0:
         return [0.0 for _ in values]
     return [float(value) / norm for value in values]
+
+
+def resolve_feature_rows(features):
+    if hasattr(features, "text_embeds") and features.text_embeds is not None:
+        features = features.text_embeds
+    elif hasattr(features, "image_embeds") and features.image_embeds is not None:
+        features = features.image_embeds
+    elif hasattr(features, "pooler_output") and features.pooler_output is not None:
+        features = features.pooler_output
+    elif hasattr(features, "last_hidden_state") and features.last_hidden_state is not None:
+        features = features.last_hidden_state
+    elif isinstance(features, (list, tuple)) and features:
+        features = resolve_feature_rows(features[0])
+
+    if hasattr(features, "dim") and features.dim() > 2:
+        features = features[:, 0]
+    return features
 
 
 def average_vectors(vectors):
