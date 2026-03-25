@@ -3,16 +3,13 @@ import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRight,
-  AudioLines,
   CheckCircle2,
-  Clapperboard,
-  Images,
   LoaderCircle,
   RefreshCcw,
   ShieldAlert,
   WandSparkles
 } from "lucide-react";
-import { formatCatalogDate, getMediaTypeLabel, normalizeMediaType } from "../lib/catalog-view";
+import { formatCatalogDate, getMediaTypeLabel } from "../lib/catalog-view";
 import {
   useCatalogBatchRestore,
   useCatalogRestoreAsset,
@@ -33,6 +30,7 @@ export function SyncCenterPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState("");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [sideView, setSideView] = useState<"conflicts" | "running" | "failed">("conflicts");
 
   const overview = syncOverviewQuery.data;
   const recoverableAssets = overview?.recoverableAssets ?? [];
@@ -76,6 +74,7 @@ export function SyncCenterPage() {
     const validAssetIds = new Set(selectedBatchGroup.assets.map((asset) => asset.id));
     return selectedAssetIds.filter((assetId) => validAssetIds.has(assetId)).length;
   }, [selectedAssetIds, selectedBatchGroup]);
+  const visibleRecoverableAssets = selectedBatchGroup?.assets ?? [];
 
   useEffect(() => {
     if (!batchTargets.length) {
@@ -176,12 +175,12 @@ export function SyncCenterPage() {
   }
 
   return (
-    <section className="page-stack">
+    <section className="page-stack sync-page-shell">
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">同步中心</p>
-          <h3>集中查看哪些资产可恢复、哪些副本缺失，以及哪些任务需要再次处理。</h3>
-          <p>恢复能力始终放在核心位置，失败与冲突紧挨着展示，但界面不会变成运维后台。</p>
+          <h3>同步</h3>
+          <p>左侧专注补齐副本，右侧只看冲突和任务，不再让多个区域同时争夺注意力。</p>
         </div>
 
         <div className="hero-metrics">
@@ -215,13 +214,13 @@ export function SyncCenterPage() {
       ) : null}
 
       {!syncOverviewQuery.isLoading && !syncOverviewQuery.isError ? (
-        <div className="sync-layout">
+        <div className="sync-layout sync-workbench">
           <div className="sync-column">
-            <article className="detail-card">
+            <article className="detail-card sync-recovery-card">
               <div className="section-head">
                 <div>
                   <p className="eyebrow">批量补齐</p>
-                  <h4>按目标端点恢复</h4>
+                  <h4>批量恢复</h4>
                 </div>
                 <span className="status-pill warning">{batchTargets.length}</span>
               </div>
@@ -270,23 +269,22 @@ export function SyncCenterPage() {
                   </div>
 
                   {selectedBatchGroup ? (
-                    <div className="catalog-result-meta">
-                      <span>{selectedBatchGroup.endpoint.name} 下共有 {selectedBatchGroup.assets.length} 个可恢复资产</span>
-                      <span>已选择 {selectedCount} 个</span>
+                    <div className="replica-chip-row sync-recovery-summary">
+                      <span className="replica-chip neutral">目标 {selectedBatchGroup.endpoint.name}</span>
+                      <span className="replica-chip neutral">待补 {selectedBatchGroup.assets.length}</span>
+                      <span className="replica-chip warning">已选 {selectedCount}</span>
                     </div>
                   ) : null}
 
-                  <div className="sync-list">
-                    {recoverableAssets.map((asset) => {
-                      const selectable = asset.missingEndpoints.some((endpoint) => endpoint.id === selectedTargetId);
-                      const selected = selectedAssetIds.includes(asset.id);
-
+                  <div className="sync-file-list">
+                    {visibleRecoverableAssets.map((asset) => {
                       return (
                         <RecoverableAssetCard
                           key={asset.id}
                           asset={asset}
-                          selected={selected}
-                          selectable={selectable}
+                          targetEndpoint={selectedBatchGroup!.endpoint}
+                          selected={selectedAssetIds.includes(asset.id)}
+                          selectable
                           restorePending={restoreMutation.isPending}
                           onRestore={handleRestore}
                           onToggleSelect={toggleAssetSelection}
@@ -298,88 +296,109 @@ export function SyncCenterPage() {
               )}
             </article>
 
-            <article className="detail-card">
-              <div className="section-head">
-                <div>
-                  <p className="eyebrow">冲突候选</p>
-                  <h4>需要确认</h4>
-                </div>
-                <span className="status-pill neutral">{conflictAssets.length}</span>
-              </div>
-
-              {conflictAssets.length === 0 ? (
-                <div className="sync-empty-block">
-                  <ShieldAlert size={22} />
-                  <div>
-                    <strong>当前没有冲突候选</strong>
-                    <p>版本先后关系不明确的资产，会在执行破坏性操作前先显示在这里。</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="sync-list">
-                  {conflictAssets.map((asset) => (
-                    <ConflictAssetCard key={asset.id} asset={asset} />
-                  ))}
-                </div>
-              )}
-            </article>
           </div>
 
-          <div className="sync-column">
-            <article className="detail-card">
+          <div className="sync-column sync-side-column">
+            <article className="detail-card sync-side-card">
               <div className="section-head">
                 <div>
-                  <p className="eyebrow">进行中</p>
-                  <h4>活跃任务</h4>
+                  <p className="eyebrow">状态面板</p>
+                  <h4>状态</h4>
                 </div>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void syncOverviewQuery.refetch()}
+                  disabled={syncOverviewQuery.isFetching}
+                >
+                  <RefreshCcw size={16} />
+                  刷新
+                </button>
               </div>
 
-              {runningTasks.length === 0 ? (
-                <div className="sync-empty-block">
-                  <CheckCircle2 size={22} />
-                  <div>
-                    <strong>当前没有同步任务</strong>
-                    <p>等待中、进行中和重试中的恢复任务会显示在这里。</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="task-list">
-                  {runningTasks.map((task, index) => (
-                    <TaskCard key={task.id || `running-${index}`} task={task} />
-                  ))}
-                </div>
-              )}
-            </article>
-
-            <article className="detail-card">
-              <div className="section-head">
-                <div>
-                  <p className="eyebrow">失败</p>
-                  <h4>待重试</h4>
-                </div>
+              <div className="segmented-group" aria-label="同步状态视图">
+                <button
+                  type="button"
+                  className={`segmented-button${sideView === "conflicts" ? " active" : ""}`}
+                  onClick={() => setSideView("conflicts")}
+                >
+                  冲突 {conflictAssets.length}
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-button${sideView === "running" ? " active" : ""}`}
+                  onClick={() => setSideView("running")}
+                >
+                  进行中 {runningTasks.length}
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-button${sideView === "failed" ? " active" : ""}`}
+                  onClick={() => setSideView("failed")}
+                >
+                  失败 {failedTasks.length}
+                </button>
               </div>
 
-              {failedTasks.length === 0 ? (
-                <div className="sync-empty-block">
-                  <RefreshCcw size={22} />
-                  <div>
-                    <strong>当前没有失败任务</strong>
-                    <p>最近的同步失败记录和重试入口会显示在这里。</p>
+              {sideView === "conflicts" ? (
+                conflictAssets.length === 0 ? (
+                  <div className="sync-empty-block">
+                    <ShieldAlert size={22} />
+                    <div>
+                      <strong>当前没有冲突候选</strong>
+                      <p>版本先后关系不明确的资产，会在执行破坏性操作前先显示在这里。</p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="task-list">
-                  {failedTasks.map((task, index) => (
-                    <TaskCard
-                      key={task.id || `failed-${index}`}
-                      task={task}
-                      canRetry={Boolean(task.id)}
-                      retryPending={retryMutation.isPending}
-                      onRetry={task.id ? () => void handleRetry(task.id) : undefined}
-                    />
-                  ))}
-                </div>
-              )}
+                ) : (
+                  <div className="sync-file-list">
+                    {conflictAssets.map((asset) => (
+                      <ConflictAssetCard key={asset.id} asset={asset} />
+                    ))}
+                  </div>
+                )
+              ) : null}
+
+              {sideView === "running" ? (
+                runningTasks.length === 0 ? (
+                  <div className="sync-empty-block">
+                    <CheckCircle2 size={22} />
+                    <div>
+                      <strong>当前没有同步任务</strong>
+                      <p>等待中、进行中和重试中的恢复任务会显示在这里。</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="task-list">
+                    {runningTasks.map((task, index) => (
+                      <TaskCard key={task.id || `running-${index}`} task={task} />
+                    ))}
+                  </div>
+                )
+              ) : null}
+
+              {sideView === "failed" ? (
+                failedTasks.length === 0 ? (
+                  <div className="sync-empty-block">
+                    <RefreshCcw size={22} />
+                    <div>
+                      <strong>当前没有失败任务</strong>
+                      <p>最近的同步失败记录和重试入口会显示在这里。</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="task-list">
+                    {failedTasks.map((task, index) => (
+                      <TaskCard
+                        key={task.id || `failed-${index}`}
+                        task={task}
+                        canRetry={Boolean(task.id)}
+                        retryPending={retryMutation.isPending}
+                        onRetry={task.id ? () => void handleRetry(task.id) : undefined}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : null}
             </article>
           </div>
         </div>
@@ -390,6 +409,7 @@ export function SyncCenterPage() {
 
 function RecoverableAssetCard({
   asset,
+  targetEndpoint,
   restorePending,
   selected,
   selectable,
@@ -397,175 +417,189 @@ function RecoverableAssetCard({
   onToggleSelect
 }: {
   asset: CatalogSyncAsset;
+  targetEndpoint: CatalogSyncEndpointRef;
   restorePending: boolean;
   selected: boolean;
   selectable: boolean;
   onRestore: (asset: CatalogSyncAsset, targetEndpoint: CatalogSyncEndpointRef) => void;
   onToggleSelect: (assetId: string) => void;
 }) {
-  const MediaIcon = getMediaIcon(asset.mediaType);
+  const primaryPath = asset.canonicalPath ?? asset.logicalPathKey;
+  const primaryDirectory = asset.canonicalDirectory ?? "未记录";
 
   return (
-    <article className="task-card sync-item-card">
-      <div className="sync-item-head">
-        <div className={`sync-poster tone-${getSyncAssetTone(asset)}${asset.poster?.url ? " has-poster" : ""}`}>
-          {asset.poster?.url ? (
-            <img src={asset.poster.url} alt={asset.displayName} className="asset-poster" loading="lazy" />
-          ) : (
-            <MediaIcon size={24} strokeWidth={1.8} />
-          )}
-        </div>
+    <article className="sync-file-card">
+      <div className="sync-file-main">
+        <div className="sync-file-head">
+          <div className="sync-file-copy">
+            <div className="asset-card-head">
+              <div className="replica-chip-row">
+                <span className="asset-badge">{getMediaTypeLabel(asset.mediaType)}</span>
+                <span className={`status-pill ${getSyncAssetTone(asset)}`}>{getSyncAssetStatusLabel(asset)}</span>
+              </div>
+            </div>
 
-        <div className="sync-item-copy">
-          <div className="asset-card-head">
-            <span className="asset-badge">{getMediaTypeLabel(asset.mediaType)}</span>
-            <span className={`status-pill ${getSyncAssetTone(asset)}`}>{getSyncAssetStatusLabel(asset)}</span>
+            <div className="asset-title-block">
+              <h4>{asset.displayName}</h4>
+              <p>{primaryPath}</p>
+            </div>
           </div>
 
-          <div className="asset-title-block">
-            <h4>{asset.displayName}</h4>
-            <p>{asset.logicalPathKey}</p>
-          </div>
+          <div className="sync-file-actions">
+            {selectable ? (
+              <button type="button" className={`ghost-button${selected ? " is-selected" : ""}`} onClick={() => onToggleSelect(asset.id)}>
+                {selected ? "已选" : "选择"}
+              </button>
+            ) : null}
 
-          <div className="asset-meta-row">
-            <span>{formatCatalogDate(asset.primaryTimestamp)}</span>
-            <span>可用副本 {asset.availableReplicaCount}</span>
-            <span>缺失副本 {asset.missingReplicaCount}</span>
-          </div>
-        </div>
-      </div>
+            <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
+              详情
+              <ArrowRight size={16} />
+            </Link>
 
-      <div className="sync-endpoint-group">
-        <strong>来源端</strong>
-        <div className="replica-chip-row">
-          {asset.recommendedSource ? (
-            <span className="replica-chip success">{asset.recommendedSource.name}</span>
-          ) : (
-            <span className="replica-chip danger">不可用</span>
-          )}
-        </div>
-      </div>
-
-      <div className="sync-endpoint-group">
-        <strong>缺失端点</strong>
-        <div className="replica-chip-row">
-          {asset.missingEndpoints.map((endpoint) => (
-            <span key={endpoint.id} className="replica-chip danger">
-              {endpoint.name}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="sync-item-footer">
-        <div className="action-row">
-          {selectable ? (
-            <button type="button" className={`ghost-button${selected ? " is-selected" : ""}`} onClick={() => onToggleSelect(asset.id)}>
-              {selected ? "已选中" : "选择"}
-            </button>
-          ) : null}
-
-          <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
-            查看详情
-            <ArrowRight size={16} />
-          </Link>
-        </div>
-
-        <div className="action-row">
-          {asset.missingEndpoints.map((endpoint) => (
             <button
-              key={endpoint.id}
               type="button"
               className="primary-button"
-              onClick={() => onRestore(asset, endpoint)}
+              onClick={() => onRestore(asset, targetEndpoint)}
               disabled={restorePending || !asset.recommendedSource}
             >
               <WandSparkles size={16} />
-              恢复到 {endpoint.name}
+              补齐
             </button>
-          ))}
+          </div>
         </div>
+
+        <div className="sync-file-grid">
+          <SyncInfoField label="目标端点" value={targetEndpoint.name} />
+          <SyncInfoField label="恢复来源" value={asset.recommendedSource?.name ?? "不可用"} />
+          <SyncInfoField label="标准文件夹" value={primaryDirectory} wide />
+          <SyncInfoField label="主时间" value={formatCatalogDate(asset.primaryTimestamp)} />
+          <SyncInfoField label="已有副本" value={`${asset.availableReplicaCount}`} />
+          <SyncInfoField label="待补位置" value={`${asset.missingReplicaCount}`} />
+        </div>
+
+        <div className="sync-endpoint-group">
+          <strong>待补端点</strong>
+          <div className="replica-chip-row">
+            {asset.missingEndpoints.map((endpoint) => (
+              <span
+                key={endpoint.id}
+                className={`replica-chip ${endpoint.id === targetEndpoint.id ? "warning" : "danger"}`}
+              >
+                {endpoint.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {asset.consistentEndpoints.length > 0 ? (
+          <div className="sync-endpoint-group">
+            <strong>已有位置</strong>
+            <div className="replica-chip-row">
+              {asset.consistentEndpoints.map((endpoint) => (
+                <span key={endpoint.id} className="replica-chip success">
+                  {endpoint.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </article>
   );
 }
 
 function ConflictAssetCard({ asset }: { asset: CatalogSyncAsset }) {
-  const MediaIcon = getMediaIcon(asset.mediaType);
+  const primaryPath = asset.canonicalPath ?? asset.logicalPathKey;
+  const primaryDirectory = asset.canonicalDirectory ?? "未记录";
 
   return (
-    <article className="task-card sync-item-card">
-      <div className="sync-item-head">
-        <div className={`sync-poster tone-${getSyncAssetTone(asset)}${asset.poster?.url ? " has-poster" : ""}`}>
-          {asset.poster?.url ? (
-            <img src={asset.poster.url} alt={asset.displayName} className="asset-poster" loading="lazy" />
-          ) : (
-            <MediaIcon size={24} strokeWidth={1.8} />
-          )}
-        </div>
+    <article className="sync-file-card sync-file-card-neutral">
+      <div className="sync-file-main">
+        <div className="sync-file-head">
+          <div className="sync-file-copy">
+            <div className="asset-card-head">
+              <div className="replica-chip-row">
+                <span className="asset-badge">{getMediaTypeLabel(asset.mediaType)}</span>
+                <span className="status-pill neutral">冲突</span>
+              </div>
+            </div>
 
-        <div className="sync-item-copy">
-          <div className="asset-card-head">
-            <span className="asset-badge">{getMediaTypeLabel(asset.mediaType)}</span>
-            <span className="status-pill neutral">冲突</span>
+            <div className="asset-title-block">
+              <h4>{asset.displayName}</h4>
+              <p>{primaryPath}</p>
+            </div>
           </div>
 
-          <div className="asset-title-block">
-            <h4>{asset.displayName}</h4>
-            <p>{asset.logicalPathKey}</p>
-          </div>
-
-          <div className="asset-meta-row">
-            <span>{formatCatalogDate(asset.primaryTimestamp)}</span>
-            <span>可用副本 {asset.availableReplicaCount}</span>
+          <div className="sync-file-actions">
+            <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
+              详情
+              <ArrowRight size={16} />
+            </Link>
           </div>
         </div>
-      </div>
 
-      <div className="sync-endpoint-group">
-        <strong>冲突端点</strong>
-        <div className="replica-chip-row">
-          {asset.conflictEndpoints.map((endpoint) => (
-            <span key={endpoint.id} className="replica-chip neutral">
-              {endpoint.name}
-            </span>
-          ))}
+        <div className="sync-file-grid">
+          <SyncInfoField label="标准文件夹" value={primaryDirectory} wide />
+          <SyncInfoField label="主时间" value={formatCatalogDate(asset.primaryTimestamp)} />
+          <SyncInfoField label="已有副本" value={`${asset.availableReplicaCount}`} />
         </div>
-      </div>
 
-      {asset.updatedEndpoints.length > 0 ? (
         <div className="sync-endpoint-group">
-          <strong>已更新</strong>
+          <strong>冲突端点</strong>
           <div className="replica-chip-row">
-            {asset.updatedEndpoints.map((endpoint) => (
-              <span key={endpoint.id} className="replica-chip warning">
+            {asset.conflictEndpoints.map((endpoint) => (
+              <span key={endpoint.id} className="replica-chip neutral">
                 {endpoint.name}
               </span>
             ))}
           </div>
         </div>
-      ) : null}
 
-      {asset.consistentEndpoints.length > 0 ? (
-        <div className="sync-endpoint-group">
-          <strong>一致</strong>
-          <div className="replica-chip-row">
-            {asset.consistentEndpoints.map((endpoint) => (
-              <span key={endpoint.id} className="replica-chip success">
-                {endpoint.name}
-              </span>
-            ))}
+        {asset.updatedEndpoints.length > 0 ? (
+          <div className="sync-endpoint-group">
+            <strong>较新版本</strong>
+            <div className="replica-chip-row">
+              {asset.updatedEndpoints.map((endpoint) => (
+                <span key={endpoint.id} className="replica-chip warning">
+                  {endpoint.name}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      <div className="action-row">
-        <Link to={`/assets?assetId=${asset.id}`} className="ghost-button">
-          查看详情
-          <ArrowRight size={16} />
-        </Link>
+        {asset.consistentEndpoints.length > 0 ? (
+          <div className="sync-endpoint-group">
+            <strong>一致端点</strong>
+            <div className="replica-chip-row">
+              {asset.consistentEndpoints.map((endpoint) => (
+                <span key={endpoint.id} className="replica-chip success">
+                  {endpoint.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </article>
+  );
+}
+
+function SyncInfoField({
+  label,
+  value,
+  wide = false
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  return (
+    <div className={`sync-info-field${wide ? " wide" : ""}`}>
+      <span>{label}</span>
+      <strong title={value}>{value}</strong>
+    </div>
   );
 }
 
@@ -585,21 +619,18 @@ function TaskCard({
 
   return (
     <article className="task-card sync-task-card">
-      <div className="section-head">
-        <div>
-          <p className="eyebrow">任务</p>
-          <h4>{getTaskTypeLabel(taskType)}</h4>
-        </div>
+      <div className="sync-task-head">
+        <strong>{getTaskTypeLabel(taskType)}</strong>
         <span className={`status-pill ${getTaskTone(status)}`}>{getTaskStatusLabel(status)}</span>
       </div>
 
-      <div className="task-card-meta">
-        <span>创建于 {formatCatalogDate(task.createdAt)}</span>
-        <span>更新于 {formatCatalogDate(task.updatedAt)}</span>
+      <div className="replica-chip-row">
+        <span className="replica-chip neutral">创建 {formatCatalogDate(task.createdAt)}</span>
+        <span className="replica-chip neutral">更新 {formatCatalogDate(task.updatedAt)}</span>
       </div>
 
       {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
-      {task.resultSummary ? <p className="muted-copy">{task.resultSummary}</p> : null}
+      {task.resultSummary ? <p className="muted-copy clamp-2">{task.resultSummary}</p> : null}
 
       {canRetry && onRetry ? (
         <div className="action-row">
@@ -628,19 +659,6 @@ function MetricCard({
       <strong>{value}</strong>
     </article>
   );
-}
-
-function getMediaIcon(mediaType: string) {
-  switch (normalizeMediaType(mediaType)) {
-    case "image":
-      return Images;
-    case "video":
-      return Clapperboard;
-    case "audio":
-      return AudioLines;
-    default:
-      return ArrowRight;
-  }
 }
 
 function getSyncAssetStatusLabel(asset: CatalogSyncAsset): string {

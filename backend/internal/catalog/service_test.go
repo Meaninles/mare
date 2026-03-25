@@ -63,7 +63,7 @@ func TestFullScanAndRescanEndpoint(t *testing.T) {
 		},
 	}
 
-	service := NewService(dataStore, factory.Build)
+	service := NewService(dataStore, factory.Build, WithAutoQueueDerivedMedia(false))
 
 	fullSummary, err := service.FullScan(context.Background())
 	if err != nil {
@@ -237,7 +237,7 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 		},
 	}
 
-	service := NewService(dataStore, factory.Build)
+	service := NewService(dataStore, factory.Build, WithAutoQueueDerivedMedia(false))
 
 	fullSummary, err := service.FullScan(ctx)
 	if err != nil {
@@ -341,6 +341,86 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	}
 }
 
+func TestSelectReadableReplicaSkipsIgnoredSystemPaths(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "catalog.db")
+	dataStore, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("create sqlite store: %v", err)
+	}
+	defer func() {
+		_ = dataStore.Close()
+	}()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Round(time.Second)
+	endpoint := store.StorageEndpoint{
+		ID:                 "endpoint-removable",
+		Name:               "Removable",
+		EndpointType:       string(connectors.EndpointTypeRemovable),
+		RootPath:           `E:\`,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "removable-media",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   `{"mountPoint":"E:\\"}`,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+		t.Fatalf("create storage endpoint: %v", err)
+	}
+
+	asset := store.Asset{
+		ID:             "asset-video",
+		LogicalPathKey: "$recycle.bin/$i123456.mp4",
+		DisplayName:    "$I123456.mp4",
+		MediaType:      string(connectors.MediaTypeVideo),
+		AssetStatus:    "ready",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := dataStore.CreateAsset(ctx, asset); err != nil {
+		t.Fatalf("create asset: %v", err)
+	}
+
+	replica := store.Replica{
+		ID:            "replica-system-junk",
+		AssetID:       "asset-video",
+		EndpointID:    endpoint.ID,
+		PhysicalPath:  `$RECYCLE.BIN/$I123456.mp4`,
+		ReplicaStatus: "ACTIVE",
+		ExistsFlag:    true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := dataStore.CreateReplica(ctx, replica); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	service := NewService(dataStore, (&fakeConnectorFactory{
+		connectorsByEndpoint: map[string]*fakeConnector{
+			endpoint.ID: {
+				descriptor: connectors.Descriptor{
+					Name: endpoint.Name,
+					Type: connectors.EndpointTypeRemovable,
+					Capabilities: connectors.Capabilities{
+						CanReadStream: true,
+					},
+				},
+			},
+		},
+	}).Build, WithAutoQueueDerivedMedia(false))
+
+	selected, err := service.selectReadableReplica(ctx, []store.Replica{replica})
+	if err != nil {
+		t.Fatalf("select readable replica: %v", err)
+	}
+	if selected != nil {
+		t.Fatal("expected ignored system replica to be skipped")
+	}
+}
+
 func TestFullScanIgnoresImportSourceEndpoints(t *testing.T) {
 	t.Parallel()
 
@@ -416,7 +496,7 @@ func TestFullScanIgnoresImportSourceEndpoints(t *testing.T) {
 				},
 			},
 		},
-	}).Build)
+	}).Build, WithAutoQueueDerivedMedia(false))
 
 	summary, err := service.FullScan(ctx)
 	if err != nil {
@@ -480,7 +560,7 @@ func TestRescanEndpointRejectsImportSourceRole(t *testing.T) {
 				},
 			},
 		},
-	}).Build)
+	}).Build, WithAutoQueueDerivedMedia(false))
 
 	if _, err := service.RescanEndpoint(context.Background(), endpoint.ID); err == nil {
 		t.Fatal("expected rescan to reject import source endpoint")
@@ -588,7 +668,7 @@ func TestListAssetsAddsSyntheticMissingReplicasForManagedEndpointsWithoutReplica
 				},
 			},
 		},
-	}).Build)
+	}).Build, WithAutoQueueDerivedMedia(false))
 
 	assets, err := service.ListAssets(ctx, 10, 0)
 	if err != nil {
@@ -664,7 +744,7 @@ func TestUpdateEndpointPersistsNoteAndConfigChanges(t *testing.T) {
 				RootPath: endpoint.RootPath,
 			},
 		}, nil
-	})
+	}, WithAutoQueueDerivedMedia(false))
 
 	record, err := service.UpdateEndpoint(ctx, endpoint.ID, UpdateEndpointRequest{
 		Name:               "Archive SSD",
@@ -814,7 +894,7 @@ func TestDeleteEndpointRemovesReplicaRecordsAndUpdatesImportRules(t *testing.T) 
 				RootPath: endpoint.RootPath,
 			},
 		}, nil
-	})
+	}, WithAutoQueueDerivedMedia(false))
 
 	summary, err := service.DeleteEndpoint(ctx, localEndpoint.ID)
 	if err != nil {
@@ -886,7 +966,7 @@ func TestRegisterEndpointStoresCloudCredentialOutsideLibraryDB(t *testing.T) {
 				RootPath: endpoint.RootPath,
 			},
 		}, nil
-	})
+	}, WithAutoQueueDerivedMedia(false))
 
 	record, err := service.RegisterEndpoint(context.Background(), RegisterEndpointRequest{
 		Name:               "115 Cloud",

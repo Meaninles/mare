@@ -95,6 +95,12 @@ func (connector *LocalConnector) ListEntries(_ context.Context, request ListEntr
 			if currentPath == root {
 				return nil
 			}
+			if connector.shouldIgnorePath(currentPath) {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 
 			fileEntry, entryErr := connector.buildFileEntry(currentPath, entry)
 			if entryErr != nil {
@@ -123,6 +129,9 @@ func (connector *LocalConnector) ListEntries(_ context.Context, request ListEntr
 
 		for _, entry := range dirEntries {
 			currentPath := filepath.Join(root, entry.Name())
+			if connector.shouldIgnorePath(currentPath) {
+				continue
+			}
 			fileEntry, entryErr := connector.buildFileEntry(currentPath, entry)
 			if entryErr != nil {
 				return nil, entryErr
@@ -347,6 +356,9 @@ func (connector *LocalConnector) fileInfoToEntry(path string, info os.FileInfo) 
 }
 
 func (connector *LocalConnector) includeEntry(entry FileEntry, request ListEntriesRequest) bool {
+	if ShouldIgnoreAssetPath(entry.RelativePath) {
+		return false
+	}
 	if entry.IsDir {
 		return request.IncludeDirectories
 	}
@@ -354,6 +366,14 @@ func (connector *LocalConnector) includeEntry(entry FileEntry, request ListEntri
 		return entry.MediaType != MediaTypeUnknown
 	}
 	return true
+}
+
+func (connector *LocalConnector) shouldIgnorePath(path string) bool {
+	relativePath, err := filepath.Rel(connector.descriptor.RootPath, path)
+	if err != nil {
+		return ShouldIgnoreAssetPath(path)
+	}
+	return ShouldIgnoreAssetPath(filepath.ToSlash(relativePath))
 }
 
 func (connector *LocalConnector) wrapPathError(operation string, err error) error {

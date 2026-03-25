@@ -66,7 +66,7 @@ func (store *Store) ListTasks(ctx context.Context, limit, offset int) ([]Task, e
 	rows, err := store.db.QueryContext(
 		ctx,
 		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
-		 FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		 FROM tasks ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?`,
 		limit,
 		offset,
 	)

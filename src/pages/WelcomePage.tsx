@@ -119,11 +119,6 @@ export function WelcomePage() {
     <section className="page-stack welcome-stage">
       <article className="hero-card welcome-hero">
         <div className="welcome-hero-head">
-          <div className="window-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
           <p className="eyebrow">Libraries</p>
         </div>
 
@@ -216,8 +211,7 @@ export function WelcomePage() {
             <div className="welcome-zone-empty">
               <LibraryBig size={20} />
               <div>
-                <strong>从右侧开始</strong>
-                <p>新建，或打开一个已有库。</p>
+                <strong>新建或打开</strong>
               </div>
             </div>
           )}
@@ -334,7 +328,6 @@ export function WelcomePage() {
             <LibraryBig size={20} />
             <div>
               <strong>还没有资产库</strong>
-              <p>先创建，或打开一个已有库。</p>
             </div>
           </div>
         ) : (

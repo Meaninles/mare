@@ -33,13 +33,14 @@ type scanExecutionStats struct {
 }
 
 type Service struct {
-	store                *store.Store
-	connectorFactory     func(endpoint store.StorageEndpoint) (connectors.Connector, error)
-	removableEnumerator  connectors.DeviceEnumerator
-	mediaConfig          MediaConfig
-	credentialVault      *credentials.Vault
-	mediaJobKeys         sync.Map
-	deviceRoleSelections sync.Map
+	store                 *store.Store
+	connectorFactory      func(endpoint store.StorageEndpoint) (connectors.Connector, error)
+	removableEnumerator   connectors.DeviceEnumerator
+	mediaConfig           MediaConfig
+	credentialVault       *credentials.Vault
+	autoQueueDerivedMedia bool
+	mediaJobKeys          sync.Map
+	deviceRoleSelections  sync.Map
 }
 
 func NewService(
@@ -51,7 +52,9 @@ func NewService(
 		factory = defaultConnectorFactory
 	}
 
-	resolvedOptions := serviceOptions{}
+	resolvedOptions := serviceOptions{
+		autoQueueDerivedMedia: true,
+	}
 	for _, option := range options {
 		if option == nil {
 			continue
@@ -68,11 +71,12 @@ func NewService(
 	}
 
 	return &Service{
-		store:               dataStore,
-		connectorFactory:    factory,
-		removableEnumerator: connectors.NewWindowsUSBEnumerator(),
-		mediaConfig:         normalizeMediaConfig(resolvedOptions.mediaConfig),
-		credentialVault:     credentialVault,
+		store:                 dataStore,
+		connectorFactory:      factory,
+		removableEnumerator:   connectors.NewWindowsUSBEnumerator(),
+		mediaConfig:           normalizeMediaConfig(resolvedOptions.mediaConfig),
+		credentialVault:       credentialVault,
+		autoQueueDerivedMedia: resolvedOptions.autoQueueDerivedMedia,
 	}
 }
 
@@ -444,9 +448,31 @@ func (service *Service) MergeScanResults(ctx context.Context, results []ScanResu
 		if err := service.syncAssetStatus(ctx, assetID); err != nil {
 			return stats, err
 		}
+		if err := service.queueDerivedMediaForAsset(ctx, assetID); err != nil {
+			return stats, err
+		}
 	}
 
 	return stats, nil
+}
+
+func (service *Service) queueDerivedMediaForAsset(ctx context.Context, assetID string) error {
+	if !service.autoQueueDerivedMedia {
+		return nil
+	}
+
+	asset, err := service.store.GetAssetByID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+
+	replicas, err := service.store.ListReplicasByAssetID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+
+	service.maybeQueueDerivedMedia(asset, replicas)
+	return nil
 }
 
 func (service *Service) scanEndpoint(

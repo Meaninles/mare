@@ -48,7 +48,7 @@ func TestListImportDevicesRecognizesManagedRemovableDriveAcrossMountChanges(t *t
 	reinsertedDevice := managedDevice
 	reinsertedDevice.MountPoint = `F:\`
 
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 	service.removableEnumerator = &stubCatalogDeviceEnumerator{
 		devices: []connectors.DeviceInfo{reinsertedDevice},
 	}
@@ -81,7 +81,7 @@ func TestSelectImportDeviceRoleRegistersManagedStorageAndTracksImportSource(t *t
 
 	ctx := context.Background()
 	dataStore := newTestStore(t)
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
 	device := connectors.DeviceInfo{
 		MountPoint:         `E:\`,
@@ -146,7 +146,7 @@ func TestBrowseImportSourceReturnsFilteredEntries(t *testing.T) {
 
 	ctx := context.Background()
 	dataStore := newTestStore(t)
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "DCIM"), 0o755); err != nil {
@@ -260,7 +260,7 @@ func TestExecuteImportCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.
 		}
 	}
 
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 	service.removableEnumerator = &stubCatalogDeviceEnumerator{
 		devices: []connectors.DeviceInfo{device},
 	}
@@ -332,6 +332,97 @@ func TestExecuteImportCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.
 	if tasks[0].Status != taskStatusSuccess {
 		t.Fatalf("expected import task success, got %s", tasks[0].Status)
 	}
+}
+
+func TestExecuteImportQueuesVideoCoverTaskImmediately(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dataStore := newTestStore(t)
+	now := time.Now().UTC().Round(time.Second)
+
+	sourceRoot := t.TempDir()
+	videoPath := filepath.Join(sourceRoot, "DCIM", "Clip01.mp4")
+	if err := os.MkdirAll(filepath.Dir(videoPath), 0o755); err != nil {
+		t.Fatalf("create import source directory: %v", err)
+	}
+	if err := os.WriteFile(videoPath, []byte("fake-video-data"), 0o644); err != nil {
+		t.Fatalf("write import source file: %v", err)
+	}
+
+	device := connectors.DeviceInfo{
+		MountPoint:         sourceRoot,
+		VolumeLabel:        "Camera Card",
+		FileSystem:         "exFAT",
+		VolumeSerialNumber: "CAM-VIDEO-001",
+		InterfaceType:      "USB",
+		Model:              "SD Reader",
+		PNPDeviceID:        "USBSTOR\\CAMERA-VIDEO",
+	}
+	identitySignature := connectors.GenerateDeviceIdentity(device)
+
+	localTargetRoot := filepath.Join(t.TempDir(), "library-local")
+	endpoint := store.StorageEndpoint{
+		ID:                 "endpoint-local-video",
+		Name:               "本地图库",
+		EndpointType:       string(connectors.EndpointTypeLocal),
+		RootPath:           localTargetRoot,
+		RoleMode:           "MANAGED",
+		IdentitySignature:  "local-library-video",
+		AvailabilityStatus: "AVAILABLE",
+		ConnectionConfig:   mustJSONText(t, map[string]string{"rootPath": localTargetRoot}),
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := dataStore.CreateStorageEndpoint(ctx, endpoint); err != nil {
+		t.Fatalf("create endpoint %s: %v", endpoint.ID, err)
+	}
+
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(true))
+	service.removableEnumerator = &stubCatalogDeviceEnumerator{
+		devices: []connectors.DeviceInfo{device},
+	}
+
+	if _, err := service.SaveImportRules(ctx, SaveImportRulesRequest{
+		Rules: []ImportRuleInput{
+			{
+				RuleType:          importRuleTypeMediaType,
+				MatchValue:        string(connectors.MediaTypeVideo),
+				TargetEndpointIDs: []string{endpoint.ID},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save import rules: %v", err)
+	}
+
+	summary, err := service.ExecuteImport(ctx, ExecuteImportRequest{
+		IdentitySignature: identitySignature,
+		EntryPaths:        []string{"DCIM/Clip01.mp4"},
+	})
+	if err != nil {
+		t.Fatalf("execute import: %v", err)
+	}
+	if summary.Status != taskStatusSuccess {
+		t.Fatalf("expected success summary status, got %s", summary.Status)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tasks, listErr := dataStore.ListTasks(ctx, 20, 0)
+		if listErr != nil {
+			t.Fatalf("list tasks: %v", listErr)
+		}
+
+		for _, task := range tasks {
+			if task.TaskType == mediaTaskVideoCover {
+				return
+			}
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Fatal("expected import to queue a video_cover task without requiring asset list access")
 }
 
 type stubCatalogDeviceEnumerator struct {

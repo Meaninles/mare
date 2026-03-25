@@ -7,8 +7,9 @@ type ServiceOption interface {
 }
 
 type serviceOptions struct {
-	mediaConfig     MediaConfig
-	credentialVault *credentials.Vault
+	mediaConfig           MediaConfig
+	credentialVault       *credentials.Vault
+	autoQueueDerivedMedia bool
 }
 
 func (config MediaConfig) apply(options *serviceOptions) {
@@ -25,4 +26,16 @@ func (option credentialVaultOption) apply(options *serviceOptions) {
 
 func WithCredentialVault(vault *credentials.Vault) ServiceOption {
 	return credentialVaultOption{vault: vault}
+}
+
+type autoQueueDerivedMediaOption struct {
+	enabled bool
+}
+
+func (option autoQueueDerivedMediaOption) apply(options *serviceOptions) {
+	options.autoQueueDerivedMedia = option.enabled
+}
+
+func WithAutoQueueDerivedMedia(enabled bool) ServiceOption {
+	return autoQueueDerivedMediaOption{enabled: enabled}
 }

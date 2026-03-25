@@ -147,6 +147,8 @@ export function StoragePage() {
 
   const availableEndpointCount = endpoints.filter((endpoint) => endpoint.availabilityStatus === "AVAILABLE").length;
   const managedEndpointCount = endpoints.filter((endpoint) => endpoint.roleMode === "MANAGED").length;
+  const currentTypeLabel =
+    endpointTypeOptions.find((option) => option.value === form.endpointType)?.label ?? form.endpointType;
 
   async function refreshDevices() {
     try {
@@ -289,14 +291,12 @@ export function StoragePage() {
   const scanMetrics = getScanMetrics(latestSummary);
 
   return (
-    <section className="page-stack">
+    <section className="page-stack storage-page-shell">
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">存储管理</p>
-          <h3>统一管理已连接的存储端点，并保持副本扫描状态同步。</h3>
-          <p>
-            你可以在这里添加新端点、修改名称或备注、临时停用、删除端点，并在同一个页面直接触发扫描。
-          </p>
+          <h3>节点</h3>
+          <p>节点目录、设备状态、扫描结果和编辑区现在会分开出现，不再是一整页连续往下读。</p>
         </div>
 
         <div className="hero-metrics">
@@ -311,11 +311,11 @@ export function StoragePage() {
       {error ? <p className="error-copy">{error}</p> : null}
 
       <div className="page-grid storage-layout">
-        <article className="detail-card">
+        <article className="detail-card storage-editor-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">{editingEndpointId ? "编辑端点" : "新增端点"}</p>
-              <h4>{editingEndpointId ? "更新存储设置" : "登记新的存储端点"}</h4>
+              <h4>{editingEndpointId ? "端点编辑" : "新建端点"}</h4>
             </div>
 
             <div className="endpoint-panel-actions">
@@ -472,11 +472,11 @@ export function StoragePage() {
           </div>
         </article>
 
-        <article className="detail-card">
+        <article className="detail-card storage-devices-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">检测到的设备</p>
-              <h4>当前可用的可移动设备</h4>
+              <h4>设备</h4>
             </div>
 
             <button type="button" className="ghost-button" onClick={() => void refreshDevices()}>
@@ -516,11 +516,11 @@ export function StoragePage() {
         </article>
       </div>
 
-      <article className="detail-card">
+      <article className="detail-card storage-directory-card">
         <div className="section-head">
-          <div>
-            <p className="eyebrow">已连接端点</p>
-            <h4>扫描、编辑、停用或删除现有存储条目</h4>
+            <div>
+              <p className="eyebrow">已连接端点</p>
+              <h4>端点列表</h4>
           </div>
 
           <button type="button" className="primary-button" onClick={() => void handleFullScan()} disabled={busyAction === "full-scan"}>
@@ -612,11 +612,11 @@ export function StoragePage() {
       </article>
 
       {latestSummary ? (
-        <article className="detail-card">
+        <article className="detail-card storage-summary-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">最近一次扫描</p>
-              <h4>{isEndpointScanSummary(latestSummary) ? "端点扫描摘要" : "全量扫描摘要"}</h4>
+              <h4>{isEndpointScanSummary(latestSummary) ? "端点扫描" : "全量扫描"}</h4>
             </div>
 
             <span className={`status-pill ${scanMetrics.statusTone}`}>{scanMetrics.statusLabel}</span>

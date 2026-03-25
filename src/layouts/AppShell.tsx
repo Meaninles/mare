@@ -3,15 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BellRing,
   LibraryBig,
-  MoonStar,
   Search,
-  Settings2,
-  SunMedium
+  Settings2
 } from "lucide-react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav, getRouteMeta } from "../components/SidebarNav";
 import { TaskCenterDrawer } from "../components/TaskCenterDrawer";
-import { useTheme } from "../components/ThemeProvider";
 import { useLibraryContext } from "../context/LibraryContext";
 import { useCatalogTasks } from "../hooks/useCatalog";
 import { useImportDevices } from "../hooks/useImport";
@@ -24,7 +21,6 @@ export function AppShell() {
   const { currentLibrary, currentLibraryId } = useLibraryContext();
   const tasksQuery = useCatalogTasks(20);
   const devicesQuery = useImportDevices();
-  const { theme } = useTheme();
   const [searchValue, setSearchValue] = useState("");
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
 
@@ -48,7 +44,6 @@ export function AppShell() {
   const taskSummary = useMemo(() => getTaskSummary(tasksQuery.data ?? []), [tasksQuery.data]);
   const removableNotices = useRemovableNoticeState(devicesQuery.data ?? [], currentLibraryId);
   const notificationCount = taskSummary.failed + removableNotices.unreadCount;
-  const ThemeIcon = theme === "light" ? SunMedium : MoonStar;
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,16 +67,9 @@ export function AppShell() {
       <div className="content-shell content-shell-refined">
         <header className="topbar shell-topbar">
           <div className="shell-title-row">
-            <div className="window-dots window-dots-inline" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-
             <div className="topbar-copy shell-topbar-copy">
               <p className="eyebrow">{routeMeta.caption}</p>
               <h2>{routeMeta.label}</h2>
-              <p className="shell-subtitle">{currentLibrary?.name ?? "未打开资产库"}</p>
             </div>
           </div>
 
@@ -97,32 +85,13 @@ export function AppShell() {
             </form>
 
             <div className="shell-toolbar-actions">
-              <span className="status-pill subtle toolbar-pill" title={theme === "light" ? "浅色模式" : "深色模式"}>
-                <ThemeIcon size={14} />
-                {theme === "light" ? "浅色" : "深色"}
-              </span>
-
-              {currentLibrary ? (
-                <button
-                  type="button"
-                  className="ghost-button icon-button shell-action-button"
-                  onClick={() => navigate("/welcome")}
-                  aria-label="打开资产库入口"
-                  title="资产库"
-                >
-                  <LibraryBig size={18} />
-                </button>
-              ) : null}
-
-              <button
-                type="button"
-                className="ghost-button icon-button shell-action-button"
-                onClick={() => navigate("/settings")}
-                aria-label="打开设置"
-                title="设置"
+              <span
+                className="status-pill subtle toolbar-pill shell-context-pill"
+                title={currentLibrary?.name ?? "未打开资产库"}
               >
-                <Settings2 size={18} />
-              </button>
+                <LibraryBig size={14} />
+                <span>{currentLibrary?.name ?? "未打开资产库"}</span>
+              </span>
 
               <button
                 type="button"
@@ -136,6 +105,15 @@ export function AppShell() {
                 <BellRing size={18} />
                 {notificationCount > 0 ? <span className="task-center-badge">{notificationCount}</span> : null}
               </button>
+
+              <NavLink
+                to="/settings"
+                className="ghost-button icon-button shell-action-button shell-settings-button"
+                aria-label="设置"
+                title="设置"
+              >
+                <Settings2 size={18} />
+              </NavLink>
             </div>
           </div>
         </header>

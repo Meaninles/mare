@@ -305,7 +305,7 @@ export function LibraryManagerPage() {
           </div>
 
           {mode === "edit" && isEditingCurrentOpenLibrary ? (
-            <p className="secondary-text">当前已打开的资产库，请先关闭后再修改路径。</p>
+            <span className="status-pill subtle">路径已锁定</span>
           ) : null}
 
           <div className="action-row">

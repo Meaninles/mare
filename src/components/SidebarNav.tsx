@@ -1,12 +1,12 @@
 import {
   Archive,
   ArrowDownToLine,
+  ChevronLeft,
   FolderTree,
   RefreshCcw,
   Server
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
-import { useLibraryContext } from "../context/LibraryContext";
 import type { NavigationItem } from "../types/navigation";
 import { MareLogo } from "./MareLogo";
 
@@ -48,22 +48,25 @@ export function getRouteMeta(pathname: string) {
 
 export function SidebarNav() {
   const location = useLocation();
-  const { currentLibrary, isLibraryOpen } = useLibraryContext();
 
   return (
     <aside className="sidebar sidebar-rail">
       <div className="sidebar-inner">
         <div className="brand-panel rail-brand">
-          <div className="window-dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
           <MareLogo className="brand-mark rail-brand-mark" />
           <div className="rail-brand-copy">
             <p className="eyebrow">Mare</p>
           </div>
         </div>
+
+        <NavLink
+          to="/welcome"
+          className="sidebar-tool-button sidebar-return-link"
+          title="返回欢迎页"
+          aria-label="返回欢迎页"
+        >
+          <ChevronLeft size={18} strokeWidth={1.9} />
+        </NavLink>
 
         <nav className="nav-list nav-rail" aria-label="库内导航">
           {primaryNavigationItems.map((item) => {
@@ -88,17 +91,6 @@ export function SidebarNav() {
             );
           })}
         </nav>
-      </div>
-
-      <div className="sidebar-footer rail-footer">
-        <span
-          className={`rail-status-dot${isLibraryOpen ? " is-live" : ""}`}
-          aria-hidden="true"
-        />
-        <div className="rail-footer-copy">
-          <strong>{currentLibrary?.name ?? "未打开"}</strong>
-          <small>{isLibraryOpen ? "当前资产库" : "选择资产库"}</small>
-        </div>
       </div>
     </aside>
   );

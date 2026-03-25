@@ -329,57 +329,69 @@ export function SystemTasksPage() {
         {!tasksQuery.isLoading && !librariesQuery.isLoading && !tasksQuery.isError && !librariesQuery.isError && filteredTasks.length > 0 ? (
           <div className="transfer-table-wrap">
             <table className="transfer-task-table">
+              <colgroup>
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "25%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "6%" }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>资产库</th>
-                  <th>任务对象</th>
-                  <th>类别</th>
-                  <th>来源</th>
-                  <th>目标</th>
+                  <th>任务</th>
+                  <th>来源 / 目标</th>
                   <th>进度</th>
                   <th>状态</th>
-                  <th>任务时间</th>
-                  <th>处理说明</th>
+                  <th>最近更新</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTasks.map((item) => (
-                  <tr key={`${item.task.libraryId}-${item.task.id}`} className="transfer-task-row">
+                  <tr
+                    key={`${item.task.libraryId}-${item.task.id}`}
+                    className="transfer-task-row"
+                    title={buildTransferTaskTooltip(item)}
+                  >
                     <td>
-                      <div className="transfer-task-library">
+                      <div className="transfer-task-library compact">
                         <strong>{item.task.libraryName}</strong>
-                        <p>{item.task.libraryIsActive ? "当前激活" : "已登记资产库"}</p>
+                        <span className={`transfer-library-badge${item.task.libraryIsActive ? " is-active" : ""}`}>
+                          {item.task.libraryIsActive ? "当前库" : "已登记"}
+                        </span>
                       </div>
                     </td>
                     <td>
-                      <div className="transfer-task-title">
+                      <div className="transfer-task-title compact" title={buildTransferTaskTooltip(item)}>
                         <strong>{item.subject}</strong>
-                        <p>{getTaskTitle(item.task.taskType)}</p>
-                        <span>{item.task.id}</span>
+                        <div className="transfer-inline-meta">
+                          <span className="status-pill subtle">{item.laneLabel}</span>
+                          <span>{getTaskTitle(item.task.taskType)}</span>
+                        </div>
                       </div>
                     </td>
                     <td>
-                      <span className="status-pill subtle">{item.laneLabel}</span>
-                    </td>
-                    <td>
-                      <div className="transfer-endpoint-stack">
-                        <strong>{item.sourceLabel}</strong>
+                      <div
+                        className="transfer-route-cell"
+                        title={`来源：${item.sourceLabel}\n目标：${item.targetLabel}\n说明：${item.detail}`}
+                      >
+                        <span className="transfer-endpoint-chip">{item.sourceLabel}</span>
+                        <span className="transfer-route-arrow" aria-hidden="true">
+                          →
+                        </span>
+                        <span className="transfer-endpoint-chip">{item.targetLabel}</span>
                       </div>
                     </td>
                     <td>
-                      <div className="transfer-endpoint-stack">
-                        <strong>{item.targetLabel}</strong>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="transfer-progress-cell">
-                        <div className="transfer-progress-track" aria-hidden="true">
+                      <div className="transfer-progress-cell compact" title={item.progressLabel}>
+                        <div className="transfer-progress-track compact" aria-hidden="true">
                           <div className="transfer-progress-fill" style={{ width: `${item.progressPercent}%` }} />
                         </div>
-                        <div className="transfer-progress-meta">
+                        <div className="transfer-progress-meta compact">
                           <strong>{item.progressPercent}%</strong>
-                          <span>{item.progressLabel}</span>
                         </div>
                       </div>
                     </td>
@@ -389,31 +401,31 @@ export function SystemTasksPage() {
                       </span>
                     </td>
                     <td>
-                      <div className="transfer-time-stack">
-                        <span>创建：{formatCatalogDate(item.task.createdAt)}</span>
-                        {item.task.startedAt ? <span>开始：{formatCatalogDate(item.task.startedAt)}</span> : null}
-                        {item.task.finishedAt ? <span>完成：{formatCatalogDate(item.task.finishedAt)}</span> : null}
-                        {!item.task.finishedAt ? <span>更新：{formatCatalogDate(item.latestAt)}</span> : null}
+                      <div className="transfer-time-compact" title={buildTransferTimeTooltip(item)}>
+                        <strong>{formatCatalogDate(item.latestAt)}</strong>
+                        <span>{getTransferTimeLabel(item.task)}</span>
                       </div>
-                    </td>
-                    <td>
-                      <p className="transfer-task-detail">{item.detail}</p>
                     </td>
                     <td>
                       {canRetryTask(item.task) && item.task.libraryIsActive ? (
                         <button
                           type="button"
-                          className="ghost-button"
+                          className="ghost-button transfer-action-button"
                           onClick={() => void retryMutation.mutateAsync(item.task.id)}
                           disabled={retryMutation.isPending}
+                          title="重试这个任务"
                         >
                           <RefreshCcw size={14} className={retryMutation.isPending ? "spin" : ""} />
                           重试
                         </button>
                       ) : canRetryTask(item.task) ? (
-                        <span className="status-pill subtle">先打开该资产库</span>
+                        <span className="status-pill subtle" title="需要先打开对应资产库，才能在当前会话里重试。">
+                          待重试
+                        </span>
                       ) : (
-                        <span className="status-pill subtle">无可执行操作</span>
+                        <span className="status-pill subtle" title={item.detail}>
+                          只读
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -721,4 +733,39 @@ function clampPercent(value: number) {
     return 100;
   }
   return Math.round(value);
+}
+
+function buildTransferTaskTooltip(item: TransferTaskView) {
+  return [
+    `资产库：${item.task.libraryName}`,
+    `任务：${item.subject}`,
+    `类别：${item.laneLabel} / ${getTaskTitle(item.task.taskType)}`,
+    `任务 ID：${item.task.id}`,
+    `来源：${item.sourceLabel}`,
+    `目标：${item.targetLabel}`,
+    `状态：${getTaskStatusLabel(item.task.status)}`,
+    `进度：${item.progressPercent}%`,
+    `说明：${item.detail}`
+  ].join("\n");
+}
+
+function buildTransferTimeTooltip(item: TransferTaskView) {
+  return [
+    `创建：${formatCatalogDate(item.task.createdAt)}`,
+    item.task.startedAt ? `开始：${formatCatalogDate(item.task.startedAt)}` : null,
+    item.task.finishedAt ? `完成：${formatCatalogDate(item.task.finishedAt)}` : null,
+    `最近：${formatCatalogDate(item.latestAt)}`
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function getTransferTimeLabel(task: LibraryTaskRecord) {
+  if (task.finishedAt) {
+    return "已完成";
+  }
+  if (task.startedAt) {
+    return "进行中";
+  }
+  return "已创建";
 }

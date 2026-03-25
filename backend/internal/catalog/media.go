@@ -230,6 +230,10 @@ func (service *Service) ResolvePreviewResource(ctx context.Context, assetID stri
 }
 
 func (service *Service) maybeQueueDerivedMedia(asset store.Asset, replicas []store.Replica) {
+	if !service.autoQueueDerivedMedia {
+		return
+	}
+
 	backgroundCtx := context.Background()
 
 	switch strings.ToLower(strings.TrimSpace(asset.MediaType)) {
@@ -667,6 +671,9 @@ func (service *Service) selectReadableReplica(ctx context.Context, replicas []st
 
 	for _, replica := range replicas {
 		if !replica.ExistsFlag {
+			continue
+		}
+		if connectors.ShouldIgnoreAssetPath(replica.PhysicalPath) {
 			continue
 		}
 

@@ -1,10 +1,9 @@
-import { FolderOpen, Folders, LibraryBig, Settings2, Workflow } from "lucide-react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useLibraryContext } from "../context/LibraryContext";
+import { Folders, LibraryBig, Settings2, Workflow } from "lucide-react";
+import { NavLink, Outlet } from "react-router-dom";
 import { MareLogo } from "../components/MareLogo";
+import { useLibraryContext } from "../context/LibraryContext";
 
 export function StandaloneShell() {
-  const navigate = useNavigate();
   const { currentLibrary, currentLibrarySession, isLibraryOpen } = useLibraryContext();
 
   return (
@@ -12,11 +11,6 @@ export function StandaloneShell() {
       <aside className="sidebar sidebar-rail">
         <div className="sidebar-inner">
           <div className="brand-panel rail-brand">
-            <div className="window-dots" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
             <MareLogo className="brand-mark rail-brand-mark" />
             <div className="rail-brand-copy">
               <p className="eyebrow">Mare</p>
@@ -24,7 +18,11 @@ export function StandaloneShell() {
           </div>
 
           <nav className="nav-list nav-rail" aria-label="应用导航">
-            <NavLink to="/welcome" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="资产库">
+            <NavLink
+              to="/welcome"
+              className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`}
+              title="资产库"
+            >
               <span className="nav-item-icon rail-nav-icon">
                 <LibraryBig size={18} strokeWidth={1.85} />
               </span>
@@ -33,7 +31,11 @@ export function StandaloneShell() {
               </span>
             </NavLink>
 
-            <NavLink to="/library-manager" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="管理">
+            <NavLink
+              to="/library-manager"
+              className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`}
+              title="管理"
+            >
               <span className="nav-item-icon rail-nav-icon">
                 <Folders size={18} strokeWidth={1.85} />
               </span>
@@ -42,7 +44,11 @@ export function StandaloneShell() {
               </span>
             </NavLink>
 
-            <NavLink to="/system-tasks" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="任务">
+            <NavLink
+              to="/system-tasks"
+              className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`}
+              title="任务"
+            >
               <span className="nav-item-icon rail-nav-icon">
                 <Workflow size={18} strokeWidth={1.85} />
               </span>
@@ -50,50 +56,39 @@ export function StandaloneShell() {
                 <strong>任务</strong>
               </span>
             </NavLink>
-
-            <NavLink to="/settings" className={({ isActive }) => `nav-item rail-nav-item${isActive ? " active" : ""}`} title="设置">
-              <span className="nav-item-icon rail-nav-icon">
-                <Settings2 size={18} strokeWidth={1.85} />
-              </span>
-              <span className="nav-item-copy rail-nav-copy">
-                <strong>设置</strong>
-              </span>
-            </NavLink>
           </nav>
-        </div>
-
-        <div className="sidebar-footer rail-footer">
-          <span
-            className={`rail-status-dot${isLibraryOpen ? " is-live" : ""}`}
-            aria-hidden="true"
-          />
-          <div className="rail-footer-copy">
-            <strong>{currentLibrary?.name ?? "未打开"}</strong>
-            <small>{isLibraryOpen ? "当前资产库" : "入口页"}</small>
-          </div>
         </div>
       </aside>
 
       <div className="content-shell content-shell-refined standalone-shell">
-        {currentLibrary ? (
-          <div className="standalone-shell-bar">
-            <div className="status-pill subtle toolbar-pill">
-              <LibraryBig size={14} />
-              {currentLibrarySession?.name ?? currentLibrary.name}
-            </div>
-
-            {isLibraryOpen ? (
-              <button
-                type="button"
-                className="ghost-button inline-button"
-                onClick={() => navigate("/assets")}
+        <div className="standalone-shell-bar">
+          <div className="standalone-shell-actions">
+            {currentLibrary ? (
+              <span
+                className={`status-pill subtle toolbar-pill shell-context-pill${
+                  isLibraryOpen ? " is-live" : ""
+                }`}
+                title={currentLibrarySession?.name ?? currentLibrary.name}
               >
-                <FolderOpen size={16} />
-                进入资产
-              </button>
+                <span
+                  className={`rail-status-dot shell-status-dot${isLibraryOpen ? " is-live" : ""}`}
+                  aria-hidden="true"
+                />
+                <LibraryBig size={14} />
+                <span>{currentLibrarySession?.name ?? currentLibrary.name}</span>
+              </span>
             ) : null}
+
+            <NavLink
+              to="/settings"
+              className="ghost-button icon-button shell-action-button shell-settings-button"
+              title="设置"
+              aria-label="设置"
+            >
+              <Settings2 size={18} strokeWidth={1.9} />
+            </NavLink>
           </div>
-        ) : null}
+        </div>
 
         <main className="content-panel">
           <Outlet />

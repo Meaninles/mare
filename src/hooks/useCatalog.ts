@@ -67,8 +67,11 @@ export function useCatalogTasks(limit = 100) {
 
       return response.tasks ?? [];
     },
-    staleTime: 4_000,
-    refetchInterval: 8_000
+    staleTime: 0,
+    refetchInterval: 500,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always"
   });
 }
 

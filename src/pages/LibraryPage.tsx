@@ -217,7 +217,7 @@ function LibraryCatalogView() {
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">统一资产库</p>
-          <h3>按本地文件夹的习惯浏览多端文件，而不是把资产拆成一堆孤立卡片。</h3>
+          <h3>资产</h3>
           <p>
             目录、子目录、文件行和元数据列都放回同一个列表里。你可以像看电脑文件夹一样看资产库，同时保留副本、状态和存储位置这些跨端信息。
           </p>
@@ -232,16 +232,24 @@ function LibraryCatalogView() {
       </article>
 
       <article className="detail-card catalog-toolbar">
-        <div className="catalog-toolbar-head">
-          <div>
-            <p className="eyebrow">资源管理器</p>
-            <h4>目录化列表视图</h4>
-          </div>
+          <div className="catalog-toolbar-head">
+            <div>
+              <p className="eyebrow">资源管理器</p>
+              <h4>列表</h4>
+            </div>
 
-          <div className="toolbar-search-state">
-            {searchQuery ? <span>当前搜索：{searchQuery}</span> : <span>默认按目录展开，名称下方会保留完整逻辑路径。</span>}
+            <div className="toolbar-search-state">
+              {searchQuery ? (
+                <span>搜索 {filteredAssets.length}</span>
+              ) : (
+                <span>
+                  {!isSearchMode ? `目录 ${visibleFolders.length}` : "目录"}
+                  {" · "}
+                  文件 {visibleAssets.length}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
 
         <div className="filter-stack">
           <div className="segmented-group" aria-label="媒体类型筛选">
@@ -380,7 +388,9 @@ function LibraryCatalogView() {
             </div>
           ) : (
             <div className="explorer-search-banner">
-              搜索结果会跨目录显示，名称下方保留逻辑路径，便于你判断文件原本属于哪个目录。
+              <span className="status-pill subtle">搜索</span>
+              <strong>{searchQuery}</strong>
+              <span>{filteredAssets.length}</span>
             </div>
           )}
 

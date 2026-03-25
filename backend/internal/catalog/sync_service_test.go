@@ -100,7 +100,7 @@ func TestRestoreAssetCopiesReplicaToTargetEndpoint(t *testing.T) {
 		t.Fatalf("create source replica: %v", err)
 	}
 
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
 	summary, err := service.RestoreAsset(ctx, RestoreAssetRequest{
 		AssetID:          asset.ID,
@@ -266,7 +266,7 @@ func TestRestoreAssetsToEndpointReportsPartialFailure(t *testing.T) {
 		}
 	}
 
-	service := NewService(dataStore, nil)
+	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
 	summary, err := service.RestoreAssetsToEndpoint(ctx, BatchRestoreRequest{
 		TargetEndpointID: targetEndpoint.ID,

@@ -7,8 +7,7 @@ import {
   RefreshCcw,
   ServerCog,
   SunMedium,
-  Upload,
-  Wrench
+  Upload
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTheme, type ThemeMode } from "../components/ThemeProvider";
@@ -38,43 +37,19 @@ const backendUrl = getDefaultCatalogBackendUrl();
 const themeOptions: Array<{
   value: ThemeMode;
   title: string;
-  subtitle: string;
-  description: string;
   icon: typeof SunMedium;
 }> = [
   {
     value: "light",
     title: "浅色",
-    subtitle: "默认均衡",
-    description: "适合长时间查看缩略图、列表和目录内容。",
     icon: SunMedium
   },
   {
     value: "dark",
     title: "深色",
-    subtitle: "降低眩光",
-    description: "在较暗环境下浏览资产时更舒适。",
     icon: MoonStar
   }
 ];
-
-const developerTools = [
-  {
-    title: "媒体实验室",
-    copy: "预览视频封面提取、音频元数据检测和本地媒体工具。",
-    path: "/media-lab"
-  },
-  {
-    title: "存储测试器",
-    copy: "对本地、NAS、云端和可移动端点执行连接器测试。",
-    path: "/storage-test"
-  },
-  {
-    title: "移动设备测试器",
-    copy: "查看可移动设备发现事件和移动硬盘身份匹配情况。",
-    path: "/removable-test"
-  }
-] as const;
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -237,7 +212,7 @@ export function SettingsPage() {
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">设置</p>
-          <h3>管理当前资产库的备份、恢复、重绑与导入后校验。</h3>
+          <h3>设置</h3>
           <p>
             这里的备份与导入都作用于当前打开的资产库，不再是全局单体状态。
             应用级主题仍然在这里管理，但库级配置、端点和资产快照始终绑定到当前资产库。
@@ -291,7 +266,7 @@ export function SettingsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">外观</p>
-              <h4>主题模式</h4>
+              <h4>主题</h4>
             </div>
           </div>
 
@@ -330,8 +305,6 @@ export function SettingsPage() {
 
                   <div className="theme-option-copy">
                     <strong>{option.title}</strong>
-                    <span>{option.subtitle}</span>
-                    <p>{option.description}</p>
                   </div>
                 </button>
               );
@@ -343,7 +316,7 @@ export function SettingsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">备份导出</p>
-              <h4>创建可迁移的资产库备份</h4>
+              <h4>导出</h4>
             </div>
           </div>
 
@@ -389,7 +362,7 @@ export function SettingsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">恢复导入</p>
-              <h4>载入备份文件</h4>
+              <h4>导入</h4>
             </div>
           </div>
 
@@ -455,7 +428,7 @@ export function SettingsPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">最近一次导入</p>
-              <h4>恢复摘要</h4>
+              <h4>最近导入</h4>
             </div>
           </div>
 
@@ -494,9 +467,9 @@ export function SettingsPage() {
 
       <article className="detail-card">
         <div className="section-head">
-          <div>
-            <p className="eyebrow">重绑与校验</p>
-            <h4>在当前机器上重新连接资产库的存储节点</h4>
+            <div>
+              <p className="eyebrow">重绑与校验</p>
+              <h4>重绑与校验</h4>
           </div>
 
           <button
@@ -597,32 +570,6 @@ export function SettingsPage() {
         </article>
       ) : null}
 
-      <article className="detail-card">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">开发者工具</p>
-            <h4>诊断与内部工具</h4>
-          </div>
-          <span className="status-pill subtle">内部</span>
-        </div>
-
-        <div className="tool-link-grid">
-          {developerTools.map((tool) => (
-            <Link key={tool.path} to={tool.path} className="tool-link-card">
-              <div className="tool-link-copy">
-                <strong>{tool.title}</strong>
-                <p>{tool.copy}</p>
-              </div>
-              <div className="tool-link-foot">
-                <span className="status-pill subtle">
-                  <Wrench size={14} />
-                  打开工具
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </article>
     </section>
   );
 }

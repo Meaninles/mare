@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, HardDrive, Image as ImageIcon, LoaderCircle, Music4, RefreshCcw, Route, Settings2, Upload, Video } from "lucide-react";
+import { CheckCircle2, FolderOpen, HardDrive, Image as ImageIcon, LoaderCircle, Music4, RefreshCcw, Route, Settings2, Upload, Video } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useCatalogEndpoints, useCatalogTasks } from "../hooks/useCatalog";
 import { useExecuteImport, useImportDevices, useImportRules, useImportSource, useSaveImportRules, useSelectImportDeviceRole } from "../hooks/useImport";
 import { formatCatalogDate, formatFileSize } from "../lib/catalog-view";
 import type { CatalogEndpoint, CatalogTask } from "../types/catalog";
-import type { ImportBrowseMediaType, ImportExecutionSummary, ImportRuleInput } from "../types/import";
+import type { ImportBrowseMediaType, ImportExecutionSummary, ImportRuleInput, ImportSourceEntry } from "../types/import";
 
 type ManagedMediaType = "image" | "video" | "audio";
 type ExtensionRuleDraft = { id: string; extension: string; targetEndpointIds: string[] };
@@ -65,8 +65,40 @@ export function ImportCenterPage() {
 
   const sourceQuery = useImportSource(selectedDevice?.identitySignature ?? "", mediaFilter, 1000);
   const sourceEntries = sourceQuery.data?.entries ?? [];
+  const groupedSourceEntries = useMemo(() => {
+    const groups = new Map<string, ImportSourceEntry[]>();
+
+    sourceEntries.forEach((entry) => {
+      const directory = getImportDirectory(entry.relativePath);
+      const items = groups.get(directory);
+      if (items) {
+        items.push(entry);
+        return;
+      }
+      groups.set(directory, [entry]);
+    });
+
+    return Array.from(groups.entries())
+      .map(([path, entries]) => ({
+        path,
+        name: getImportFolderName(path),
+        entries: [...entries].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+      }))
+      .sort((left, right) => {
+        if (!left.path && right.path) {
+          return -1;
+        }
+        if (left.path && !right.path) {
+          return 1;
+        }
+        return left.path.localeCompare(right.path, "zh-CN");
+      });
+  }, [sourceEntries]);
   const importTasks = (tasksQuery.data ?? []).filter((task) => task.taskType.toLowerCase().includes("import"));
   const selectedEntries = sourceEntries.filter((entry) => selectedPaths.includes(entry.relativePath));
+  const configuredRuleCount =
+    Object.values(mediaRuleTargets).filter((targetIds) => targetIds.length > 0).length +
+    extensionRules.filter((rule) => rule.extension.trim() && rule.targetEndpointIds.length > 0).length;
 
   useEffect(() => {
     setSelectedPaths((current) => current.filter((path) => sourceEntries.some((entry) => entry.relativePath === path)));
@@ -121,13 +153,35 @@ export function ImportCenterPage() {
     }
   }
 
+  function toggleEntrySelection(relativePath: string) {
+    setSelectedPaths((current) =>
+      current.includes(relativePath)
+        ? current.filter((item) => item !== relativePath)
+        : [...current, relativePath]
+    );
+  }
+
+  function toggleFolderSelection(entries: ImportSourceEntry[]) {
+    const folderPaths = entries.map((entry) => entry.relativePath);
+    const folderPathSet = new Set(folderPaths);
+    const isAllSelected = folderPaths.every((path) => selectedPaths.includes(path));
+
+    setSelectedPaths((current) => {
+      if (isAllSelected) {
+        return current.filter((path) => !folderPathSet.has(path));
+      }
+
+      return Array.from(new Set([...current, ...folderPaths]));
+    });
+  }
+
   return (
-    <section className="page-stack">
+    <section className="page-stack import-page-shell">
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">导入中心</p>
-          <h3>识别移动设备、浏览来源文件、保存导入规则，并把内容正式纳入 Mare 资产库。</h3>
-          <p>设备可以作为管理存储，也可以作为导入源；导入执行器会按规则复制到目标端点并更新 Catalog。</p>
+          <h3>导入</h3>
+          <p>左侧专注设备和文件，右侧负责目标、规则和结果，导入链路会更直观。</p>
         </div>
         <div className="hero-metrics">
           <MetricCard label="已连接设备" value={devices.length} tone="neutral" />
@@ -137,11 +191,11 @@ export function ImportCenterPage() {
       </article>
 
       <div className="page-grid import-layout import-page-grid">
-        <article className="detail-card">
+        <article className="detail-card import-source-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">来源设备</p>
-              <h4>先确定设备角色</h4>
+              <h4>设备</h4>
             </div>
             <button type="button" className="ghost-button" onClick={() => void devicesQuery.refetch()} disabled={devicesQuery.isFetching}>
               {devicesQuery.isFetching ? <LoaderCircle size={16} className="spin" /> : <RefreshCcw size={16} />}
@@ -200,11 +254,11 @@ export function ImportCenterPage() {
           ) : null}
         </article>
 
-        <article className="detail-card">
+        <article className="detail-card import-target-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">目标端点</p>
-              <h4>当前可写入的管理存储</h4>
+              <h4>目标</h4>
             </div>
           </div>
           {activeManagedEndpoints.length === 0 ? (
@@ -231,11 +285,11 @@ export function ImportCenterPage() {
         </article>
       </div>
 
-      <article className="detail-card">
+      <article className="detail-card import-browser-card">
         <div className="section-head">
           <div>
-            <p className="eyebrow">导入源浏览</p>
-            <h4>筛选并勾选要导入的文件</h4>
+              <p className="eyebrow">导入源浏览</p>
+              <h4>文件</h4>
           </div>
           <div className="action-row">
             <div className="segmented-group">
@@ -260,6 +314,7 @@ export function ImportCenterPage() {
           <>
             <div className="import-browser-toolbar">
               <div className="status-strip import-browser-meta">
+                <span className="status-pill subtle">目录 {groupedSourceEntries.length}</span>
                 <span className="status-pill subtle">可见文件 {sourceEntries.length}</span>
                 <span className="status-pill subtle">已勾选 {selectedEntries.length}</span>
               </div>
@@ -277,26 +332,54 @@ export function ImportCenterPage() {
             {sourceEntries.length === 0 ? (
               <EmptyBlock icon={<CheckCircle2 size={20} />} title="当前筛选下没有可导入文件" copy="你可以切换媒体类型筛选，或重新扫描来源设备。" />
             ) : (
-              <div className="import-entry-list">
-                {sourceEntries.map((entry) => {
-                  const Icon = getEntryIcon(entry.mediaType);
-                  const checked = selectedPaths.includes(entry.relativePath);
+              <div className="import-folder-list">
+                {groupedSourceEntries.map((group) => {
+                  const folderSelectedCount = group.entries.filter((entry) => selectedPaths.includes(entry.relativePath)).length;
+                  const allSelected = folderSelectedCount === group.entries.length && group.entries.length > 0;
+
                   return (
-                    <label key={entry.relativePath} className={`import-entry-card${checked ? " active" : ""}`}>
-                      <input type="checkbox" checked={checked} onChange={() => setSelectedPaths((current) => current.includes(entry.relativePath) ? current.filter((item) => item !== entry.relativePath) : [...current, entry.relativePath])} />
-                      <div className="import-entry-icon">
-                        <Icon size={18} />
-                      </div>
-                      <div className="import-entry-copy">
-                        <strong>{entry.name}</strong>
-                        <p>{entry.relativePath}</p>
-                        <div className="replica-chip-row">
-                          <span className="replica-chip neutral">{getMediaLabel(entry.mediaType)}</span>
-                          <span className="replica-chip neutral">{formatFileSize(entry.size)}</span>
-                          <span className="replica-chip neutral">{formatCatalogDate(entry.modifiedAt)}</span>
+                    <section key={group.path || "__root__"} className="import-folder-card">
+                      <div className="import-folder-head">
+                        <div className="import-folder-copy">
+                          <div className="replica-chip-row">
+                            <span className="asset-badge">
+                              <FolderOpen size={14} />
+                              {group.name}
+                            </span>
+                            <span className="replica-chip neutral">{group.entries.length} 个文件</span>
+                            <span className="replica-chip warning">已选 {folderSelectedCount}</span>
+                          </div>
+                          <small>{group.path || "根目录"}</small>
                         </div>
+
+                        <button type="button" className={`ghost-button${allSelected ? " is-selected" : ""}`} onClick={() => toggleFolderSelection(group.entries)}>
+                          {allSelected ? "取消目录" : "选择目录"}
+                        </button>
                       </div>
-                    </label>
+
+                      <div className="import-entry-list import-folder-entry-list">
+                        {group.entries.map((entry) => {
+                          const Icon = getEntryIcon(entry.mediaType);
+                          const checked = selectedPaths.includes(entry.relativePath);
+                          return (
+                            <label key={entry.relativePath} className={`import-entry-card${checked ? " active" : ""}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleEntrySelection(entry.relativePath)} />
+                              <div className="import-entry-icon">
+                                <Icon size={18} />
+                              </div>
+                              <div className="import-entry-copy">
+                                <strong>{entry.name}</strong>
+                                <div className="replica-chip-row">
+                                  <span className="replica-chip neutral">{getMediaLabel(entry.mediaType)}</span>
+                                  <span className="replica-chip neutral">{formatFileSize(entry.size)}</span>
+                                  <span className="replica-chip neutral">{formatCatalogDate(entry.modifiedAt)}</span>
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </section>
                   );
                 })}
               </div>
@@ -306,11 +389,11 @@ export function ImportCenterPage() {
       </article>
 
       <div className="page-grid import-layout import-rules-layout">
-        <article className="detail-card">
+        <article className="detail-card import-rules-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">导入规则</p>
-              <h4>定义媒体写入哪些管理端点</h4>
+              <h4>规则</h4>
             </div>
             <button type="button" className="primary-button" onClick={() => void handleSaveRules()} disabled={saveRulesMutation.isPending}>
               {saveRulesMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Settings2 size={16} />}
@@ -341,7 +424,7 @@ export function ImportCenterPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">扩展名</p>
-              <h4>补充规则</h4>
+              <h4>扩展名</h4>
             </div>
             <button type="button" className="ghost-button" onClick={() => setExtensionRules((current) => [...current, { id: `draft-${crypto.randomUUID()}`, extension: "", targetEndpointIds: [] }])}>
               添加规则
@@ -354,7 +437,7 @@ export function ImportCenterPage() {
                 <div className="section-head">
                   <div>
                     <p className="eyebrow">规则 {index + 1}</p>
-                    <h4>按扩展名分发</h4>
+                    <h4>规则 {index + 1}</h4>
                   </div>
                   <button type="button" className="ghost-button" onClick={() => setExtensionRules((current) => {
                     const next = current.filter((item) => item.id !== rule.id);
@@ -379,11 +462,11 @@ export function ImportCenterPage() {
           </div>
         </article>
 
-        <article className="detail-card">
+        <article className="detail-card import-results-card">
           <div className="section-head">
             <div>
               <p className="eyebrow">结果与任务</p>
-              <h4>最近一次执行摘要</h4>
+              <h4>结果</h4>
             </div>
           </div>
 
@@ -467,6 +550,19 @@ function ImportTaskCard({ task }: { task: CatalogTask }) {
 }
 
 function toggleString(values: string[], nextValue: string) { return values.includes(nextValue) ? values.filter((value) => value !== nextValue) : [...values, nextValue]; }
+function getImportDirectory(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  const lastSlashIndex = normalized.lastIndexOf("/");
+  return lastSlashIndex >= 0 ? normalized.slice(0, lastSlashIndex) : "";
+}
+function getImportFolderName(path: string) {
+  if (!path) {
+    return "根目录";
+  }
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? normalized;
+}
 function getMediaLabel(mediaType: string) { return mediaType === "image" ? "图片" : mediaType === "video" ? "视频" : mediaType === "audio" ? "音频" : "媒体"; }
 function getTaskLabel(status: string) { return getRunLabel(status); }
 function getTaskTone(status: string) { return getRunTone(status); }

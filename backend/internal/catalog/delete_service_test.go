@@ -115,7 +115,7 @@ func TestDeleteReplicaUpdatesAssetVisibilityAndStatus(t *testing.T) {
 		},
 	}
 
-	service := NewService(dataStore, factory.Build)
+	service := NewService(dataStore, factory.Build, WithAutoQueueDerivedMedia(false))
 
 	firstSummary, err := service.DeleteReplica(ctx, DeleteReplicaRequest{
 		AssetID:          asset.ID,
@@ -294,7 +294,7 @@ func TestDeleteReplicaFailurePreservesReplicaAndRecordsTaskError(t *testing.T) {
 		},
 	}
 
-	service := NewService(dataStore, factory.Build)
+	service := NewService(dataStore, factory.Build, WithAutoQueueDerivedMedia(false))
 
 	summary, err := service.DeleteReplica(ctx, DeleteReplicaRequest{
 		AssetID:          asset.ID,

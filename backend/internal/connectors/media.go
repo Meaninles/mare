@@ -21,6 +21,9 @@ func DetectMediaType(path string, isDir bool) MediaType {
 	if isDir {
 		return MediaTypeUnknown
 	}
+	if ShouldIgnoreAssetPath(path) {
+		return MediaTypeUnknown
+	}
 
 	extension := strings.ToLower(filepath.Ext(path))
 

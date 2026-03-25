@@ -183,6 +183,34 @@ func TestCloud115ConnectorUsesInjectedClient(t *testing.T) {
 	}
 }
 
+func TestLocalConnectorSkipsWindowsSystemArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "clips", "keep.mp4"), []byte("video"))
+	writeTestFile(t, filepath.Join(root, "$RECYCLE.BIN", "$I123456.mp4"), []byte("metadata"))
+	writeTestFile(t, filepath.Join(root, "System Volume Information", "ghost.mp4"), []byte("ghost"))
+
+	connector, err := NewLocalConnector(LocalConfig{Name: "Local Test", RootPath: root})
+	if err != nil {
+		t.Fatalf("create local connector: %v", err)
+	}
+
+	entries, err := connector.ListEntries(context.Background(), ListEntriesRequest{
+		Recursive: true,
+		MediaOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected only 1 media entry after filtering system artifacts, got %d", len(entries))
+	}
+	if entries[0].RelativePath != "clips/keep.mp4" {
+		t.Fatalf("expected clips/keep.mp4, got %s", entries[0].RelativePath)
+	}
+}
+
 func TestRemovableDetectorEmitsInsertAndRemove(t *testing.T) {
 	t.Parallel()
 
