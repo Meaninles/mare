@@ -112,6 +112,81 @@ function resolveCatalogMediaUrl(baseUrl: string, value?: string): string | undef
   return `${normalizedBaseUrl}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
+function normalizeCatalogEndpointPayload(payload: CatalogEndpointPayload): CatalogEndpointPayload {
+  const normalizedType = inferCatalogEndpointType(payload);
+  const connectionConfig =
+    payload.connectionConfig && typeof payload.connectionConfig === "object" ? payload.connectionConfig : {};
+
+  switch (normalizedType) {
+    case "LOCAL":
+      return {
+        ...payload,
+        endpointType: normalizedType,
+        connectionConfig: {
+          ...connectionConfig,
+          rootPath: String((connectionConfig as Record<string, unknown>).rootPath ?? payload.rootPath ?? "").trim()
+        }
+      };
+    case "QNAP_SMB":
+      return {
+        ...payload,
+        endpointType: normalizedType,
+        connectionConfig: {
+          ...connectionConfig,
+          sharePath: String((connectionConfig as Record<string, unknown>).sharePath ?? payload.rootPath ?? "").trim()
+        }
+      };
+    case "REMOVABLE":
+    case "NETWORK_STORAGE":
+      return {
+        ...payload,
+        endpointType: normalizedType,
+        connectionConfig
+      };
+    default:
+      return {
+        ...payload,
+        endpointType: String(payload.endpointType ?? "").trim(),
+        connectionConfig
+      };
+  }
+}
+
+function inferCatalogEndpointType(payload: CatalogEndpointPayload): string {
+  const explicitType = String(payload.endpointType ?? "").trim().toUpperCase();
+  if (explicitType) {
+    return explicitType;
+  }
+
+  const connectionConfig =
+    payload.connectionConfig && typeof payload.connectionConfig === "object"
+      ? (payload.connectionConfig as Record<string, unknown>)
+      : {};
+
+  if (
+    "provider" in connectionConfig ||
+    "loginMethod" in connectionConfig ||
+    "rootFolderId" in connectionConfig ||
+    "root_folder_id" in connectionConfig ||
+    "storageKey" in connectionConfig
+  ) {
+    return "NETWORK_STORAGE";
+  }
+  if ("device" in connectionConfig) {
+    return "REMOVABLE";
+  }
+  if ("sharePath" in connectionConfig) {
+    return "QNAP_SMB";
+  }
+  if (payload.rootPath?.trim()) {
+    return "LOCAL";
+  }
+  if ("rootPath" in connectionConfig) {
+    return "LOCAL";
+  }
+  return "";
+}
+
 function normalizeCatalogTask(task: Record<string, unknown>) {
   return {
     id: String(task.id ?? task.ID ?? ""),
@@ -149,7 +224,7 @@ export async function listCatalogEndpoints(baseUrl: string): Promise<CatalogEndp
 }
 
 export async function saveCatalogEndpoint(baseUrl: string, payload: CatalogEndpointPayload): Promise<CatalogEndpointsResponse> {
-  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/endpoints`, payload);
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/endpoints`, normalizeCatalogEndpointPayload(payload));
 }
 
 export async function updateCatalogEndpoint(
@@ -157,7 +232,10 @@ export async function updateCatalogEndpoint(
   endpointId: string,
   payload: CatalogEndpointPayload
 ): Promise<CatalogEndpointsResponse> {
-  return putJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/endpoints/${endpointId}`, payload);
+  return putJson(
+    `${normalizeBaseUrl(baseUrl)}/api/v1/catalog/endpoints/${endpointId}`,
+    normalizeCatalogEndpointPayload(payload)
+  );
 }
 
 export async function deleteCatalogEndpoint(baseUrl: string, endpointId: string): Promise<CatalogDeleteEndpointResponse> {

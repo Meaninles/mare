@@ -101,6 +101,12 @@ func NewService(
 func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEndpointRequest) (EndpointRecord, error) {
 	endpointType := resolveRequestedEndpointType(request.EndpointType, request.ConnectionConfig)
 	if endpointType == "" {
+		slog.Warn(
+			"register endpoint missing type",
+			"requestedType", strings.TrimSpace(request.EndpointType),
+			"connectionConfigKeys", summarizeJSONKeys(request.ConnectionConfig),
+			"rootPath", strings.TrimSpace(request.RootPath),
+		)
 		return EndpointRecord{}, errors.New("endpoint type is required")
 	}
 
@@ -242,6 +248,23 @@ func hasAnyMapKey(payload map[string]any, keys ...string) bool {
 		}
 	}
 	return false
+}
+
+func summarizeJSONKeys(raw json.RawMessage) []string {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return []string{"<invalid-json>"}
+	}
+
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func (service *Service) ListEndpoints(ctx context.Context) ([]EndpointRecord, error) {

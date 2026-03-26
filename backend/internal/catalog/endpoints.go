@@ -22,8 +22,18 @@ func (service *Service) UpdateEndpoint(ctx context.Context, endpointID string, r
 		return EndpointRecord{}, err
 	}
 
-	endpointType := normalizeEndpointType(defaultString(strings.TrimSpace(request.EndpointType), existing.EndpointType))
+	endpointType := resolveRequestedEndpointType(
+		defaultString(strings.TrimSpace(request.EndpointType), existing.EndpointType),
+		request.ConnectionConfig,
+	)
 	if endpointType == "" {
+		slog.Warn(
+			"update endpoint missing type",
+			"endpointId", existing.ID,
+			"requestedType", strings.TrimSpace(request.EndpointType),
+			"existingType", existing.EndpointType,
+			"connectionConfigKeys", summarizeJSONKeys(request.ConnectionConfig),
+		)
 		return EndpointRecord{}, fmt.Errorf("endpoint type is required")
 	}
 

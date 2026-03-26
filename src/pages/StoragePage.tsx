@@ -52,9 +52,12 @@ const networkLoginMethodOptions = [
   { value: "manual", label: "手动填写凭证" }
 ] as const;
 
-const cloud115AppOptions = [
-  { value: "windows", label: "Windows" },
+const cloud115AvailableAppOptions = [
+  { value: "wechatmini", label: "微信小程序" },
   { value: "android", label: "安卓" },
+  { value: "alipaymini", label: "支付宝小程序" },
+  { value: "qandroid", label: "115 生活" },
+  { value: "tv", label: "电视" },
   { value: "ios", label: "iOS" },
   { value: "web", label: "网页" }
 ] as const;
@@ -597,7 +600,7 @@ export function StoragePage() {
                 <label className="field">
                   <span>扫码设备类型</span>
                   <select value={form.networkAppType} onChange={(event) => updateForm("networkAppType", event.target.value)}>
-                    {cloud115AppOptions.map((option) => (
+                    {cloud115AvailableAppOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
@@ -906,7 +909,7 @@ function createEmptyForm(selectedMountPoint: string): EndpointFormState {
     networkDriver: "",
     networkRootFolderId: "0",
     networkLoginMethod: "qrcode",
-    networkAppType: "windows",
+    networkAppType: "wechatmini",
     networkCredential: "",
     networkHasStoredCredential: false,
     networkPageSize: 1000,
@@ -938,7 +941,7 @@ function createFormFromEndpoint(endpoint: CatalogEndpoint, devices: DeviceInfo[]
       endpointType === "NETWORK_STORAGE" ? getString(config, "rootFolderId") || getString(config, "root_folder_id") || "0" : "0",
     networkLoginMethod:
       endpointType === "NETWORK_STORAGE" ? normalizeNetworkLoginMethod(getString(config, "loginMethod")) : "qrcode",
-    networkAppType: endpointType === "NETWORK_STORAGE" ? getString(config, "appType") || "windows" : "windows",
+    networkAppType: endpointType === "NETWORK_STORAGE" ? getString(config, "appType") || "wechatmini" : "wechatmini",
     networkCredential: endpointType === "NETWORK_STORAGE" ? getString(config, "credential") : "",
     networkHasStoredCredential: endpointType === "NETWORK_STORAGE" ? endpoint.hasCredential || !!getString(config, "credential") : false,
     networkPageSize: endpointType === "NETWORK_STORAGE" ? getNumber(config, "pageSize", 1000) : 1000,
@@ -1027,19 +1030,6 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
 }
 
 function resolveSubmissionEndpointType(form: EndpointFormState): EndpointType {
-  if (form.endpointType === "NETWORK_STORAGE") {
-    return "NETWORK_STORAGE";
-  }
-  if (
-    form.networkCredential.trim() ||
-    form.networkProvider === "115" ||
-    form.networkStorageKey.trim() ||
-    form.networkMountPath.trim() ||
-    form.networkDriver.trim() ||
-    form.networkRootFolderId.trim() !== "0"
-  ) {
-    return "NETWORK_STORAGE";
-  }
   return form.endpointType;
 }
 

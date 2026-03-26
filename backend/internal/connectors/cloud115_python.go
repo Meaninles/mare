@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const defaultCloud115AppType = "windows"
+const defaultCloud115AppType = "wechatmini"
 
 type Cloud115PythonClient struct {
 	credential string
@@ -81,10 +81,12 @@ func NewCloud115PythonClient(credential string, appType string) *Cloud115PythonC
 func normalizeCloud115AppType(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
-	case "", "desktop", "os_windows":
+	case "", "desktop", "os_windows", "windows", "mac", "linux":
 		return defaultCloud115AppType
-	default:
+	case "wechatmini", "alipaymini", "qandroid", "tv", "android", "ios", "web":
 		return normalized
+	default:
+		return defaultCloud115AppType
 	}
 }
 

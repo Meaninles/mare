@@ -75,7 +75,7 @@ func (service *Service) prepareNetworkStorageEndpoint(
 
 	runtime := service.getAListRuntime()
 	if _, err := runtime.EnsureStorage(ctx, storageSpec); err != nil {
-		return alistEndpointConfig{}, nil, err
+		return alistEndpointConfig{}, nil, wrapNetworkStorageRuntimeError(err)
 	}
 
 	return alistEndpointConfig{
@@ -227,10 +227,10 @@ func normalizeNetworkStorageLoginMethod(value string) string {
 
 func normalizeNetworkStorageAppType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "android", "ios", "web":
+	case "wechatmini", "alipaymini", "qandroid", "tv", "android", "ios", "web":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
-		return "windows"
+		return "wechatmini"
 	}
 }
 
@@ -250,4 +250,19 @@ func networkStorageMountPath(provider string, storageKey string) string {
 		storageKey = uuid.NewString()
 	}
 	return normalizeAListEndpointPath(fmt.Sprintf("/network/%s/%s", provider, storageKey))
+}
+
+func wrapNetworkStorageRuntimeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "user not login"), strings.Contains(message, "登录超时"):
+		return fmt.Errorf("115 登录已失效，请编辑该网盘端点后重新扫码登录。推荐使用微信小程序、支付宝小程序、115生活或电视设备类型，避免使用安卓、iOS、网页")
+	case strings.Contains(message, "repeat login"):
+		return fmt.Errorf("115 检测到重复登录，当前凭证不可用。请重新扫码登录，并优先选择微信小程序、支付宝小程序、115生活或电视设备类型")
+	default:
+		return err
+	}
 }

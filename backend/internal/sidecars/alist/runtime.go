@@ -197,32 +197,34 @@ func (runtime *Runtime) EnsureStorage(ctx context.Context, spec StorageSpec) (St
 			return existing, nil
 		}
 		if err := runtime.updateStorage(ctx, token, spec); err != nil {
+			if recovered, ok, recoverErr := runtime.recoverStorageAfterMutationError(ctx, token, spec, err); recoverErr == nil && ok {
+				return recovered, nil
+			}
 			return Storage{}, err
 		}
-		storages, err = runtime.listStorages(ctx, token)
+		updated, ok, err := runtime.findStorageByMountPath(ctx, token, spec.MountPath)
 		if err != nil {
 			return Storage{}, err
 		}
-		for _, updated := range storages {
-			if strings.EqualFold(updated.MountPath, spec.MountPath) {
-				return updated, nil
-			}
+		if ok {
+			return updated, nil
 		}
 		return Storage{}, fmt.Errorf("alist storage %q updated but could not be reloaded", spec.MountPath)
 	}
 
 	if err := runtime.createStorage(ctx, token, spec); err != nil {
+		if recovered, ok, recoverErr := runtime.recoverStorageAfterMutationError(ctx, token, spec, err); recoverErr == nil && ok {
+			return recovered, nil
+		}
 		return Storage{}, err
 	}
 
-	storages, err = runtime.listStorages(ctx, token)
+	created, ok, err := runtime.findStorageByMountPath(ctx, token, spec.MountPath)
 	if err != nil {
 		return Storage{}, err
 	}
-	for _, created := range storages {
-		if strings.EqualFold(created.MountPath, spec.MountPath) {
-			return created, nil
-		}
+	if ok {
+		return created, nil
 	}
 	return Storage{}, fmt.Errorf("alist storage %q created but could not be found", spec.MountPath)
 }
@@ -537,6 +539,57 @@ func (runtime *Runtime) createStorage(ctx context.Context, token string, spec St
 
 func (runtime *Runtime) updateStorage(ctx context.Context, token string, spec StorageSpec) error {
 	return runtime.doJSON(ctx, token, http.MethodPost, "/api/admin/storage/update", specToPayload(spec), nil)
+}
+
+func (runtime *Runtime) findStorageByMountPath(ctx context.Context, token string, mountPath string) (Storage, bool, error) {
+	storages, err := runtime.listStorages(ctx, token)
+	if err != nil {
+		return Storage{}, false, err
+	}
+	for _, storage := range storages {
+		if strings.EqualFold(storage.MountPath, mountPath) {
+			return storage, true, nil
+		}
+	}
+	return Storage{}, false, nil
+}
+
+func (runtime *Runtime) recoverStorageAfterMutationError(
+	ctx context.Context,
+	token string,
+	spec StorageSpec,
+	mutationErr error,
+) (Storage, bool, error) {
+	if !isRecoverableStorageMutationError(mutationErr) {
+		return Storage{}, false, nil
+	}
+
+	storage, ok, err := runtime.findStorageByMountPath(ctx, token, spec.MountPath)
+	if err != nil || !ok {
+		return Storage{}, ok, err
+	}
+	if err := runtime.verifyStorageAccessible(ctx, token, storage.MountPath); err != nil {
+		return Storage{}, false, nil
+	}
+	return storage, true, nil
+}
+
+func isRecoverableStorageMutationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "failed init storage") || strings.Contains(message, "storage is already created")
+}
+
+func (runtime *Runtime) verifyStorageAccessible(ctx context.Context, token string, mountPath string) error {
+	return runtime.doJSON(ctx, token, http.MethodPost, "/api/fs/list", map[string]any{
+		"path":     normalizeAListPath(mountPath),
+		"password": "",
+		"page":     1,
+		"per_page": 1,
+		"refresh":  true,
+	}, nil)
 }
 
 func (runtime *Runtime) doJSON(ctx context.Context, token string, method string, requestPath string, payload any, destination any) error {
