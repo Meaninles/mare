@@ -22,10 +22,13 @@ func (service *Service) UpdateEndpoint(ctx context.Context, endpointID string, r
 		return EndpointRecord{}, err
 	}
 
-	endpointType := resolveRequestedEndpointType(
+	endpointType, endpointTypeErr := resolveRequestedEndpointType(
 		defaultString(strings.TrimSpace(request.EndpointType), existing.EndpointType),
 		request.ConnectionConfig,
 	)
+	if endpointTypeErr != nil {
+		return EndpointRecord{}, endpointTypeErr
+	}
 	if endpointType == "" {
 		slog.Warn(
 			"update endpoint missing type",

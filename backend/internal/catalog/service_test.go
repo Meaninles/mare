@@ -177,14 +177,14 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 			UpdatedAt:          now,
 		},
 		{
-			ID:                 "endpoint-cloud",
-			Name:               "115 Cloud",
-			EndpointType:       string(connectors.EndpointTypeCloud115),
-			RootPath:           "0",
+			ID:                 "endpoint-removable",
+			Name:               "Removable Media",
+			EndpointType:       string(connectors.EndpointTypeRemovable),
+			RootPath:           `E:\Media`,
 			RoleMode:           "MANAGED",
-			IdentitySignature:  "cloud-media",
+			IdentitySignature:  "removable-media",
 			AvailabilityStatus: "AVAILABLE",
-			ConnectionConfig:   `{"rootId":"0","accessToken":"token","appType":"windows"}`,
+			ConnectionConfig:   `{"device":{"mountPoint":"E:\\Media"}}`,
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		},
@@ -222,15 +222,15 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 					},
 				},
 			},
-			"endpoint-cloud": {
+			"endpoint-removable": {
 				descriptor: connectors.Descriptor{
-					Name:     "115 Cloud",
-					Type:     connectors.EndpointTypeCloud115,
-					RootPath: "0",
+					Name:     "Removable Media",
+					Type:     connectors.EndpointTypeRemovable,
+					RootPath: `E:\Media`,
 				},
 				listing: map[string][]connectors.FileEntry{
 					"": {
-						fileEntry("115://0/Projects/Photo.JPG", "Projects/Photo.JPG", connectors.MediaTypeImage, now),
+						fileEntry(`E:\Media\Projects\Photo.JPG`, "Projects/Photo.JPG", connectors.MediaTypeImage, now),
 					},
 				},
 			},
@@ -285,8 +285,8 @@ func TestListAssetsTracksAvailableAndMissingReplicaCounts(t *testing.T) {
 	if resolvedDirectories["endpoint-qnap"] != `\\qnap\share\Media\projects` {
 		t.Fatalf("expected qnap resolved directory \\\\qnap\\share\\Media\\projects, got %s", resolvedDirectories["endpoint-qnap"])
 	}
-	if resolvedDirectories["endpoint-cloud"] != "0:/projects" {
-		t.Fatalf("expected cloud resolved directory 0:/projects, got %s", resolvedDirectories["endpoint-cloud"])
+	if resolvedDirectories["endpoint-removable"] != `E:\Media\projects` {
+		t.Fatalf("expected removable resolved directory E:\\Media\\projects, got %s", resolvedDirectories["endpoint-removable"])
 	}
 
 	factory.connectorsByEndpoint["endpoint-qnap"].listing = map[string][]connectors.FileEntry{
@@ -719,14 +719,14 @@ func TestListAssetsAddsSyntheticMissingReplicasForManagedEndpointsWithoutReplica
 			UpdatedAt:          now,
 		},
 		{
-			ID:                 "endpoint-cloud",
-			Name:               "115 Cloud",
-			EndpointType:       string(connectors.EndpointTypeCloud115),
-			RootPath:           "0",
+			ID:                 "endpoint-removable",
+			Name:               "Removable Media",
+			EndpointType:       string(connectors.EndpointTypeRemovable),
+			RootPath:           `E:\Media`,
 			RoleMode:           "MANAGED",
-			IdentitySignature:  "cloud-media",
+			IdentitySignature:  "removable-media",
 			AvailabilityStatus: "AVAILABLE",
-			ConnectionConfig:   `{"rootId":"0","accessToken":"token","appType":"windows"}`,
+			ConnectionConfig:   `{"device":{"mountPoint":"E:\\Media"}}`,
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		},
@@ -753,10 +753,10 @@ func TestListAssetsAddsSyntheticMissingReplicasForManagedEndpointsWithoutReplica
 	}
 
 	replica := store.Replica{
-		ID:            "replica-cloud",
+		ID:            "replica-removable",
 		AssetID:       asset.ID,
-		EndpointID:    "endpoint-cloud",
-		PhysicalPath:  "115://0/projects/clip.mp4",
+		EndpointID:    "endpoint-removable",
+		PhysicalPath:  `E:\Media\projects\clip.mp4`,
 		ReplicaStatus: string(ReplicaStatusActive),
 		ExistsFlag:    true,
 		CreatedAt:     now,
@@ -768,11 +768,11 @@ func TestListAssetsAddsSyntheticMissingReplicasForManagedEndpointsWithoutReplica
 
 	service := NewService(dataStore, (&fakeConnectorFactory{
 		connectorsByEndpoint: map[string]*fakeConnector{
-			"endpoint-cloud": {
+			"endpoint-removable": {
 				descriptor: connectors.Descriptor{
-					Name:     "115 Cloud",
-					Type:     connectors.EndpointTypeCloud115,
-					RootPath: "0",
+					Name:     "Removable Media",
+					Type:     connectors.EndpointTypeRemovable,
+					RootPath: `E:\Media`,
 					Capabilities: connectors.Capabilities{
 						CanReadStream: true,
 					},
@@ -1056,7 +1056,7 @@ func TestDeleteEndpointRemovesReplicaRecordsAndUpdatesImportRules(t *testing.T) 
 	}
 }
 
-func TestRegisterEndpointStoresCloudCredentialOutsideLibraryDB(t *testing.T) {
+func TestRegisterEndpointRejectsLegacyCloudEndpointType(t *testing.T) {
 	credentialRoot := t.TempDir()
 	t.Setenv("MAM_CREDENTIAL_VAULT_DIR", credentialRoot)
 
@@ -1073,43 +1073,25 @@ func TestRegisterEndpointStoresCloudCredentialOutsideLibraryDB(t *testing.T) {
 		return &fakeConnector{
 			descriptor: connectors.Descriptor{
 				Name:     endpoint.Name,
-				Type:     connectors.EndpointTypeCloud115,
+				Type:     connectors.EndpointTypeLocal,
 				RootPath: endpoint.RootPath,
 			},
 		}, nil
 	}, WithAutoQueueDerivedMedia(false))
 
 	record, err := service.RegisterEndpoint(context.Background(), RegisterEndpointRequest{
-		Name:               "115 Cloud",
-		EndpointType:       string(connectors.EndpointTypeCloud115),
+		Name:               "115 网盘",
+		EndpointType:       "115",
 		RootPath:           "0",
 		RoleMode:           "MANAGED",
 		AvailabilityStatus: "AVAILABLE",
 		ConnectionConfig:   json.RawMessage(`{"rootId":"0","accessToken":"token-123","appType":"windows"}`),
 	})
-	if err != nil {
-		t.Fatalf("register endpoint: %v", err)
+	if err == nil {
+		t.Fatalf("expected legacy cloud endpoint type to be rejected, got record %+v", record)
 	}
-
-	if !record.HasCredential {
-		t.Fatal("expected cloud endpoint to report a stored local credential")
-	}
-	if strings.TrimSpace(record.CredentialRef) == "" {
-		t.Fatal("expected cloud endpoint to expose a credential ref")
-	}
-
-	storedEndpoint, err := dataStore.GetStorageEndpointByID(context.Background(), record.ID)
-	if err != nil {
-		t.Fatalf("load stored endpoint: %v", err)
-	}
-	if strings.Contains(strings.ToLower(storedEndpoint.ConnectionConfig), "token-123") {
-		t.Fatalf("expected library db to exclude raw credential secret, got %s", storedEndpoint.ConnectionConfig)
-	}
-	if strings.TrimSpace(storedEndpoint.CredentialRef) == "" {
-		t.Fatal("expected stored endpoint to keep a credential ref")
-	}
-	if !strings.Contains(storedEndpoint.ConnectionConfig, `"rootId":"0"`) {
-		t.Fatalf("expected stored connection config to keep portable metadata, got %s", storedEndpoint.ConnectionConfig)
+	if !strings.Contains(err.Error(), "NETWORK_STORAGE") {
+		t.Fatalf("expected error to direct callers to NETWORK_STORAGE, got %v", err)
 	}
 }
 

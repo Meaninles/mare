@@ -1388,10 +1388,8 @@ func readableReplicaPriority(endpointType string) int {
 		return 1
 	case string(connectors.EndpointTypeQNAP):
 		return 2
-	case string(connectors.EndpointTypeCloud115):
+	case string(connectors.EndpointTypeNetwork):
 		return 3
-	case string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
-		return 4
 	default:
 		return 9
 	}

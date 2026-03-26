@@ -12,7 +12,7 @@ import (
 	"mam/backend/internal/store"
 )
 
-func TestRestoreAssetCopiesReplicaToTargetEndpoint(t *testing.T) {
+func TestQueueRestoreAssetCopiesReplicaToTargetEndpoint(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -102,19 +102,19 @@ func TestRestoreAssetCopiesReplicaToTargetEndpoint(t *testing.T) {
 
 	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
-	summary, err := service.RestoreAsset(ctx, RestoreAssetRequest{
+	summary, err := service.QueueRestoreAsset(ctx, RestoreAssetRequest{
 		AssetID:          asset.ID,
 		SourceEndpointID: sourceEndpoint.ID,
 		TargetEndpointID: targetEndpoint.ID,
 	})
 	if err != nil {
-		t.Fatalf("restore asset: %v", err)
+		t.Fatalf("queue restore asset: %v", err)
 	}
-	if summary.Status != taskStatusSuccess {
-		t.Fatalf("expected success status, got %s", summary.Status)
+	if summary.Status != taskStatusQueued {
+		t.Fatalf("expected queued status, got %s", summary.Status)
 	}
-	if !summary.CreatedReplica {
-		t.Fatal("expected restore to create target replica")
+	if err := service.runTransferTask(ctx, summary.TaskID); err != nil {
+		t.Fatalf("run queued restore task: %v", err)
 	}
 
 	restoredPath := filepath.Join(targetRoot, "Projects", "Clip.mp4")
@@ -151,9 +151,20 @@ func TestRestoreAssetCopiesReplicaToTargetEndpoint(t *testing.T) {
 	if tasks[0].Status != taskStatusSuccess {
 		t.Fatalf("expected restore task success, got %s", tasks[0].Status)
 	}
+
+	detail, err := service.GetTransferTaskDetail(ctx, summary.TaskID)
+	if err != nil {
+		t.Fatalf("get transfer task detail: %v", err)
+	}
+	if detail.Task.Status != taskStatusSuccess {
+		t.Fatalf("expected transfer detail success, got %s", detail.Task.Status)
+	}
+	if len(detail.Items) != 1 {
+		t.Fatalf("expected 1 transfer item, got %d", len(detail.Items))
+	}
 }
 
-func TestRestoreAssetsToEndpointReportsPartialFailure(t *testing.T) {
+func TestQueueRestoreAssetsToEndpointReportsPartialFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -268,24 +279,18 @@ func TestRestoreAssetsToEndpointReportsPartialFailure(t *testing.T) {
 
 	service := NewService(dataStore, nil, WithAutoQueueDerivedMedia(false))
 
-	summary, err := service.RestoreAssetsToEndpoint(ctx, BatchRestoreRequest{
+	summary, err := service.QueueRestoreAssetsToEndpoint(ctx, BatchRestoreRequest{
 		TargetEndpointID: targetEndpoint.ID,
 		AssetIDs:         []string{recoverableAsset.ID, failingAsset.ID},
 	})
-	if err == nil {
-		t.Fatal("expected partial batch restore failure")
+	if err != nil {
+		t.Fatalf("queue batch restore: %v", err)
 	}
-	if summary.SuccessCount != 1 {
-		t.Fatalf("expected 1 successful restore, got %d", summary.SuccessCount)
+	if summary.Status != taskStatusQueued {
+		t.Fatalf("expected queued batch status, got %s", summary.Status)
 	}
-	if summary.FailedCount != 1 {
-		t.Fatalf("expected 1 failed restore, got %d", summary.FailedCount)
-	}
-	if summary.Status != taskStatusFailed {
-		t.Fatalf("expected failed batch task status, got %s", summary.Status)
-	}
-	if len(summary.Items) != 2 {
-		t.Fatalf("expected 2 batch items, got %d", len(summary.Items))
+	if err := service.runTransferTask(ctx, summary.TaskID); err != nil {
+		t.Fatalf("run queued batch restore task: %v", err)
 	}
 
 	restoredPath := filepath.Join(targetRoot, "Projects", "Photo.jpg")
@@ -302,6 +307,17 @@ func TestRestoreAssetsToEndpointReportsPartialFailure(t *testing.T) {
 	}
 	if tasks[0].Status != taskStatusFailed {
 		t.Fatalf("expected batch task failed, got %s", tasks[0].Status)
+	}
+
+	detail, err := service.GetTransferTaskDetail(ctx, summary.TaskID)
+	if err != nil {
+		t.Fatalf("get batch transfer detail: %v", err)
+	}
+	if detail.Task.Status != taskStatusFailed {
+		t.Fatalf("expected batch transfer detail failed, got %s", detail.Task.Status)
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("expected 2 batch transfer items, got %d", len(detail.Items))
 	}
 }
 

@@ -8,6 +8,53 @@ import (
 	"mam/backend/internal/platform"
 )
 
+func (server *Server) handleTransferSettings(w http.ResponseWriter, r *http.Request) {
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		preferences, err := catalogService.GetTransferPreferences(r.Context())
+		if err != nil {
+			server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		server.writeJSON(w, http.StatusOK, map[string]any{
+			"success":     true,
+			"preferences": preferences,
+		})
+	case http.MethodPut:
+		var request catalog.UpdateTransferPreferencesRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			server.writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   "invalid JSON payload",
+			})
+			return
+		}
+
+		preferences, err := catalogService.UpdateTransferPreferences(r.Context(), request)
+		if err != nil {
+			server.writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		server.writeJSON(w, http.StatusOK, map[string]any{
+			"success":     true,
+			"preferences": preferences,
+		})
+	default:
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	}
+}
+
 func (server *Server) handleSettingsBackupExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})

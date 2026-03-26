@@ -58,7 +58,7 @@ func (service *Service) RetryTask(ctx context.Context, taskID string) (RetryTask
 			return summary, fmt.Errorf("decode restore task payload: %w", err)
 		}
 
-		result, retryErr := service.RestoreAsset(ctx, request)
+		result, retryErr := service.QueueRestoreAsset(ctx, request)
 		summary.NewTaskID = result.TaskID
 		if retryErr != nil {
 			summary.Message = retryErr.Error()
@@ -74,7 +74,7 @@ func (service *Service) RetryTask(ctx context.Context, taskID string) (RetryTask
 			return summary, fmt.Errorf("decode batch restore task payload: %w", err)
 		}
 
-		result, retryErr := service.RestoreAssetsToEndpoint(ctx, request)
+		result, retryErr := service.QueueRestoreAssetsToEndpoint(ctx, request)
 		summary.NewTaskID = result.TaskID
 		if retryErr != nil {
 			summary.Message = retryErr.Error()
@@ -108,7 +108,7 @@ func (service *Service) RetryTask(ctx context.Context, taskID string) (RetryTask
 			return summary, fmt.Errorf("decode import task payload: %w", err)
 		}
 
-		result, retryErr := service.ExecuteImport(ctx, request)
+		result, retryErr := service.QueueImportExecution(ctx, request)
 		summary.NewTaskID = result.TaskID
 		if retryErr != nil {
 			summary.Message = retryErr.Error()

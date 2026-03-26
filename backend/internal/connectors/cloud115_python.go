@@ -100,7 +100,7 @@ func StartCloud115QRCodeLogin(ctx context.Context, appType string) (*Cloud115QRC
 		return nil, err
 	}
 	if response.QRCodeSession == nil {
-		return nil, newConnectorError(EndpointTypeCloud115, "qrcode_start", ErrorCodeUnavailable, "115 bridge returned no qr session", true, nil)
+		return nil, newConnectorError(EndpointTypeNetwork, "qrcode_start", ErrorCodeUnavailable, "115 bridge returned no qr session", true, nil)
 	}
 	return response.QRCodeSession, nil
 }
@@ -124,7 +124,7 @@ func PollCloud115QRCodeLogin(
 		return nil, err
 	}
 	if response.QRCodeSession == nil {
-		return nil, newConnectorError(EndpointTypeCloud115, "qrcode_poll", ErrorCodeUnavailable, "115 bridge returned no qr session", true, nil)
+		return nil, newConnectorError(EndpointTypeNetwork, "qrcode_poll", ErrorCodeUnavailable, "115 bridge returned no qr session", true, nil)
 	}
 	return response.QRCodeSession, nil
 }
@@ -169,7 +169,7 @@ func (client *Cloud115PythonClient) StatEntry(ctx context.Context, rootID string
 		return FileEntry{}, err
 	}
 	if response.Entry == nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "stat_entry", ErrorCodeUnavailable, "115 bridge returned no entry", true, nil)
+		return FileEntry{}, newConnectorError(EndpointTypeNetwork, "stat_entry", ErrorCodeUnavailable, "115 bridge returned no entry", true, nil)
 	}
 	return *response.Entry, nil
 }
@@ -190,7 +190,7 @@ func (client *Cloud115PythonClient) CopyIn(ctx context.Context, rootID string, d
 	if strings.TrimSpace(tempPath) == "" {
 		tempFile, err := os.CreateTemp("", "mam-115-upload-*")
 		if err != nil {
-			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to create temporary upload file", true, err)
+			return FileEntry{}, newConnectorError(EndpointTypeNetwork, "copy_in", ErrorCodeUnavailable, "unable to create temporary upload file", true, err)
 		}
 		tempPath = tempFile.Name()
 		if !shouldKeep {
@@ -199,10 +199,10 @@ func (client *Cloud115PythonClient) CopyIn(ctx context.Context, rootID string, d
 
 		if _, copyErr := io.Copy(tempFile, source); copyErr != nil {
 			tempFile.Close()
-			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to stage upload content", true, copyErr)
+			return FileEntry{}, newConnectorError(EndpointTypeNetwork, "copy_in", ErrorCodeUnavailable, "unable to stage upload content", true, copyErr)
 		}
 		if closeErr := tempFile.Close(); closeErr != nil {
-			return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "unable to close staged upload content", true, closeErr)
+			return FileEntry{}, newConnectorError(EndpointTypeNetwork, "copy_in", ErrorCodeUnavailable, "unable to close staged upload content", true, closeErr)
 		}
 	}
 
@@ -218,7 +218,7 @@ func (client *Cloud115PythonClient) CopyIn(ctx context.Context, rootID string, d
 		return FileEntry{}, callErr
 	}
 	if response.Entry == nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "copy_in", ErrorCodeUnavailable, "115 bridge returned no uploaded entry", true, nil)
+		return FileEntry{}, newConnectorError(EndpointTypeNetwork, "copy_in", ErrorCodeUnavailable, "115 bridge returned no uploaded entry", true, nil)
 	}
 	return *response.Entry, nil
 }
@@ -226,7 +226,7 @@ func (client *Cloud115PythonClient) CopyIn(ctx context.Context, rootID string, d
 func (client *Cloud115PythonClient) CopyOut(ctx context.Context, rootID string, sourcePath string, destination io.Writer) error {
 	tempFile, err := os.CreateTemp("", "mam-115-download-*")
 	if err != nil {
-		return newConnectorError(EndpointTypeCloud115, "copy_out", ErrorCodeUnavailable, "unable to create temporary download file", true, err)
+		return newConnectorError(EndpointTypeNetwork, "copy_out", ErrorCodeUnavailable, "unable to create temporary download file", true, err)
 	}
 	tempPath := tempFile.Name()
 	tempFile.Close()
@@ -245,12 +245,12 @@ func (client *Cloud115PythonClient) CopyOut(ctx context.Context, rootID string, 
 
 	file, openErr := os.Open(tempPath)
 	if openErr != nil {
-		return newConnectorError(EndpointTypeCloud115, "copy_out", ErrorCodeUnavailable, "unable to open downloaded temporary file", true, openErr)
+		return newConnectorError(EndpointTypeNetwork, "copy_out", ErrorCodeUnavailable, "unable to open downloaded temporary file", true, openErr)
 	}
 	defer file.Close()
 
 	if _, copyErr := io.Copy(destination, file); copyErr != nil {
-		return newConnectorError(EndpointTypeCloud115, "copy_out", ErrorCodeUnavailable, "unable to copy downloaded content", true, copyErr)
+		return newConnectorError(EndpointTypeNetwork, "copy_out", ErrorCodeUnavailable, "unable to copy downloaded content", true, copyErr)
 	}
 
 	return nil
@@ -280,7 +280,7 @@ func (client *Cloud115PythonClient) RenameEntry(ctx context.Context, rootID stri
 		return FileEntry{}, err
 	}
 	if response.Entry == nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "rename_entry", ErrorCodeUnavailable, "115 bridge returned no renamed entry", true, nil)
+		return FileEntry{}, newConnectorError(EndpointTypeNetwork, "rename_entry", ErrorCodeUnavailable, "115 bridge returned no renamed entry", true, nil)
 	}
 	return *response.Entry, nil
 }
@@ -298,7 +298,7 @@ func (client *Cloud115PythonClient) MoveEntry(ctx context.Context, rootID string
 		return FileEntry{}, err
 	}
 	if response.Entry == nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "move_entry", ErrorCodeUnavailable, "115 bridge returned no moved entry", true, nil)
+		return FileEntry{}, newConnectorError(EndpointTypeNetwork, "move_entry", ErrorCodeUnavailable, "115 bridge returned no moved entry", true, nil)
 	}
 	return *response.Entry, nil
 }
@@ -315,21 +315,21 @@ func (client *Cloud115PythonClient) MakeDirectory(ctx context.Context, rootID st
 		return FileEntry{}, err
 	}
 	if response.Entry == nil {
-		return FileEntry{}, newConnectorError(EndpointTypeCloud115, "make_directory", ErrorCodeUnavailable, "115 bridge returned no directory entry", true, nil)
+		return FileEntry{}, newConnectorError(EndpointTypeNetwork, "make_directory", ErrorCodeUnavailable, "115 bridge returned no directory entry", true, nil)
 	}
 	return *response.Entry, nil
 }
 
 func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115BridgeRequest, requireCredential bool) (cloud115BridgeResponse, error) {
 	if requireCredential && strings.TrimSpace(client.credential) == "" {
-		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeCloud115, request.Operation, ErrorCodeAuthentication, "115 session credential is required", false, nil)
+		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeNetwork, request.Operation, ErrorCodeAuthentication, "115 session credential is required", false, nil)
 	}
 	if strings.TrimSpace(client.scriptPath) == "" {
-		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeCloud115, request.Operation, ErrorCodeInvalidConfig, "115 bridge script path is empty", false, nil)
+		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeNetwork, request.Operation, ErrorCodeInvalidConfig, "115 bridge script path is empty", false, nil)
 	}
 	if !cloud115PathMatches(client.scriptPath, false) {
 		return cloud115BridgeResponse{}, newConnectorError(
-			EndpointTypeCloud115,
+			EndpointTypeNetwork,
 			request.Operation,
 			ErrorCodeInvalidConfig,
 			"115 bridge script not found: "+client.scriptPath,
@@ -345,7 +345,7 @@ func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115Br
 
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeCloud115, request.Operation, ErrorCodeUnavailable, "unable to encode 115 bridge request", true, err)
+		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeNetwork, request.Operation, ErrorCodeUnavailable, "unable to encode 115 bridge request", true, err)
 	}
 
 	command := exec.CommandContext(ctx, client.pythonCmd, client.scriptPath)
@@ -489,7 +489,7 @@ func classifyCloud115BridgeError(operation string, message string, underlying er
 	case strings.Contains(lower, "cookie"), strings.Contains(lower, "token"), strings.Contains(lower, "login"), strings.Contains(lower, "auth"), strings.Contains(lower, "重新登录"):
 		code = ErrorCodeAuthentication
 		temporary = false
-	case strings.Contains(lower, "not found"), strings.Contains(lower, "enoent"), strings.Contains(lower, "不存在"), strings.Contains(lower, "path not found"):
+	case strings.Contains(lower, "not found"), strings.Contains(lower, "enoent"), strings.Contains(lower, "not exist"), strings.Contains(lower, "path not found"):
 		code = ErrorCodeNotFound
 		temporary = false
 	case strings.Contains(lower, "permission"), strings.Contains(lower, "denied"), strings.Contains(lower, "forbidden"):
@@ -500,7 +500,7 @@ func classifyCloud115BridgeError(operation string, message string, underlying er
 		temporary = false
 	}
 
-	return newConnectorError(EndpointTypeCloud115, operation, code, message, temporary, underlying)
+	return newConnectorError(EndpointTypeNetwork, operation, code, message, temporary, underlying)
 }
 
 func ParseCloud115QRTokenTime(value string) int64 {

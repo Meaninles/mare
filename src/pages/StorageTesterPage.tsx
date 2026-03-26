@@ -3,7 +3,7 @@ import {
   getDefaultBackendUrl,
   pollCloud115QRCodeLogin,
   startCloud115QRCodeLogin,
-  testCloud115Connector,
+  testNetworkStorageConnector,
   testQNAPConnector
 } from "../services/connector-test";
 import type { Cloud115QRCodeSession, ConnectorTestResponse } from "../types/connector-test";
@@ -19,21 +19,20 @@ type Operation =
   | "move_entry"
   | "make_directory";
 
-const CLOUD115_APP_OPTIONS = [
-  { value: "windows", label: "Windows" },
+const NETWORK_APP_OPTIONS = [
+  { value: "wechatmini", label: "微信小程序" },
   { value: "android", label: "安卓" },
-  { value: "115android", label: "115 安卓" },
+  { value: "alipaymini", label: "支付宝小程序" },
+  { value: "qandroid", label: "115 生活" },
+  { value: "tv", label: "电视" },
   { value: "ios", label: "iOS" },
-  { value: "115ios", label: "115 iOS" },
-  { value: "mac", label: "macOS" },
-  { value: "linux", label: "Linux" },
   { value: "web", label: "网页" }
-];
+] as const;
 
 export function StorageTesterPage() {
   const [backendUrl, setBackendUrl] = useState(getDefaultBackendUrl());
   const [qnap, setQnap] = useState({
-    name: "QNAP SMB",
+    name: "QNAP / SMB",
     sharePath: "",
     path: "",
     destinationPath: "",
@@ -42,13 +41,15 @@ export function StorageTesterPage() {
     includeDirectories: true,
     mediaOnly: false,
     limit: 50,
-    content: "mare-qnap-test"
+    content: "mam-qnap-test"
   });
-  const [cloud115, setCloud115] = useState({
-    name: "115 网盘",
-    rootId: "0",
-    appType: "windows",
-    accessToken: "",
+  const [networkStorage, setNetworkStorage] = useState({
+    name: "网络存储",
+    provider: "115",
+    loginMethod: "qrcode",
+    rootFolderId: "0",
+    appType: "wechatmini",
+    credential: "",
     path: "",
     destinationPath: "",
     newName: "",
@@ -56,18 +57,18 @@ export function StorageTesterPage() {
     includeDirectories: true,
     mediaOnly: false,
     limit: 50,
-    content: "mare-115-test"
+    content: "mam-network-storage-test"
   });
   const [qnapResult, setQnapResult] = useState<ConnectorTestResponse | null>(null);
-  const [cloud115Result, setCloud115Result] = useState<ConnectorTestResponse | null>(null);
-  const [cloud115QR, setCloud115QR] = useState<Cloud115QRCodeSession | null>(null);
+  const [networkResult, setNetworkResult] = useState<ConnectorTestResponse | null>(null);
+  const [qrSession, setQrSession] = useState<Cloud115QRCodeSession | null>(null);
   const [runningTarget, setRunningTarget] = useState<string | null>(null);
   const qrPollTimerRef = useRef<number | null>(null);
-  const cloud115QRRef = useRef<Cloud115QRCodeSession | null>(null);
+  const qrSessionRef = useRef<Cloud115QRCodeSession | null>(null);
 
   useEffect(() => {
-    cloud115QRRef.current = cloud115QR;
-  }, [cloud115QR]);
+    qrSessionRef.current = qrSession;
+  }, [qrSession]);
 
   useEffect(() => {
     return () => {
@@ -99,83 +100,91 @@ export function StorageTesterPage() {
     }
   }
 
-  async function run115(operation: Operation) {
-    setRunningTarget(`115:${operation}`);
+  async function runNetworkStorage(operation: Operation) {
+    setRunningTarget(`network:${operation}`);
     try {
-      const result = await testCloud115Connector(backendUrl, {
-        name: cloud115.name,
-        rootId: cloud115.rootId,
-        appType: cloud115.appType,
-        accessToken: cloud115.accessToken,
+      const result = await testNetworkStorageConnector(backendUrl, {
+        name: networkStorage.name,
+        provider: networkStorage.provider,
+        loginMethod: networkStorage.loginMethod,
+        rootFolderId: networkStorage.rootFolderId,
+        appType: networkStorage.appType,
+        credential: networkStorage.credential,
         operation,
-        path: cloud115.path,
-        destinationPath: cloud115.destinationPath,
-        newName: cloud115.newName,
-        recursive: cloud115.recursive,
-        includeDirectories: cloud115.includeDirectories,
-        mediaOnly: cloud115.mediaOnly,
-        limit: Number(cloud115.limit),
-        content: cloud115.content
+        path: networkStorage.path,
+        destinationPath: networkStorage.destinationPath,
+        newName: networkStorage.newName,
+        recursive: networkStorage.recursive,
+        includeDirectories: networkStorage.includeDirectories,
+        mediaOnly: networkStorage.mediaOnly,
+        limit: Number(networkStorage.limit),
+        content: networkStorage.content
       });
-      setCloud115Result(result);
+      setNetworkResult(result);
     } finally {
       setRunningTarget(null);
     }
   }
 
-  async function start115QRCode() {
+  async function startQRCode() {
     if (qrPollTimerRef.current !== null) {
       window.clearTimeout(qrPollTimerRef.current);
       qrPollTimerRef.current = null;
     }
-    setRunningTarget("115:qrcode_start");
+
+    setRunningTarget("network:qrcode_start");
     try {
-      const result = await startCloud115QRCodeLogin(backendUrl, cloud115.appType);
-      setCloud115Result(result);
-      if (result.qrCodeSession) {
-        cloud115QRRef.current = result.qrCodeSession;
-        setCloud115QR(result.qrCodeSession);
-        qrPollTimerRef.current = window.setTimeout(() => {
-          void poll115QRCode(false);
-        }, 2500);
+      const result = await startCloud115QRCodeLogin(backendUrl, networkStorage.appType);
+      setNetworkResult(result);
+      if (!result.qrCodeSession) {
+        return;
       }
+
+      qrSessionRef.current = result.qrCodeSession;
+      setQrSession(result.qrCodeSession);
+      qrPollTimerRef.current = window.setTimeout(() => {
+        void pollQRCode(false);
+      }, 2500);
     } finally {
       setRunningTarget(null);
     }
   }
 
-  async function poll115QRCode(manual = false) {
-    const session = cloud115QRRef.current;
-    if (!session) {
+  async function pollQRCode(manual = false) {
+    const currentSession = qrSessionRef.current;
+    if (!currentSession) {
       return;
     }
 
-    setRunningTarget(manual ? "115:qrcode_poll" : null);
+    setRunningTarget(manual ? "network:qrcode_poll" : null);
     try {
-      const result = await pollCloud115QRCodeLogin(backendUrl, session);
-      setCloud115Result(result);
-      if (result.qrCodeSession) {
-        cloud115QRRef.current = result.qrCodeSession;
-        setCloud115QR(result.qrCodeSession);
+      const result = await pollCloud115QRCodeLogin(backendUrl, currentSession);
+      setNetworkResult(result);
+      if (!result.qrCodeSession) {
+        return;
+      }
 
-        if (result.qrCodeSession.credential) {
-          if (qrPollTimerRef.current !== null) {
-            window.clearTimeout(qrPollTimerRef.current);
-            qrPollTimerRef.current = null;
-          }
-          setCloud115((current) => ({
-            ...current,
-            accessToken: result.qrCodeSession?.credential ?? current.accessToken,
-            appType: result.qrCodeSession?.appType ?? current.appType
-          }));
-          return;
-        }
+      qrSessionRef.current = result.qrCodeSession;
+      setQrSession(result.qrCodeSession);
 
-        if ((result.qrCodeSession.statusCode === 0 || result.qrCodeSession.statusCode === 1) && !manual) {
-          qrPollTimerRef.current = window.setTimeout(() => {
-            void poll115QRCode(false);
-          }, 2500);
+      if (result.qrCodeSession.credential) {
+        if (qrPollTimerRef.current !== null) {
+          window.clearTimeout(qrPollTimerRef.current);
+          qrPollTimerRef.current = null;
         }
+        setNetworkStorage((current) => ({
+          ...current,
+          loginMethod: "manual",
+          credential: result.qrCodeSession?.credential ?? current.credential,
+          appType: result.qrCodeSession?.appType ?? current.appType
+        }));
+        return;
+      }
+
+      if (!manual && (result.qrCodeSession.statusCode === 0 || result.qrCodeSession.statusCode === 1)) {
+        qrPollTimerRef.current = window.setTimeout(() => {
+          void pollQRCode(false);
+        }, 2500);
       }
     } finally {
       if (manual) {
@@ -191,11 +200,9 @@ export function StorageTesterPage() {
   return (
     <section className="page-stack">
       <article className="hero-card">
-        <p className="eyebrow">手动连接器验证</p>
-        <h3>在这里手动验证 QNAP SMB 与 115 网盘的连接和基础文件操作。</h3>
-        <p>
-          请先启动 Go 后端。115 建议优先使用扫码登录，这样后端能获得有效会话，并让后续请求统一使用同一设备类型。
-        </p>
+        <p className="eyebrow">存储测试</p>
+        <h3>手动验证 QNAP / SMB 与网络存储端点的连接、目录和基础文件操作。</h3>
+        <p>网络存储测试统一按“网络存储 / 115 网盘”模型执行，底层细节已经内部统一，不再要求用户理解额外的技术类型。</p>
       </article>
 
       <article className="detail-card tester-card">
@@ -209,8 +216,8 @@ export function StorageTesterPage() {
         <article className="detail-card tester-card">
           <div className="tester-header">
             <div>
-              <p className="eyebrow">QNAP</p>
-              <h4>SMB 连接器测试</h4>
+              <p className="eyebrow">QNAP / SMB</p>
+              <h4>本地网络共享测试</h4>
             </div>
           </div>
           <form className="field-grid" onSubmit={preventSubmit}>
@@ -242,7 +249,7 @@ export function StorageTesterPage() {
               <input value={qnap.newName} onChange={(event) => setQnap({ ...qnap, newName: event.target.value })} />
             </label>
             <label className="field field-span">
-              <span>上传 / 覆盖内容</span>
+              <span>上传或覆盖内容</span>
               <textarea value={qnap.content} onChange={(event) => setQnap({ ...qnap, content: event.target.value })} />
             </label>
             <label className="field">
@@ -278,58 +285,53 @@ export function StorageTesterPage() {
               <span>仅媒体文件</span>
             </label>
           </form>
-          <div className="action-row">
-            <button onClick={() => void runQNAP("health_check")} disabled={runningTarget !== null}>
-              连接检查
-            </button>
-            <button onClick={() => void runQNAP("list_entries")} disabled={runningTarget !== null}>
-              列目录
-            </button>
-            <button onClick={() => void runQNAP("stat_entry")} disabled={runningTarget !== null}>
-              读取信息
-            </button>
-            <button onClick={() => void runQNAP("copy_in")} disabled={runningTarget !== null}>
-              上传 / 修改
-            </button>
-            <button onClick={() => void runQNAP("copy_out")} disabled={runningTarget !== null}>
-              下载
-            </button>
-            <button onClick={() => void runQNAP("delete_entry")} disabled={runningTarget !== null}>
-              删除
-            </button>
-            <button onClick={() => void runQNAP("rename_entry")} disabled={runningTarget !== null}>
-              重命名
-            </button>
-            <button onClick={() => void runQNAP("move_entry")} disabled={runningTarget !== null}>
-              移动
-            </button>
-            <button onClick={() => void runQNAP("make_directory")} disabled={runningTarget !== null}>
-              建目录
-            </button>
-          </div>
+          <ActionRow onRun={runQNAP} disabled={runningTarget !== null} />
           <ResultPanel result={qnapResult} />
         </article>
 
         <article className="detail-card tester-card">
           <div className="tester-header">
             <div>
-              <p className="eyebrow">115</p>
-              <h4>网盘连接器测试</h4>
+              <p className="eyebrow">网络存储</p>
+              <h4>115 网盘测试</h4>
             </div>
           </div>
           <form className="field-grid" onSubmit={preventSubmit}>
             <label className="field">
               <span>名称</span>
-              <input value={cloud115.name} onChange={(event) => setCloud115({ ...cloud115, name: event.target.value })} />
+              <input
+                value={networkStorage.name}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, name: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>类型</span>
+              <input value="115 网盘" readOnly />
+            </label>
+            <label className="field">
+              <span>登录方式</span>
+              <select
+                value={networkStorage.loginMethod}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, loginMethod: event.target.value })}
+              >
+                <option value="qrcode">扫码登录</option>
+                <option value="manual">手动填写凭证</option>
+              </select>
             </label>
             <label className="field">
               <span>根目录 ID</span>
-              <input value={cloud115.rootId} onChange={(event) => setCloud115({ ...cloud115, rootId: event.target.value })} />
+              <input
+                value={networkStorage.rootFolderId}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, rootFolderId: event.target.value })}
+              />
             </label>
             <label className="field">
-              <span>设备类型</span>
-              <select value={cloud115.appType} onChange={(event) => setCloud115({ ...cloud115, appType: event.target.value })}>
-                {CLOUD115_APP_OPTIONS.map((option) => (
+              <span>扫码设备类型</span>
+              <select
+                value={networkStorage.appType}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, appType: event.target.value })}
+              >
+                {NETWORK_APP_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -339,143 +341,159 @@ export function StorageTesterPage() {
             <div className="field field-span qr-session-panel">
               <span>扫码登录</span>
               <div className="action-row">
-                <button type="button" onClick={() => void start115QRCode()} disabled={runningTarget !== null}>
+                <button type="button" onClick={() => void startQRCode()} disabled={runningTarget !== null}>
                   开始扫码登录
                 </button>
                 <button
                   type="button"
-                  onClick={() => void poll115QRCode(true)}
-                  disabled={runningTarget !== null || cloud115QR === null}
+                  onClick={() => void pollQRCode(true)}
+                  disabled={runningTarget !== null || qrSession === null}
                 >
                   轮询扫码状态
                 </button>
               </div>
-              {cloud115QR ? (
+              {qrSession ? (
                 <div className="qr-grid">
                   <div className="qr-box">
-                    <img src={cloud115QR.qrCodeUrl} alt="115 二维码" />
+                    <img src={qrSession.qrCodeUrl} alt="115 网盘二维码" />
                   </div>
                   <div className="qr-meta">
                     <div>
                       <strong>状态：</strong>
-                      {cloud115QR.status}
+                      {qrSession.status}
                     </div>
                     <div>
                       <strong>设备：</strong>
-                      {cloud115QR.appType}
+                      {qrSession.appType}
                     </div>
                     <div>
                       <strong>UID：</strong>
-                      {cloud115QR.uid}
+                      {qrSession.uid}
                     </div>
                     <div>
                       <strong>时间：</strong>
-                      {cloud115QR.time}
+                      {qrSession.time}
                     </div>
                   </div>
                 </div>
               ) : (
-                <p className="secondary-text">生成二维码后，用 115 扫码，直到页面回填会话凭证为止。</p>
+                <p className="secondary-text">扫码成功后会自动回填 115 会话凭证，也可以切换到手动填写凭证。</p>
               )}
             </div>
             <label className="field field-span">
-              <span>115 会话凭证</span>
+              <span>凭证</span>
               <input
-                value={cloud115.accessToken}
-                onChange={(event) => setCloud115({ ...cloud115, accessToken: event.target.value })}
+                value={networkStorage.credential}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, credential: event.target.value })}
+                placeholder="扫码成功后会自动填入，或手动粘贴 token / cookie"
               />
             </label>
             <label className="field">
               <span>路径</span>
-              <input value={cloud115.path} onChange={(event) => setCloud115({ ...cloud115, path: event.target.value })} />
+              <input
+                value={networkStorage.path}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, path: event.target.value })}
+              />
             </label>
             <label className="field">
               <span>目标路径</span>
               <input
-                value={cloud115.destinationPath}
-                onChange={(event) => setCloud115({ ...cloud115, destinationPath: event.target.value })}
+                value={networkStorage.destinationPath}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, destinationPath: event.target.value })}
               />
             </label>
             <label className="field">
               <span>新名称</span>
               <input
-                value={cloud115.newName}
-                onChange={(event) => setCloud115({ ...cloud115, newName: event.target.value })}
+                value={networkStorage.newName}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, newName: event.target.value })}
               />
             </label>
             <label className="field field-span">
-              <span>上传 / 覆盖内容</span>
+              <span>上传或覆盖内容</span>
               <textarea
-                value={cloud115.content}
-                onChange={(event) => setCloud115({ ...cloud115, content: event.target.value })}
+                value={networkStorage.content}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, content: event.target.value })}
               />
             </label>
             <label className="field">
               <span>数量上限</span>
               <input
                 type="number"
-                value={cloud115.limit}
-                onChange={(event) => setCloud115({ ...cloud115, limit: Number(event.target.value) })}
+                value={networkStorage.limit}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, limit: Number(event.target.value) })}
               />
             </label>
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={cloud115.recursive}
-                onChange={(event) => setCloud115({ ...cloud115, recursive: event.target.checked })}
+                checked={networkStorage.recursive}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, recursive: event.target.checked })}
               />
               <span>递归列出</span>
             </label>
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={cloud115.includeDirectories}
-                onChange={(event) => setCloud115({ ...cloud115, includeDirectories: event.target.checked })}
+                checked={networkStorage.includeDirectories}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, includeDirectories: event.target.checked })}
               />
               <span>包含目录</span>
             </label>
             <label className="checkbox-field">
               <input
                 type="checkbox"
-                checked={cloud115.mediaOnly}
-                onChange={(event) => setCloud115({ ...cloud115, mediaOnly: event.target.checked })}
+                checked={networkStorage.mediaOnly}
+                onChange={(event) => setNetworkStorage({ ...networkStorage, mediaOnly: event.target.checked })}
               />
               <span>仅媒体文件</span>
             </label>
           </form>
-          <div className="action-row">
-            <button onClick={() => void run115("health_check")} disabled={runningTarget !== null}>
-              连接检查
-            </button>
-            <button onClick={() => void run115("list_entries")} disabled={runningTarget !== null}>
-              列目录
-            </button>
-            <button onClick={() => void run115("stat_entry")} disabled={runningTarget !== null}>
-              读取信息
-            </button>
-            <button onClick={() => void run115("copy_in")} disabled={runningTarget !== null}>
-              上传 / 修改
-            </button>
-            <button onClick={() => void run115("copy_out")} disabled={runningTarget !== null}>
-              下载
-            </button>
-            <button onClick={() => void run115("delete_entry")} disabled={runningTarget !== null}>
-              删除
-            </button>
-            <button onClick={() => void run115("rename_entry")} disabled={runningTarget !== null}>
-              重命名
-            </button>
-            <button onClick={() => void run115("move_entry")} disabled={runningTarget !== null}>
-              移动
-            </button>
-            <button onClick={() => void run115("make_directory")} disabled={runningTarget !== null}>
-              建目录
-            </button>
-          </div>
-          <ResultPanel result={cloud115Result} />
+          <ActionRow onRun={runNetworkStorage} disabled={runningTarget !== null} />
+          <ResultPanel result={networkResult} />
         </article>
       </div>
     </section>
+  );
+}
+
+function ActionRow({
+  onRun,
+  disabled
+}: {
+  onRun: (operation: Operation) => Promise<void>;
+  disabled: boolean;
+}) {
+  return (
+    <div className="action-row">
+      <button onClick={() => void onRun("health_check")} disabled={disabled}>
+        连接检查
+      </button>
+      <button onClick={() => void onRun("list_entries")} disabled={disabled}>
+        列目录
+      </button>
+      <button onClick={() => void onRun("stat_entry")} disabled={disabled}>
+        读取信息
+      </button>
+      <button onClick={() => void onRun("copy_in")} disabled={disabled}>
+        上传 / 修改
+      </button>
+      <button onClick={() => void onRun("copy_out")} disabled={disabled}>
+        下载
+      </button>
+      <button onClick={() => void onRun("delete_entry")} disabled={disabled}>
+        删除
+      </button>
+      <button onClick={() => void onRun("rename_entry")} disabled={disabled}>
+        重命名
+      </button>
+      <button onClick={() => void onRun("move_entry")} disabled={disabled}>
+        移动
+      </button>
+      <button onClick={() => void onRun("make_directory")} disabled={disabled}>
+        建目录
+      </button>
+    </div>
   );
 }
 

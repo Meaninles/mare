@@ -2,6 +2,7 @@ import { HardDrive, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useImportDevices, useSelectImportDeviceRole } from "../hooks/useImport";
+import { getCatalogEndpointTypeLabel } from "../lib/storage-endpoints";
 import type { ImportDeviceRecord, ImportDeviceRole } from "../types/import";
 
 export function RemovableRoleDialog() {
@@ -175,20 +176,5 @@ function getDeviceMeta(device: ImportDeviceRecord) {
 }
 
 function getEndpointTypeLabel(endpointType: string) {
-  switch (endpointType) {
-    case "LOCAL":
-      return "本地";
-    case "QNAP_SMB":
-      return "QNAP / SMB";
-    case "NETWORK_STORAGE":
-      return "网盘";
-    case "CLOUD_115":
-      return "115 网盘";
-    case "ALIST":
-      return "AList 网盘";
-    case "REMOVABLE":
-      return "可移动设备";
-    default:
-      return endpointType;
-  }
+  return getCatalogEndpointTypeLabel(endpointType);
 }

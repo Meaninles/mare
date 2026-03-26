@@ -121,6 +121,7 @@ type Task struct {
 	ID            string     `json:"id"`
 	TaskType      string     `json:"taskType"`
 	Status        string     `json:"status"`
+	Priority      int        `json:"priority"`
 	Payload       string     `json:"payload"`
 	ResultSummary *string    `json:"resultSummary,omitempty"`
 	ErrorMessage  *string    `json:"errorMessage,omitempty"`
@@ -139,6 +140,13 @@ type TaskStatusUpdate struct {
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
 	UpdatedAt     time.Time
+}
+
+type TransferPreferences struct {
+	UploadConcurrency   int
+	DownloadConcurrency int
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type TransferTaskItem struct {

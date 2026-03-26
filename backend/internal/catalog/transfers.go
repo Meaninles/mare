@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,6 +51,12 @@ const (
 	transferConcurrentTasks       = 2
 )
 
+const (
+	defaultUploadConcurrency   = 1
+	defaultDownloadConcurrency = 1
+	maxTransferConcurrency     = 8
+)
+
 type TransferTaskStats struct {
 	GeneratedAt    time.Time `json:"generatedAt"`
 	TotalTasks     int       `json:"totalTasks"`
@@ -77,6 +84,7 @@ type TransferTaskRecord struct {
 	Title           string     `json:"title"`
 	Direction       string     `json:"direction"`
 	Status          string     `json:"status"`
+	Priority        int        `json:"priority"`
 	SourceLabel     string     `json:"sourceLabel,omitempty"`
 	TargetLabel     string     `json:"targetLabel,omitempty"`
 	EngineSummary   string     `json:"engineSummary,omitempty"`
@@ -153,11 +161,18 @@ type TransferTaskActionSummary struct {
 	Message   string   `json:"message"`
 }
 
+type transferQueueSnapshot struct {
+	task   store.Task
+	items  []store.TransferTaskItem
+	record TransferTaskRecord
+}
+
 type transferTaskSummaryPayload struct {
 	TaskID          string `json:"taskId"`
 	Title           string `json:"title"`
 	Direction       string `json:"direction"`
 	Status          string `json:"status"`
+	Priority        int    `json:"priority"`
 	SourceLabel     string `json:"sourceLabel,omitempty"`
 	TargetLabel     string `json:"targetLabel,omitempty"`
 	EngineSummary   string `json:"engineSummary,omitempty"`
@@ -188,6 +203,17 @@ type transferItemMetadata struct {
 	RefreshInterval  int                        `json:"refreshIntervalSeconds,omitempty"`
 	Aria2            *transferItemAria2Metadata `json:"aria2,omitempty"`
 	AList            *transferItemAListMetadata `json:"alist,omitempty"`
+}
+
+type TransferPreferences struct {
+	UploadConcurrency   int       `json:"uploadConcurrency"`
+	DownloadConcurrency int       `json:"downloadConcurrency"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+type UpdateTransferPreferencesRequest struct {
+	UploadConcurrency   int `json:"uploadConcurrency"`
+	DownloadConcurrency int `json:"downloadConcurrency"`
 }
 
 type transferItemAria2Metadata struct {
@@ -372,33 +398,25 @@ func (service *Service) ListTransferTasks(ctx context.Context, limit int) (Trans
 		limit = 120
 	}
 
-	tasks, err := service.store.ListTasks(ctx, maxInt(limit*4, 240), 0)
+	snapshots, err := service.listTransferQueueSnapshots(ctx, maxInt(limit*4, 240))
 	if err != nil {
 		return TransferTaskListResult{}, err
 	}
+	sortTransferTaskSnapshotsForDisplay(snapshots)
 
 	result := TransferTaskListResult{
 		GeneratedAt: time.Now().UTC(),
 		Tasks:       make([]TransferTaskRecord, 0, limit),
 	}
 
-	for _, task := range tasks {
-		if !isTransferTaskType(task.TaskType) {
-			continue
-		}
-
-		items, itemErr := service.store.ListTransferTaskItemsByTaskID(ctx, task.ID)
-		if itemErr != nil {
-			return TransferTaskListResult{}, itemErr
-		}
-
-		record := buildTransferTaskRecord(task, items)
-		result.Tasks = append(result.Tasks, record)
-		accumulateTransferTaskStats(&result.Stats, record, items)
-
+	for _, snapshot := range snapshots {
+		accumulateTransferTaskStats(&result.Stats, snapshot.record, snapshot.items)
+	}
+	for _, snapshot := range snapshots {
 		if len(result.Tasks) >= limit {
 			break
 		}
+		result.Tasks = append(result.Tasks, snapshot.record)
 	}
 
 	result.Stats.GeneratedAt = result.GeneratedAt
@@ -443,6 +461,80 @@ func (service *Service) DeleteTransferTasks(ctx context.Context, taskIDs []strin
 	return service.updateTransferTasks(ctx, taskIDs, "delete")
 }
 
+func (service *Service) PrioritizeTransferTask(ctx context.Context, taskID string) (TransferTaskActionSummary, error) {
+	normalizedTaskID := strings.TrimSpace(taskID)
+	summary := TransferTaskActionSummary{
+		Requested: boolToInt(normalizedTaskID != ""),
+		TaskIDs:   []string{},
+	}
+	if normalizedTaskID == "" {
+		summary.Message = "没有可处理的任务"
+		return summary, nil
+	}
+	summary.TaskIDs = []string{normalizedTaskID}
+
+	task, err := service.store.GetTaskByID(ctx, normalizedTaskID)
+	if err != nil {
+		return summary, err
+	}
+	if !isTransferTaskType(task.TaskType) {
+		return summary, fmt.Errorf("task %q is not a transfer task", normalizedTaskID)
+	}
+
+	items, err := service.store.ListTransferTaskItemsByTaskID(ctx, normalizedTaskID)
+	if err != nil {
+		return summary, err
+	}
+	record := buildTransferTaskRecord(task, items)
+	if !canTransferTaskStart(record.Status) && !canTransferTaskResume(record.Status) {
+		summary.Message = "当前任务已在进行中或已结束，无需调整优先级"
+		return summary, nil
+	}
+
+	snapshots, err := service.listTransferQueueSnapshots(ctx, 320)
+	if err != nil {
+		return summary, err
+	}
+	maxPriority := 0
+	for _, snapshot := range snapshots {
+		if snapshot.task.Priority > maxPriority {
+			maxPriority = snapshot.task.Priority
+		}
+	}
+
+	nextPriority := maxPriority + 1
+	if err := service.store.UpdateTaskPriority(ctx, task.ID, nextPriority, time.Now().UTC()); err != nil {
+		return summary, err
+	}
+
+	if canTransferTaskResume(record.Status) {
+		if _, err := service.ResumeTransferTasks(ctx, []string{task.ID}); err != nil {
+			return summary, err
+		}
+	}
+
+	preferences, err := service.GetTransferPreferences(ctx)
+	if err != nil {
+		return summary, err
+	}
+
+	runningSnapshot, hasRunning, err := service.findOldestRunningTransferTaskByDirection(ctx, transferQueueSlot(record.Direction), task.ID)
+	if err != nil {
+		return summary, err
+	}
+	activeCounts := service.activeTransferTaskCounts(snapshots)
+	if hasRunning && activeCounts[transferQueueSlot(record.Direction)] >= transferQueueLimit(preferences, transferQueueSlot(record.Direction)) {
+		if _, err := service.PauseTransferTasks(ctx, []string{runningSnapshot.task.ID}); err != nil {
+			return summary, err
+		}
+	}
+
+	service.wakeTransferLoop()
+	summary.Updated = 1
+	summary.Message = "任务已提升优先级，将优先开始"
+	return summary, nil
+}
+
 func (service *Service) runTransferLoop() {
 	defer service.transferWorkerGroup.Done()
 
@@ -464,30 +556,36 @@ func (service *Service) runTransferLoop() {
 }
 
 func (service *Service) processQueuedTransferTasks(ctx context.Context) error {
-	activeCount := service.activeTransferTaskCount()
-	if activeCount >= transferConcurrentTasks {
-		return nil
-	}
-
-	tasks, err := service.store.ListTasks(ctx, 240, 0)
+	snapshots, err := service.listTransferQueueSnapshots(ctx, 320)
 	if err != nil {
 		return err
 	}
 
-	for _, task := range tasks {
-		if activeCount >= transferConcurrentTasks {
-			break
-		}
-		if !isTransferTaskType(task.TaskType) {
+	preferences, err := service.GetTransferPreferences(ctx)
+	if err != nil {
+		return err
+	}
+
+	activeCounts := service.activeTransferTaskCounts(snapshots)
+	queued := make([]transferQueueSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if !canTransferTaskStart(snapshot.record.Status) {
 			continue
 		}
-		if !canTransferTaskStart(task.Status) {
+		queued = append(queued, snapshot)
+	}
+	sortTransferQueueSnapshots(queued)
+
+	for _, snapshot := range queued {
+		slot := transferQueueSlot(snapshot.record.Direction)
+		limit := transferQueueLimit(preferences, slot)
+		if activeCounts[slot] >= limit {
 			continue
 		}
-		if !service.startTransferTaskRunner(task.ID) {
+		if !service.startTransferTaskRunner(snapshot.task.ID) {
 			continue
 		}
-		activeCount++
+		activeCounts[slot]++
 	}
 
 	return nil
@@ -855,8 +953,7 @@ func (service *Service) runTransferTaskItem(ctx context.Context, taskID string, 
 
 func (service *Service) stageTransferItem(ctx context.Context, taskID string, item *store.TransferTaskItem) error {
 	if strings.TrimSpace(item.SourceKind) == transferSourceKindEndpoint &&
-		(normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeAList) ||
-			normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeNetwork)) {
+		normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeNetwork) {
 		return service.stageTransferItemFromAList(ctx, taskID, item)
 	}
 
@@ -962,8 +1059,7 @@ func (service *Service) commitTransferItem(
 		return connectors.FileEntry{}, err
 	}
 
-	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) ||
-		normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
 		return service.commitTransferItemToAList(ctx, taskID, item, endpoint)
 	}
 
@@ -1197,7 +1293,7 @@ func (service *Service) finalizeTransferItem(
 		item.AssetID = &asset.ID
 	}
 	if strings.TrimSpace(item.StagingPath) != "" {
-		_ = os.Remove(item.StagingPath)
+		service.cleanupTransferStagingArtifacts(item.StagingPath)
 		item.StagingPath = ""
 	}
 
@@ -1250,11 +1346,17 @@ func (service *Service) failTransferItem(taskID string, item *store.TransferTask
 		message := failure.Error()
 		item.ErrorMessage = &message
 	}
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		metadata.CurrentSpeed = 0
+	})
 
 	item.UpdatedAt = time.Now().UTC()
 	item.FinishedAt = nil
 	if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 		return err
+	}
+	if item.Status == taskStatusFailed {
+		service.cleanupAListTargetResidue(context.Background(), *item)
 	}
 	return failure
 }
@@ -1345,17 +1447,10 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 				continue
 			}
 			for index := range items {
-				if isTransferItemTerminal(items[index].Status) {
+				if !canTransferItemResume(items[index].Status) {
 					continue
 				}
-				items[index].Status = taskStatusQueued
-				items[index].Phase = restoreTransferPhase(items[index])
-				items[index].ErrorMessage = nil
-				items[index].FinishedAt = nil
-				items[index].UpdatedAt = time.Now().UTC()
-				updateTransferItemMetadata(&items[index], func(metadata *transferItemMetadata) {
-					metadata.CurrentSpeed = 0
-				})
+				resetTransferItemForResume(&items[index])
 				if err := service.store.UpdateTransferTaskItem(ctx, items[index]); err != nil {
 					return summary, err
 				}
@@ -1408,6 +1503,15 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 }
 
 func (service *Service) normalizeInterruptedTransferTasks(ctx context.Context) error {
+	aria2Available, err := service.ensureAria2RuntimeAvailable(ctx)
+	if err != nil {
+		return err
+	}
+	alistAvailable, err := service.ensureAListRuntimeAvailable(ctx)
+	if err != nil {
+		return err
+	}
+
 	tasks, err := service.store.ListTasks(ctx, 400, 0)
 	if err != nil {
 		return err
@@ -1419,38 +1523,44 @@ func (service *Service) normalizeInterruptedTransferTasks(ctx context.Context) e
 		}
 
 		status := strings.TrimSpace(strings.ToLower(task.Status))
-		if status != taskStatusRunning && status != taskStatusPending && status != taskStatusRetrying {
-			continue
-		}
 
 		items, err := service.store.ListTransferTaskItemsByTaskID(ctx, task.ID)
 		if err != nil {
 			return err
 		}
 
+		changed := false
 		for index := range items {
-			if strings.TrimSpace(strings.ToLower(items[index].Status)) == taskStatusRunning {
-				items[index].Status = taskStatusQueued
-				items[index].UpdatedAt = time.Now().UTC()
+			original := items[index]
+			if err := service.reconcileInterruptedTransferItem(ctx, &items[index], status, aria2Available, alistAvailable); err != nil {
+				return err
+			}
+			if items[index] != original {
 				if err := service.store.UpdateTransferTaskItem(ctx, items[index]); err != nil {
 					return err
 				}
+				changed = true
 			}
 		}
 
-		if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-			Status:        taskStatusQueued,
-			ResultSummary: task.ResultSummary,
-			ErrorMessage:  nil,
-			RetryCount:    task.RetryCount,
-			StartedAt:     task.StartedAt,
-			UpdatedAt:     time.Now().UTC(),
-		}); err != nil {
-			return err
+		if shouldRequeueInterruptedTransferTask(status) {
+			if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
+				Status:        taskStatusQueued,
+				ResultSummary: task.ResultSummary,
+				ErrorMessage:  nil,
+				RetryCount:    task.RetryCount,
+				StartedAt:     task.StartedAt,
+				UpdatedAt:     time.Now().UTC(),
+			}); err != nil {
+				return err
+			}
+			changed = true
 		}
 
-		if _, err := service.refreshTransferTaskState(ctx, task.ID); err != nil {
-			return err
+		if changed {
+			if _, err := service.refreshTransferTaskState(ctx, task.ID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1481,6 +1591,7 @@ func (service *Service) refreshTransferTaskState(ctx context.Context, taskID str
 		Title:           record.Title,
 		Direction:       record.Direction,
 		Status:          record.Status,
+		Priority:        record.Priority,
 		SourceLabel:     record.SourceLabel,
 		TargetLabel:     record.TargetLabel,
 		EngineSummary:   record.EngineSummary,
@@ -1645,19 +1756,63 @@ func (service *Service) cancelTransferTask(taskID string) {
 	}
 }
 
-func (service *Service) activeTransferTaskCount() int {
-	count := 0
-	service.transferTaskControls.Range(func(_, _ any) bool {
-		count++
+func (service *Service) activeTransferTaskIDs() map[string]struct{} {
+	active := make(map[string]struct{})
+	service.transferTaskControls.Range(func(key, _ any) bool {
+		taskID, ok := key.(string)
+		if ok && strings.TrimSpace(taskID) != "" {
+			active[taskID] = struct{}{}
+		}
 		return true
 	})
-	return count
+	return active
+}
+
+func (service *Service) activeTransferTaskCounts(snapshots []transferQueueSnapshot) map[string]int {
+	activeTaskIDs := service.activeTransferTaskIDs()
+	counts := map[string]int{
+		transferDirectionUpload:   0,
+		transferDirectionDownload: 0,
+		transferDirectionSync:     0,
+	}
+	for _, snapshot := range snapshots {
+		if _, ok := activeTaskIDs[snapshot.task.ID]; !ok && strings.TrimSpace(snapshot.record.Status) != taskStatusRunning {
+			continue
+		}
+		slot := transferQueueSlot(snapshot.record.Direction)
+		counts[slot]++
+	}
+	return counts
+}
+
+func (service *Service) listTransferQueueSnapshots(ctx context.Context, limit int) ([]transferQueueSnapshot, error) {
+	tasks, err := service.store.ListTasks(ctx, limit, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshots := make([]transferQueueSnapshot, 0, len(tasks))
+	for _, task := range tasks {
+		if !isTransferTaskType(task.TaskType) {
+			continue
+		}
+		items, itemErr := service.store.ListTransferTaskItemsByTaskID(ctx, task.ID)
+		if itemErr != nil {
+			return nil, itemErr
+		}
+		snapshots = append(snapshots, transferQueueSnapshot{
+			task:   task,
+			items:  items,
+			record: buildTransferTaskRecord(task, items),
+		})
+	}
+	return snapshots, nil
 }
 
 func (service *Service) cleanupTransferArtifacts(ctx context.Context, items []store.TransferTaskItem) {
 	for _, item := range items {
 		if strings.TrimSpace(item.StagingPath) != "" {
-			_ = os.Remove(item.StagingPath)
+			service.cleanupTransferStagingArtifacts(item.StagingPath)
 		}
 		if strings.TrimSpace(item.TargetTempPath) == "" {
 			continue
@@ -1678,6 +1833,42 @@ func (service *Service) cleanupTransferArtifacts(ctx context.Context, items []st
 				}
 			}
 		}
+	}
+}
+
+func (service *Service) cleanupTransferStagingArtifacts(stagingPath string) {
+	stagingPath = strings.TrimSpace(stagingPath)
+	if stagingPath == "" {
+		return
+	}
+
+	_ = os.Remove(stagingPath)
+	_ = os.Remove(stagingPath + ".aria2")
+	service.pruneEmptyTransferTaskDirs(filepath.Dir(stagingPath))
+}
+
+func (service *Service) pruneEmptyTransferTaskDirs(directory string) {
+	root := filepath.Join(service.transferStateRoot(), "tasks")
+	current := filepath.Clean(strings.TrimSpace(directory))
+	if current == "" {
+		return
+	}
+
+	for {
+		relative, err := filepath.Rel(root, current)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return
+		}
+
+		if removeErr := os.Remove(current); removeErr != nil {
+			return
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return
+		}
+		current = parent
 	}
 }
 
@@ -1707,6 +1898,7 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 		ID:        task.ID,
 		TaskType:  task.TaskType,
 		Status:    resolveTransferTaskStatus(task.Status, items),
+		Priority:  task.Priority,
 		CreatedAt: task.CreatedAt,
 		UpdatedAt: task.UpdatedAt,
 	}
@@ -2194,12 +2386,8 @@ func compactTransferLabel(values []string) string {
 func determineTransferDirection(sourceEndpointType string, targetEndpointType string) string {
 	sourceType := normalizeEndpointType(sourceEndpointType)
 	targetType := normalizeEndpointType(targetEndpointType)
-	sourceRemote := sourceType == string(connectors.EndpointTypeCloud115) ||
-		sourceType == string(connectors.EndpointTypeAList) ||
-		sourceType == string(connectors.EndpointTypeNetwork)
-	targetRemote := targetType == string(connectors.EndpointTypeCloud115) ||
-		targetType == string(connectors.EndpointTypeAList) ||
-		targetType == string(connectors.EndpointTypeNetwork)
+	sourceRemote := sourceType == string(connectors.EndpointTypeNetwork)
+	targetRemote := targetType == string(connectors.EndpointTypeNetwork)
 
 	switch {
 	case targetRemote && !sourceRemote:
@@ -2213,6 +2401,154 @@ func determineTransferDirection(sourceEndpointType string, targetEndpointType st
 	default:
 		return transferDirectionSync
 	}
+}
+
+func transferQueueSlot(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case transferDirectionUpload:
+		return transferDirectionUpload
+	case transferDirectionDownload:
+		return transferDirectionDownload
+	default:
+		return transferDirectionSync
+	}
+}
+
+func shouldRequeueInterruptedTransferTask(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case taskStatusQueued, taskStatusRunning, taskStatusPending, taskStatusRetrying:
+		return true
+	default:
+		return false
+	}
+}
+
+func transferQueueLimit(preferences TransferPreferences, slot string) int {
+	switch transferQueueSlot(slot) {
+	case transferDirectionUpload:
+		return clampInt(preferences.UploadConcurrency, 1, maxTransferConcurrency)
+	case transferDirectionDownload:
+		return clampInt(preferences.DownloadConcurrency, 1, maxTransferConcurrency)
+	default:
+		return maxInt(
+			clampInt(preferences.UploadConcurrency, 1, maxTransferConcurrency),
+			clampInt(preferences.DownloadConcurrency, 1, maxTransferConcurrency),
+		)
+	}
+}
+
+func sortTransferQueueSnapshots(snapshots []transferQueueSnapshot) {
+	sort.SliceStable(snapshots, func(left, right int) bool {
+		if snapshots[left].task.Priority != snapshots[right].task.Priority {
+			return snapshots[left].task.Priority > snapshots[right].task.Priority
+		}
+		if !snapshots[left].task.CreatedAt.Equal(snapshots[right].task.CreatedAt) {
+			return snapshots[left].task.CreatedAt.Before(snapshots[right].task.CreatedAt)
+		}
+		return snapshots[left].task.ID < snapshots[right].task.ID
+	})
+}
+
+func sortTransferTaskSnapshotsForDisplay(snapshots []transferQueueSnapshot) {
+	sort.SliceStable(snapshots, func(left, right int) bool {
+		leftRank := transferTaskDisplayRank(snapshots[left].record.Status)
+		rightRank := transferTaskDisplayRank(snapshots[right].record.Status)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if snapshots[left].task.Priority != snapshots[right].task.Priority {
+			return snapshots[left].task.Priority > snapshots[right].task.Priority
+		}
+
+		switch leftRank {
+		case 0:
+			leftStarted := defaultTimePointer(snapshots[left].task.StartedAt, snapshots[left].task.CreatedAt)
+			rightStarted := defaultTimePointer(snapshots[right].task.StartedAt, snapshots[right].task.CreatedAt)
+			if !leftStarted.Equal(rightStarted) {
+				return leftStarted.Before(rightStarted)
+			}
+		case 1:
+			if !snapshots[left].task.CreatedAt.Equal(snapshots[right].task.CreatedAt) {
+				return snapshots[left].task.CreatedAt.Before(snapshots[right].task.CreatedAt)
+			}
+		default:
+			if !snapshots[left].task.UpdatedAt.Equal(snapshots[right].task.UpdatedAt) {
+				return snapshots[left].task.UpdatedAt.After(snapshots[right].task.UpdatedAt)
+			}
+		}
+
+		return snapshots[left].task.ID < snapshots[right].task.ID
+	})
+}
+
+func transferTaskDisplayRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case taskStatusRunning:
+		return 0
+	case taskStatusQueued, taskStatusPending, taskStatusRetrying:
+		return 1
+	case taskStatusPaused:
+		return 2
+	case taskStatusFailed:
+		return 3
+	case taskStatusCanceled:
+		return 4
+	case taskStatusSuccess:
+		return 5
+	default:
+		return 6
+	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func defaultTimePointer(value *time.Time, fallback time.Time) time.Time {
+	if value != nil {
+		return value.UTC()
+	}
+	return fallback.UTC()
+}
+
+func (service *Service) findOldestRunningTransferTaskByDirection(
+	ctx context.Context,
+	direction string,
+	excludeTaskID string,
+) (transferQueueSnapshot, bool, error) {
+	snapshots, err := service.listTransferQueueSnapshots(ctx, 320)
+	if err != nil {
+		return transferQueueSnapshot{}, false, err
+	}
+
+	var selected transferQueueSnapshot
+	found := false
+	for _, snapshot := range snapshots {
+		if snapshot.task.ID == excludeTaskID {
+			continue
+		}
+		if transferQueueSlot(snapshot.record.Direction) != transferQueueSlot(direction) {
+			continue
+		}
+		if strings.TrimSpace(snapshot.record.Status) != taskStatusRunning {
+			continue
+		}
+		if !found {
+			selected = snapshot
+			found = true
+			continue
+		}
+		leftStarted := defaultTimePointer(snapshot.task.StartedAt, snapshot.task.CreatedAt)
+		rightStarted := defaultTimePointer(selected.task.StartedAt, selected.task.CreatedAt)
+		if leftStarted.Before(rightStarted) {
+			selected = snapshot
+		}
+	}
+
+	return selected, found, nil
 }
 
 func buildQueuedTaskLabel(displayName string) string {
@@ -2238,7 +2574,7 @@ func buildTransferTargetTempPath(targetPath string, itemID string) string {
 
 func commitsTransferDirectly(endpointType string) bool {
 	switch normalizeEndpointType(endpointType) {
-	case string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
+	case string(connectors.EndpointTypeNetwork):
 		return true
 	default:
 		return false
@@ -2246,8 +2582,7 @@ func commitsTransferDirectly(endpointType string) bool {
 }
 
 func resolveEndpointAbsolutePath(endpoint store.StorageEndpoint, relativePath string) string {
-	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) ||
-		normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
 		normalized := strings.TrimSpace(strings.ReplaceAll(relativePath, `\`, "/"))
 		if normalized == "" || normalized == "." {
 			return canonicalizePath(endpoint.RootPath)
@@ -2291,6 +2626,64 @@ func restoreTransferPhase(item store.TransferTaskItem) string {
 		return transferPhaseStaging
 	default:
 		return transferPhasePending
+	}
+}
+
+func canTransferItemResume(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case taskStatusSuccess, transferItemStatusSkipped:
+		return false
+	default:
+		return true
+	}
+}
+
+func resetTransferItemForResume(item *store.TransferTaskItem) {
+	item.Status = taskStatusQueued
+	item.ErrorMessage = nil
+	item.FinishedAt = nil
+	item.UpdatedAt = time.Now().UTC()
+
+	if requiresFreshCommitOnResume(*item) {
+		item.CommittedBytes = 0
+	}
+
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		metadata.CurrentSpeed = 0
+		if requiresFreshCommitOnResume(*item) && metadata.AList != nil {
+			metadata.AList.TaskID = ""
+			metadata.AList.TaskStatus = ""
+			metadata.AList.TaskState = 0
+		}
+	})
+
+	item.Phase = restoreTransferPhase(*item)
+	progressTotal := item.TotalBytes
+	if progressTotal <= 0 {
+		progressTotal = parseTransferMetadataSize(item.MetadataJSON)
+	}
+	item.ProgressPercent = calcTransferItemProgress(progressTotal, item.StagedBytes, item.CommittedBytes, item.Phase)
+}
+
+func syncTransferItemProgressFromArtifacts(item *store.TransferTaskItem) {
+	totalBytes := max(item.TotalBytes, parseTransferMetadataSize(item.MetadataJSON))
+	totalBytes = max(totalBytes, item.StagedBytes)
+	totalBytes = max(totalBytes, item.CommittedBytes)
+	item.TotalBytes = totalBytes
+
+	progressTotal := totalBytes
+	if progressTotal <= 0 {
+		progressTotal = parseTransferMetadataSize(item.MetadataJSON)
+	}
+	item.ProgressPercent = calcTransferItemProgress(progressTotal, item.StagedBytes, item.CommittedBytes, item.Phase)
+}
+
+func requiresFreshCommitOnResume(item store.TransferTaskItem) bool {
+	switch normalizeEndpointType(item.TargetEndpointType) {
+	case string(connectors.EndpointTypeNetwork):
+		return true
+	default:
+		return false
 	}
 }
 

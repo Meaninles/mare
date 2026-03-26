@@ -30,14 +30,14 @@ func TestDeleteReplicaUpdatesAssetVisibilityAndStatus(t *testing.T) {
 		UpdatedAt:          now,
 	}
 	cloudEndpoint := store.StorageEndpoint{
-		ID:                 "endpoint-cloud",
-		Name:               "115 Cloud",
-		EndpointType:       string(connectors.EndpointTypeCloud115),
-		RootPath:           "0",
+		ID:                 "endpoint-removable",
+		Name:               "Removable Media",
+		EndpointType:       string(connectors.EndpointTypeRemovable),
+		RootPath:           `E:\Library`,
 		RoleMode:           "MANAGED",
-		IdentitySignature:  "cloud-delete",
+		IdentitySignature:  "removable-delete",
 		AvailabilityStatus: "AVAILABLE",
-		ConnectionConfig:   mustJSONText(t, map[string]string{"rootId": "0"}),
+		ConnectionConfig:   mustJSONText(t, map[string]any{"device": map[string]any{"mountPoint": `E:\Library`}}),
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -74,10 +74,10 @@ func TestDeleteReplicaUpdatesAssetVisibilityAndStatus(t *testing.T) {
 		UpdatedAt:     now,
 	}
 	cloudReplica := store.Replica{
-		ID:            "replica-cloud",
+		ID:            "replica-removable",
 		AssetID:       asset.ID,
 		EndpointID:    cloudEndpoint.ID,
-		PhysicalPath:  "Projects/Scene.jpg",
+		PhysicalPath:  `E:\Library\Projects\Scene.jpg`,
 		ReplicaStatus: string(ReplicaStatusActive),
 		ExistsFlag:    true,
 		LastSeenAt:    &now,
@@ -105,7 +105,7 @@ func TestDeleteReplicaUpdatesAssetVisibilityAndStatus(t *testing.T) {
 			cloudEndpoint.ID: {
 				descriptor: connectors.Descriptor{
 					Name:     cloudEndpoint.Name,
-					Type:     connectors.EndpointTypeCloud115,
+					Type:     connectors.EndpointTypeRemovable,
 					RootPath: cloudEndpoint.RootPath,
 					Capabilities: connectors.Capabilities{
 						CanDelete: true,

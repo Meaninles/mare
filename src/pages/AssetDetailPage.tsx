@@ -41,6 +41,7 @@ import {
   isTaskActiveStatus,
   taskMatchesAsset
 } from "../lib/task-center";
+import { getRestoreSourcePriority as getNormalizedRestoreSourcePriority } from "../lib/storage-endpoints";
 import type { CatalogAssetInsights, CatalogEndpoint, CatalogReplica, CatalogTask } from "../types/catalog";
 
 type DeleteDialogState = {
@@ -669,22 +670,7 @@ function choosePreferredRestoreSource(replicas: CatalogReplica[], endpoints: Cat
 }
 
 function getRestoreSourcePriority(endpointType?: string) {
-  switch ((endpointType ?? "").trim().toUpperCase()) {
-    case "LOCAL":
-      return 0;
-    case "REMOVABLE":
-      return 1;
-    case "QNAP_SMB":
-      return 2;
-    case "NETWORK_STORAGE":
-      return 3;
-    case "ALIST":
-      return 4;
-    case "CLOUD_115":
-      return 5;
-    default:
-      return 9;
-  }
+  return getNormalizedRestoreSourcePriority(endpointType);
 }
 
 function InfoField({

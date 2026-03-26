@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArchiveRestore,
   Download,
@@ -14,8 +14,14 @@ import { useTheme, type ThemeMode } from "../components/ThemeProvider";
 import { useLibraryContext } from "../context/LibraryContext";
 import { useAppBootstrap } from "../hooks/useAppBootstrap";
 import { useCatalogEndpoints } from "../hooks/useCatalog";
-import { useExportSettingsBackup, useImportSettingsBackup } from "../hooks/useSettings";
+import {
+  useExportSettingsBackup,
+  useImportSettingsBackup,
+  useTransferSettings,
+  useUpdateTransferSettings
+} from "../hooks/useSettings";
 import { formatCatalogDate } from "../lib/catalog-view";
+import { getCatalogEndpointTypeLabel, getStorageRecoveryHint } from "../lib/storage-endpoints";
 import {
   getDefaultCatalogBackendUrl,
   runCatalogEndpointScan,
@@ -58,12 +64,16 @@ export function SettingsPage() {
   const endpointsQuery = useCatalogEndpoints();
   const exportMutation = useExportSettingsBackup();
   const importMutation = useImportSettingsBackup();
+  const transferSettingsQuery = useTransferSettings();
+  const updateTransferSettingsMutation = useUpdateTransferSettings();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [includeCatalog, setIncludeCatalog] = useState(false);
   const [importMode, setImportMode] = useState<BackupImportMode>("config_only");
   const [selectedFileName, setSelectedFileName] = useState("");
   const [selectedBundle, setSelectedBundle] = useState<SettingsBackupBundle | null>(null);
+  const [uploadConcurrency, setUploadConcurrency] = useState("1");
+  const [downloadConcurrency, setDownloadConcurrency] = useState("1");
   const [validationSummary, setValidationSummary] = useState<FullScanSummary | EndpointScanSummary | null>(null);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -74,6 +84,31 @@ export function SettingsPage() {
   const endpoints = endpointsQuery.data ?? [];
   const bundleStats = useMemo(() => summarizeBundle(selectedBundle), [selectedBundle]);
   const bootstrapData = bootstrapQuery.data;
+
+  useEffect(() => {
+    if (!transferSettingsQuery.data) {
+      return;
+    }
+    setUploadConcurrency(String(transferSettingsQuery.data.uploadConcurrency));
+    setDownloadConcurrency(String(transferSettingsQuery.data.downloadConcurrency));
+  }, [transferSettingsQuery.data]);
+
+  async function handleSaveTransferSettings() {
+    setNotice(null);
+    setError(null);
+
+    try {
+      const preferences = await updateTransferSettingsMutation.mutateAsync({
+        uploadConcurrency: Number.parseInt(uploadConcurrency, 10),
+        downloadConcurrency: Number.parseInt(downloadConcurrency, 10)
+      });
+      setUploadConcurrency(String(preferences.uploadConcurrency));
+      setDownloadConcurrency(String(preferences.downloadConcurrency));
+      setNotice("传输并发设置已保存，新的上传和下载任务会按队列重新调度。");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "保存传输设置失败。");
+    }
+  }
 
   async function handleExport() {
     if (!isLibraryOpen) {
@@ -309,6 +344,75 @@ export function SettingsPage() {
                 </button>
               );
             })}
+          </div>
+        </article>
+
+        <article className="detail-card">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">传输队列</p>
+              <h4>上传与下载并发</h4>
+            </div>
+          </div>
+
+          <div className="settings-card-list">
+            <div className="settings-action-card">
+              <div className="settings-action-head">
+                <div className="theme-option-icon">
+                  <Upload size={18} />
+                </div>
+                <span className="status-pill subtle">
+                  {transferSettingsQuery.data
+                    ? `上传 ${transferSettingsQuery.data.uploadConcurrency} / 下载 ${transferSettingsQuery.data.downloadConcurrency}`
+                    : "读取中"}
+                </span>
+              </div>
+
+              <strong>控制任务队列并发</strong>
+              <p>下载和上传各自使用独立队列。超过并发上限的新任务会进入等待，直到有空位再自动开始。</p>
+
+              <div className="scan-summary-grid">
+                <label className="field">
+                  <span>上传并发</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={uploadConcurrency}
+                    onChange={(event) => setUploadConcurrency(event.target.value)}
+                    disabled={!isLibraryOpen || transferSettingsQuery.isLoading || updateTransferSettingsMutation.isPending}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>下载并发</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={downloadConcurrency}
+                    onChange={(event) => setDownloadConcurrency(event.target.value)}
+                    disabled={!isLibraryOpen || transferSettingsQuery.isLoading || updateTransferSettingsMutation.isPending}
+                  />
+                </label>
+              </div>
+
+              <div className="action-row">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => void handleSaveTransferSettings()}
+                  disabled={!isLibraryOpen || transferSettingsQuery.isLoading || updateTransferSettingsMutation.isPending}
+                >
+                  {updateTransferSettingsMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}
+                  保存传输设置
+                </button>
+              </div>
+
+              {transferSettingsQuery.data?.updatedAt ? (
+                <p className="muted-copy">最近更新：{formatCatalogDate(transferSettingsQuery.data.updatedAt)}</p>
+              ) : null}
+            </div>
           </div>
         </article>
 
@@ -650,22 +754,7 @@ function downloadBundle(bundle: SettingsBackupBundle, suffix: string) {
 }
 
 function getRecoveryHint(endpoint: CatalogEndpoint) {
-  switch (endpoint.endpointType) {
-    case "LOCAL":
-      return "请确认当前机器上的本地根路径是否正确。";
-    case "QNAP_SMB":
-      return "请确认 SMB 共享路径和 NAS 可用性。";
-    case "NETWORK_STORAGE":
-      return "请检查网盘登录状态、根目录 ID 和本机保存的凭证是否有效。";
-    case "CLOUD_115":
-      return "请检查根目录 ID，必要时刷新 115 凭据。";
-    case "ALIST":
-      return "请检查 AList 挂载路径、根路径以及驱动配置。";
-    case "REMOVABLE":
-      return "请重新接入同一块设备，以便再次匹配身份。";
-    default:
-      return "校验前请先检查这个端点。";
-  }
+  return getStorageRecoveryHint(endpoint.endpointType);
 }
 
 function getImportModeLabel(mode: BackupImportMode) {
@@ -680,22 +769,7 @@ function getImportModeLabel(mode: BackupImportMode) {
 }
 
 function getEndpointTypeLabel(endpointType: string) {
-  switch (endpointType) {
-    case "LOCAL":
-      return "本地";
-    case "QNAP_SMB":
-      return "QNAP / SMB";
-    case "NETWORK_STORAGE":
-      return "网盘";
-    case "CLOUD_115":
-      return "115 网盘";
-    case "ALIST":
-      return "AList 网盘";
-    case "REMOVABLE":
-      return "可移动设备";
-    default:
-      return endpointType || "未知类型";
-  }
+  return getCatalogEndpointTypeLabel(endpointType);
 }
 
 function getAvailabilityStatusLabel(status: string) {

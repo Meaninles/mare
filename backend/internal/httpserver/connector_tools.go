@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"mam/backend/internal/catalog"
 	"mam/backend/internal/connectors"
 )
 
@@ -27,8 +28,11 @@ type connectorTestRequest struct {
 	Content            string                 `json:"content"`
 	RootPath           string                 `json:"rootPath"`
 	SharePath          string                 `json:"sharePath"`
-	RootID             string                 `json:"rootId"`
-	AccessToken        string                 `json:"accessToken"`
+	Provider           string                 `json:"provider"`
+	RootFolderID       string                 `json:"rootFolderId"`
+	LoginMethod        string                 `json:"loginMethod"`
+	Credential         string                 `json:"credential"`
+	PageSize           int                    `json:"pageSize"`
 	Device             *connectors.DeviceInfo `json:"device"`
 	QRUID              string                 `json:"qrUid"`
 	QRTime             int64                  `json:"qrTime"`
@@ -57,18 +61,26 @@ func (server *Server) handleQNAPTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (server *Server) handleCloud115Test(w http.ResponseWriter, r *http.Request) {
-	server.handleConnectorTest(w, r, "cloud115", func(request connectorTestRequest) (connectors.Connector, error) {
-		return connectors.NewCloud115Connector(connectors.Cloud115Config{
-			Name:        request.Name,
-			RootID:      request.RootID,
-			AccessToken: request.AccessToken,
-			AppType:     request.AppType,
-		}, nil)
+func (server *Server) handleNetworkStorageTest(w http.ResponseWriter, r *http.Request) {
+	catalogService, ok := server.requireCatalog(w)
+	if !ok {
+		return
+	}
+
+	server.handleConnectorTest(w, r, "network-storage", func(request connectorTestRequest) (connectors.Connector, error) {
+		return catalogService.PreviewNetworkStorageConnector(r.Context(), catalog.PreviewNetworkStorageRequest{
+			Name:         request.Name,
+			Provider:     request.Provider,
+			RootFolderID: request.RootFolderID,
+			LoginMethod:  request.LoginMethod,
+			AppType:      request.AppType,
+			PageSize:     request.PageSize,
+			Credential:   request.Credential,
+		})
 	})
 }
 
-func (server *Server) handleCloud115QRCodeStart(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleNetworkStorage115QRCodeStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
@@ -78,7 +90,7 @@ func (server *Server) handleCloud115QRCodeStart(w http.ResponseWriter, r *http.R
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, connectorTestResponse{
 			Success:   false,
-			Connector: "cloud115",
+			Connector: "network-storage",
 			Operation: "qrcode_start",
 			Error:     "invalid JSON payload",
 		})
@@ -89,7 +101,7 @@ func (server *Server) handleCloud115QRCodeStart(w http.ResponseWriter, r *http.R
 	if err != nil {
 		server.writeJSON(w, http.StatusBadGateway, connectorTestResponse{
 			Success:   false,
-			Connector: "cloud115",
+			Connector: "network-storage",
 			Operation: "qrcode_start",
 			Error:     err.Error(),
 		})
@@ -98,13 +110,13 @@ func (server *Server) handleCloud115QRCodeStart(w http.ResponseWriter, r *http.R
 
 	server.writeJSON(w, http.StatusOK, connectorTestResponse{
 		Success:       true,
-		Connector:     "cloud115",
+		Connector:     "network-storage",
 		Operation:     "qrcode_start",
 		QRCodeSession: session,
 	})
 }
 
-func (server *Server) handleCloud115QRCodePoll(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleNetworkStorage115QRCodePoll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
@@ -114,7 +126,7 @@ func (server *Server) handleCloud115QRCodePoll(w http.ResponseWriter, r *http.Re
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		server.writeJSON(w, http.StatusBadRequest, connectorTestResponse{
 			Success:   false,
-			Connector: "cloud115",
+			Connector: "network-storage",
 			Operation: "qrcode_poll",
 			Error:     "invalid JSON payload",
 		})
@@ -125,7 +137,7 @@ func (server *Server) handleCloud115QRCodePoll(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		server.writeJSON(w, http.StatusBadGateway, connectorTestResponse{
 			Success:   false,
-			Connector: "cloud115",
+			Connector: "network-storage",
 			Operation: "qrcode_poll",
 			Error:     err.Error(),
 		})
@@ -134,7 +146,7 @@ func (server *Server) handleCloud115QRCodePoll(w http.ResponseWriter, r *http.Re
 
 	server.writeJSON(w, http.StatusOK, connectorTestResponse{
 		Success:       true,
-		Connector:     "cloud115",
+		Connector:     "network-storage",
 		Operation:     "qrcode_poll",
 		QRCodeSession: session,
 	})
@@ -227,6 +239,9 @@ func executeConnectorOperation(
 			descriptor := connector.Descriptor()
 			return &descriptor
 		}(),
+	}
+	if response.Descriptor != nil && connectorName == "network-storage" {
+		response.Descriptor.Type = connectors.EndpointTypeNetwork
 	}
 
 	switch request.Operation {

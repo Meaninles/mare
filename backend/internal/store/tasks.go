@@ -12,11 +12,12 @@ func (store *Store) CreateTask(ctx context.Context, task Task) error {
 	_, err := store.db.ExecContext(
 		ctx,
 		`INSERT INTO tasks
-		(id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, task_type, status, priority, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID,
 		task.TaskType,
 		task.Status,
+		task.Priority,
 		task.Payload,
 		toNullableString(task.ResultSummary),
 		toNullableString(task.ErrorMessage),
@@ -56,7 +57,7 @@ func (store *Store) UpdateTaskStatus(ctx context.Context, id string, update Task
 func (store *Store) GetTaskByID(ctx context.Context, id string) (Task, error) {
 	row := store.db.QueryRowContext(
 		ctx,
-		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
+		`SELECT id, task_type, status, priority, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
 		 FROM tasks WHERE id = ?`,
 		id,
 	)
@@ -74,7 +75,7 @@ func (store *Store) DeleteTaskByID(ctx context.Context, id string) error {
 func (store *Store) ListTasks(ctx context.Context, limit, offset int) ([]Task, error) {
 	rows, err := store.db.QueryContext(
 		ctx,
-		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
+		`SELECT id, task_type, status, priority, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
 		 FROM tasks ORDER BY updated_at DESC, created_at DESC LIMIT ? OFFSET ?`,
 		limit,
 		offset,
@@ -105,7 +106,7 @@ func (store *Store) GetLatestTaskByTypeAndAssetID(ctx context.Context, taskType,
 
 	row := store.db.QueryRowContext(
 		ctx,
-		`SELECT id, task_type, status, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
+		`SELECT id, task_type, status, priority, payload, result_summary, error_message, retry_count, created_at, updated_at, started_at, finished_at
 		 FROM tasks
 		 WHERE task_type = ?
 		   AND payload LIKE ?
@@ -132,6 +133,7 @@ func scanTask(scanner rowScanner) (Task, error) {
 		&task.ID,
 		&task.TaskType,
 		&task.Status,
+		&task.Priority,
 		&task.Payload,
 		&resultSummaryText,
 		&errorMessageText,
@@ -171,4 +173,20 @@ func scanTask(scanner rowScanner) (Task, error) {
 	task.StartedAt = startedAt
 	task.FinishedAt = finishedAt
 	return task, nil
+}
+
+func (store *Store) UpdateTaskPriority(ctx context.Context, id string, priority int, updatedAt time.Time) error {
+	_, err := store.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		 SET priority = ?, updated_at = ?
+		 WHERE id = ?`,
+		priority,
+		updatedAt.UTC().Format(timeLayout),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("update task priority: %w", err)
+	}
+	return nil
 }

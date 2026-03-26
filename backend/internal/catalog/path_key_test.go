@@ -24,9 +24,9 @@ func TestNormalizeLogicalPathKey(t *testing.T) {
 			expected:     "projects/travel/sunset.jpg",
 		},
 		{
-			name:         "cloud115 relative path",
-			rootPath:     "0",
-			physicalPath: `Projects/Travel/./RAW/../Sunset.JPG`,
+			name:         "network storage relative path",
+			rootPath:     "/network/115/demo",
+			physicalPath: `/network/115/demo/Projects/Travel/./RAW/../Sunset.JPG`,
 			expected:     "projects/travel/sunset.jpg",
 		},
 	}

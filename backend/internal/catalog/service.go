@@ -99,7 +99,10 @@ func NewService(
 }
 
 func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEndpointRequest) (EndpointRecord, error) {
-	endpointType := resolveRequestedEndpointType(request.EndpointType, request.ConnectionConfig)
+	endpointType, endpointTypeErr := resolveRequestedEndpointType(request.EndpointType, request.ConnectionConfig)
+	if endpointTypeErr != nil {
+		return EndpointRecord{}, endpointTypeErr
+	}
 	if endpointType == "" {
 		slog.Warn(
 			"register endpoint missing type",
@@ -209,35 +212,45 @@ func (service *Service) RegisterEndpoint(ctx context.Context, request RegisterEn
 	return toEndpointRecord(endpoint), nil
 }
 
-func resolveRequestedEndpointType(value string, connectionConfig json.RawMessage) string {
-	if normalized := normalizeEndpointType(value); normalized != "" {
-		return normalized
+func resolveRequestedEndpointType(value string, connectionConfig json.RawMessage) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "":
+	case "115":
+		return "", errors.New("\u65e7\u7684 115 \u76f4\u8fde\u7aef\u70b9\u5df2\u79fb\u9664\uff0c\u8bf7\u6539\u7528 NETWORK_STORAGE\uff08provider=115\uff09")
+	default:
+		if normalized := normalizeEndpointType(value); normalized != "" {
+			switch normalized {
+			case string(connectors.EndpointTypeLocal),
+				string(connectors.EndpointTypeQNAP),
+				string(connectors.EndpointTypeNetwork),
+				string(connectors.EndpointTypeRemovable):
+				return normalized, nil
+			default:
+				return "", nil
+			}
+		}
 	}
 
 	if len(strings.TrimSpace(string(connectionConfig))) == 0 {
-		return ""
+		return "", nil
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(connectionConfig, &payload); err != nil {
-		return ""
+		return "", nil
 	}
 
 	switch {
 	case hasAnyMapKey(payload, "provider", "storageKey", "loginMethod", "rootFolderId", "root_folder_id", "pageSize", "appType"):
-		return string(connectors.EndpointTypeNetwork)
+		return string(connectors.EndpointTypeNetwork), nil
 	case hasAnyMapKey(payload, "device"):
-		return string(connectors.EndpointTypeRemovable)
+		return string(connectors.EndpointTypeRemovable), nil
 	case hasAnyMapKey(payload, "sharePath"):
-		return string(connectors.EndpointTypeQNAP)
-	case hasAnyMapKey(payload, "mountPath", "driver", "addition"):
-		return string(connectors.EndpointTypeAList)
-	case hasAnyMapKey(payload, "rootId"):
-		return string(connectors.EndpointTypeCloud115)
+		return string(connectors.EndpointTypeQNAP), nil
 	case hasAnyMapKey(payload, "rootPath"):
-		return string(connectors.EndpointTypeLocal)
+		return string(connectors.EndpointTypeLocal), nil
 	default:
-		return ""
+		return "", nil
 	}
 }
 
@@ -903,19 +916,6 @@ func defaultConnectorFactory(endpoint store.StorageEndpoint) (connectors.Connect
 			Name:      endpoint.Name,
 			SharePath: defaultString(config.SharePath, endpoint.RootPath),
 		})
-	case string(connectors.EndpointTypeCloud115):
-		var config struct {
-			RootID      string `json:"rootId"`
-			AccessToken string `json:"accessToken"`
-			AppType     string `json:"appType"`
-		}
-		_ = json.Unmarshal([]byte(endpoint.ConnectionConfig), &config)
-		return connectors.NewCloud115Connector(connectors.Cloud115Config{
-			Name:        endpoint.Name,
-			RootID:      defaultString(config.RootID, endpoint.RootPath),
-			AccessToken: config.AccessToken,
-			AppType:     config.AppType,
-		}, nil)
 	case string(connectors.EndpointTypeNetwork):
 		return nil, fmt.Errorf("network storage endpoints are built by the catalog service")
 	case string(connectors.EndpointTypeRemovable):
@@ -941,12 +941,8 @@ func normalizeEndpointType(value string) string {
 		return string(connectors.EndpointTypeLocal)
 	case "QNAP", "QNAP_SMB":
 		return string(connectors.EndpointTypeQNAP)
-	case "115", "CLOUD115", "CLOUD_115":
-		return string(connectors.EndpointTypeCloud115)
 	case "NETWORK", "NETWORK_STORAGE":
 		return string(connectors.EndpointTypeNetwork)
-	case "ALIST":
-		return string(connectors.EndpointTypeAList)
 	case "REMOVABLE", "REMOVABLE_DRIVE":
 		return string(connectors.EndpointTypeRemovable)
 	default:
@@ -965,13 +961,7 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 	}
 
 	extractedCredential := extractEndpointCredential(endpointType, payload)
-	if endpointType == string(connectors.EndpointTypeAList) {
-		normalizedPayload, err := normalizeAListConnectionConfig(payload, "")
-		if err != nil {
-			return nil, nil, err
-		}
-		payload = normalizedPayload
-	} else if endpointType == string(connectors.EndpointTypeNetwork) {
+	if endpointType == string(connectors.EndpointTypeNetwork) {
 		normalizedPayload, err := normalizeNetworkStorageConnectionConfig(payload)
 		if err != nil {
 			return nil, nil, err
@@ -985,7 +975,7 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 	}
 
 	switch endpointType {
-	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork), string(connectors.EndpointTypeRemovable):
+	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeNetwork), string(connectors.EndpointTypeRemovable):
 		return normalized, extractedCredential, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
@@ -994,13 +984,6 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 
 func resolveRootPath(endpointType, explicitRoot string, connectionConfig json.RawMessage) (string, error) {
 	if strings.TrimSpace(explicitRoot) != "" {
-		if endpointType == string(connectors.EndpointTypeAList) {
-			root := normalizeAListEndpointPath(explicitRoot)
-			if root == "" || root == "/" {
-				return "", errors.New("alist root path is required")
-			}
-			return root, nil
-		}
 		return strings.TrimSpace(explicitRoot), nil
 	}
 
@@ -1027,33 +1010,6 @@ func resolveRootPath(endpointType, explicitRoot string, connectionConfig json.Ra
 			return "", errors.New("share path is required")
 		}
 		return strings.TrimSpace(config.SharePath), nil
-	case string(connectors.EndpointTypeCloud115):
-		var config struct {
-			RootID string `json:"rootId"`
-		}
-		if err := json.Unmarshal(connectionConfig, &config); err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(config.RootID) == "" {
-			return "", errors.New("115 root id is required")
-		}
-		return strings.TrimSpace(config.RootID), nil
-	case string(connectors.EndpointTypeAList):
-		config, err := parseAListEndpointConfig(connectionConfig, explicitRoot)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(explicitRoot) != "" {
-			root := normalizeAListEndpointPath(explicitRoot)
-			if root == "" || root == "/" {
-				return "", errors.New("alist root path is required")
-			}
-			return root, nil
-		}
-		if strings.TrimSpace(config.MountPath) == "" {
-			return "", errors.New("alist mount path is required")
-		}
-		return normalizeAListEndpointPath(config.MountPath), nil
 	case string(connectors.EndpointTypeNetwork):
 		config, err := parseNetworkStorageEndpointConfig(connectionConfig)
 		if err != nil {
@@ -1182,19 +1138,15 @@ func stringPointer(value string) *string {
 func defaultEndpointName(endpointType string) string {
 	switch endpointType {
 	case string(connectors.EndpointTypeLocal):
-		return "Local Endpoint"
+		return "\u672c\u5730\u5b58\u50a8"
 	case string(connectors.EndpointTypeQNAP):
-		return "QNAP SMB"
-	case string(connectors.EndpointTypeCloud115):
-		return "115 Cloud"
+		return "QNAP / SMB"
 	case string(connectors.EndpointTypeNetwork):
-		return "网盘"
+		return "\u7f51\u7edc\u5b58\u50a8"
 	case string(connectors.EndpointTypeRemovable):
-		return "Removable Drive"
-	case string(connectors.EndpointTypeAList):
-		return "AList 网盘"
+		return "\u53ef\u79fb\u52a8\u8bbe\u5907"
 	default:
-		return "Storage Endpoint"
+		return "\u5b58\u50a8\u7aef\u70b9"
 	}
 }
 

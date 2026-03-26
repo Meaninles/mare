@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useCatalogEndpoints, useCatalogTasks } from "../hooks/useCatalog";
 import { useExecuteImport, useImportDevices, useImportRules, useImportSource, useSaveImportRules, useSelectImportDeviceRole } from "../hooks/useImport";
 import { formatCatalogDate, formatFileSize } from "../lib/catalog-view";
+import { getCatalogEndpointTypeLabel } from "../lib/storage-endpoints";
 import { getTaskDisplaySummary } from "../lib/task-center";
 import type { CatalogEndpoint, CatalogTask } from "../types/catalog";
 import type { ImportBrowseMediaType, ImportExecutionSummary, ImportRuleInput, ImportSourceEntry } from "../types/import";
@@ -572,7 +573,7 @@ function getImportFolderName(path: string) {
 function getMediaLabel(mediaType: string) { return mediaType === "image" ? "图片" : mediaType === "video" ? "视频" : mediaType === "audio" ? "音频" : "媒体"; }
 function getTaskLabel(status: string) { return getRunLabel(status); }
 function getTaskTone(status: string) { return getRunTone(status); }
-function getEndpointTypeLabel(endpoint: CatalogEndpoint) { return endpoint.endpointType === "LOCAL" ? "本地" : endpoint.endpointType === "QNAP_SMB" ? "QNAP / SMB" : endpoint.endpointType === "NETWORK_STORAGE" ? "网盘" : endpoint.endpointType === "CLOUD_115" ? "115 网盘" : endpoint.endpointType === "ALIST" ? "AList 网盘" : endpoint.endpointType === "REMOVABLE" ? "可移动设备" : endpoint.endpointType; }
+function getEndpointTypeLabel(endpoint: CatalogEndpoint) { return getCatalogEndpointTypeLabel(endpoint.endpointType); }
 function getAvailabilityStatusLabel(status: string) { return status === "AVAILABLE" ? "可用" : status === "DISABLED" ? "停用" : status || "未知"; }
 function getEntryIcon(mediaType: string) { return mediaType === "image" ? ImageIcon : mediaType === "video" ? Video : mediaType === "audio" ? Music4 : HardDrive; }
 function getRunLabel(status: string) {

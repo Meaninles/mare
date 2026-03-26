@@ -80,6 +80,23 @@ func (service *Service) buildAListConnector(ctx context.Context, endpoint store.
 	}, runtime)
 }
 
+func (service *Service) prepareAListBackedEndpoint(
+	ctx context.Context,
+	endpoint store.StorageEndpoint,
+) (alistEndpointConfig, *sidecaralist.Runtime, error) {
+	hydratedEndpoint, err := service.hydrateEndpointForConnector(endpoint)
+	if err != nil {
+		return alistEndpointConfig{}, nil, err
+	}
+
+	switch normalizeEndpointType(hydratedEndpoint.EndpointType) {
+	case string(connectors.EndpointTypeNetwork):
+		return service.prepareNetworkStorageEndpoint(ctx, hydratedEndpoint)
+	default:
+		return alistEndpointConfig{}, nil, fmt.Errorf("endpoint %q is not a network storage endpoint", endpoint.Name)
+	}
+}
+
 func (service *Service) prepareAListEndpoint(ctx context.Context, endpoint store.StorageEndpoint) (alistEndpointConfig, *sidecaralist.Runtime, error) {
 	config, err := parseAListEndpointConfig(json.RawMessage(endpoint.ConnectionConfig), endpoint.RootPath)
 	if err != nil {

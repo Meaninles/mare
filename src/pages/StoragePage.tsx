@@ -28,6 +28,7 @@ import {
 } from "../services/connector-test";
 import { useCatalogEndpoints } from "../hooks/useCatalog";
 import { formatCatalogDate } from "../lib/catalog-view";
+import { getCatalogEndpointTypeLabel } from "../lib/storage-endpoints";
 import type {
   CatalogEndpoint,
   CatalogEndpointPayload,
@@ -41,7 +42,7 @@ const backendUrl = getDefaultCatalogBackendUrl();
 const endpointTypeOptions = [
   { value: "LOCAL", label: "本地" },
   { value: "QNAP_SMB", label: "QNAP / SMB" },
-  { value: "NETWORK_STORAGE", label: "网盘" },
+  { value: "NETWORK_STORAGE", label: "网络存储" },
   { value: "REMOVABLE", label: "可移动设备" }
 ] as const;
 
@@ -65,6 +66,32 @@ const cloud115AvailableAppOptions = [
 type EndpointType = (typeof endpointTypeOptions)[number]["value"];
 type NetworkProvider = (typeof networkProviderOptions)[number]["value"];
 type NetworkLoginMethod = (typeof networkLoginMethodOptions)[number]["value"];
+
+const endpointTypeDisplayLabels: Record<EndpointType, string> = {
+  LOCAL: "\u672c\u5730",
+  QNAP_SMB: "QNAP / SMB",
+  NETWORK_STORAGE: "\u7f51\u7edc\u5b58\u50a8",
+  REMOVABLE: "\u53ef\u79fb\u52a8\u8bbe\u5907"
+};
+
+const networkProviderDisplayLabels: Record<NetworkProvider, string> = {
+  "115": "115 \u7f51\u76d8"
+};
+
+const networkLoginMethodDisplayLabels: Record<NetworkLoginMethod, string> = {
+  qrcode: "\u626b\u7801\u767b\u5f55",
+  manual: "\u624b\u52a8\u586b\u5199\u51ed\u8bc1"
+};
+
+const cloud115AppDisplayLabels: Record<string, string> = {
+  wechatmini: "\u5fae\u4fe1\u5c0f\u7a0b\u5e8f",
+  android: "\u5b89\u5353",
+  alipaymini: "\u652f\u4ed8\u5b9d\u5c0f\u7a0b\u5e8f",
+  qandroid: "115 \u751f\u6d3b",
+  tv: "\u7535\u89c6",
+  ios: "iOS",
+  web: "\u7f51\u9875"
+};
 
 type EndpointFormState = {
   endpointType: EndpointType;
@@ -187,8 +214,7 @@ export function StoragePage() {
 
   const availableEndpointCount = endpoints.filter((endpoint) => endpoint.availabilityStatus === "AVAILABLE").length;
   const managedEndpointCount = endpoints.filter((endpoint) => endpoint.roleMode === "MANAGED").length;
-  const currentTypeLabel =
-    endpointTypeOptions.find((option) => option.value === form.endpointType)?.label ?? form.endpointType;
+  const currentTypeLabel = endpointTypeDisplayLabels[form.endpointType] ?? form.endpointType;
   const isSavingEndpoint = busyAction === "save-endpoint";
   const isStartingQRCode = busyAction === "network-qrcode-start";
   const isPollingQRCode = busyAction === "network-qrcode-poll";
@@ -444,7 +470,7 @@ export function StoragePage() {
         <div className="library-hero-copy">
           <p className="eyebrow">存储管理</p>
           <h3>端点</h3>
-          <p>现在的网盘端点统一走一个入口配置。当前只开放 115 网盘，底层由打包的 AList 负责云盘交互。</p>
+          <p>现在的网络存储端点统一走一个入口配置。当前只开放 115 网盘，后续会在这个类型下扩展更多网盘子类型。</p>
         </div>
 
         <div className="hero-metrics">
@@ -495,7 +521,7 @@ export function StoragePage() {
                 className={`segmented-button${form.endpointType === option.value ? " active" : ""}`}
                 onClick={() => updateForm("endpointType", option.value)}
               >
-                {option.label}
+                {endpointTypeDisplayLabels[option.value] ?? option.label}
               </button>
             ))}
           </div>
@@ -561,14 +587,14 @@ export function StoragePage() {
             {form.endpointType === "NETWORK_STORAGE" ? (
               <>
                 <label className="field">
-                  <span>网盘类型</span>
+                  <span>网络存储类型</span>
                   <select
                     value={form.networkProvider}
                     onChange={(event) => updateForm("networkProvider", normalizeNetworkProvider(event.target.value))}
                   >
                     {networkProviderOptions.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.label}
+                        {networkProviderDisplayLabels[option.value] ?? option.label}
                       </option>
                     ))}
                   </select>
@@ -582,7 +608,7 @@ export function StoragePage() {
                   >
                     {networkLoginMethodOptions.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.label}
+                        {networkLoginMethodDisplayLabels[option.value] ?? option.label}
                       </option>
                     ))}
                   </select>
@@ -602,7 +628,7 @@ export function StoragePage() {
                   <select value={form.networkAppType} onChange={(event) => updateForm("networkAppType", event.target.value)}>
                     {cloud115AvailableAppOptions.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.label}
+                        {cloud115AppDisplayLabels[option.value] ?? option.label}
                       </option>
                     ))}
                   </select>
@@ -769,7 +795,7 @@ export function StoragePage() {
             <Server size={20} />
             <div>
               <strong>还没有登记任何存储端点。</strong>
-              <p>可以先在上方添加本地磁盘、QNAP / SMB、网盘或可移动设备。</p>
+              <p>可以先在上方添加本地磁盘、QNAP / SMB、网络存储或可移动设备。</p>
             </div>
           </div>
         ) : (
@@ -1056,13 +1082,14 @@ function normalizeNetworkLoginMethod(value: string): NetworkLoginMethod {
 }
 
 function getEndpointTypeLabel(endpointType: string) {
+  return getCatalogEndpointTypeLabel(endpointType);
   switch (endpointType) {
     case "LOCAL":
       return "本地";
     case "QNAP_SMB":
       return "QNAP / SMB";
     case "NETWORK_STORAGE":
-      return "网盘";
+      return "网络存储";
     case "REMOVABLE":
       return "可移动设备";
     default:
@@ -1089,7 +1116,7 @@ function getEndpointRootLabel(endpoint: CatalogEndpoint) {
   const config = endpoint.connectionConfig ?? {};
   const provider = normalizeNetworkProvider(getString(config, "provider"));
   const rootFolderId = getString(config, "rootFolderId") || getString(config, "root_folder_id") || "0";
-  const providerLabel = provider === "115" ? "115 网盘" : "网盘";
+  const providerLabel = provider === "115" ? "115 网盘" : "网络存储";
 
   if (rootFolderId === "0") {
     return `${providerLabel} / 全部文件`;

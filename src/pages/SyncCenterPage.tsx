@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowUp,
   CheckCircle2,
   Download,
   LoaderCircle,
@@ -18,6 +19,7 @@ import {
   useCatalogSyncOverview,
   useDeleteTransferTasks,
   usePauseTransferTasks,
+  usePrioritizeTransferTask,
   useResumeTransferTasks,
   useTransferTaskDetail,
   useTransferTasks
@@ -50,12 +52,14 @@ export function SyncCenterPage() {
   const pauseMutation = usePauseTransferTasks();
   const resumeMutation = useResumeTransferTasks();
   const deleteMutation = useDeleteTransferTasks();
+  const prioritizeMutation = usePrioritizeTransferTask();
 
   const [statusFilter, setStatusFilter] = useState<TransferStatusFilter>("active");
   const [directionFilter, setDirectionFilter] = useState<TransferDirectionFilter>("all");
   const [searchValue, setSearchValue] = useState("");
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [focusedTaskId, setFocusedTaskId] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ taskId: string; x: number; y: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const transferResult = transferTasksQuery.data;
@@ -99,18 +103,32 @@ export function SyncCenterPage() {
     () => filteredTasks.find((task) => task.id === focusedTaskId) ?? tasks.find((task) => task.id === focusedTaskId) ?? null,
     [filteredTasks, focusedTaskId, tasks]
   );
+  const contextMenuTask = useMemo(
+    () => (contextMenu ? tasks.find((task) => task.id === contextMenu.taskId) ?? null : null),
+    [contextMenu, tasks]
+  );
   const taskDetailQuery = useTransferTaskDetail(focusedTaskId);
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const selectedTasks = useMemo(() => tasks.filter((task) => selectedTaskIdSet.has(task.id)), [selectedTaskIdSet, tasks]);
   const visibleTaskIds = useMemo(() => filteredTasks.map((task) => task.id), [filteredTasks]);
   const allVisibleSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((taskId) => selectedTaskIdSet.has(taskId));
-  const hasBusyAction = pauseMutation.isPending || resumeMutation.isPending || deleteMutation.isPending;
+  const hasBusyAction =
+    pauseMutation.isPending || resumeMutation.isPending || deleteMutation.isPending || prioritizeMutation.isPending;
 
   useEffect(() => {
     const visibleTaskIdSet = new Set(tasks.map((task) => task.id));
     setSelectedTaskIds((current) => current.filter((taskId) => visibleTaskIdSet.has(taskId)));
     setFocusedTaskId((current) => (visibleTaskIdSet.has(current) ? current : tasks[0]?.id ?? ""));
   }, [tasks]);
+
+  useEffect(() => {
+    function handleCloseContextMenu() {
+      setContextMenu(null);
+    }
+
+    window.addEventListener("click", handleCloseContextMenu);
+    return () => window.removeEventListener("click", handleCloseContextMenu);
+  }, []);
 
   async function handlePause(taskIds: string[]) {
     if (taskIds.length === 0) {
@@ -158,6 +176,21 @@ export function SyncCenterPage() {
       setNotice(summary.message || `已删除 ${summary.updated} 个任务。`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "删除传输任务失败。");
+    }
+  }
+
+  async function handlePrioritize(taskId: string) {
+    if (!taskId) {
+      return;
+    }
+
+    setNotice(null);
+    setContextMenu(null);
+    try {
+      const summary = await prioritizeMutation.mutateAsync(taskId);
+      setNotice(summary.message || "任务已提升优先级。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "提升任务优先级失败。");
     }
   }
 
@@ -347,10 +380,12 @@ export function SyncCenterPage() {
             <table className="transfer-task-table">
               <colgroup>
                 <col style={{ width: "5%" }} />
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "26%" }} />
+                <col style={{ width: "20%" }} />
+                <col style={{ width: "22%" }} />
                 <col style={{ width: "16%" }} />
-                <col style={{ width: "11%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "9%" }} />
                 <col style={{ width: "10%" }} />
                 <col style={{ width: "8%" }} />
               </colgroup>
@@ -360,6 +395,8 @@ export function SyncCenterPage() {
                   <th>任务</th>
                   <th>来源 / 目标</th>
                   <th>进度</th>
+                  <th>大小</th>
+                  <th>速度</th>
                   <th>状态</th>
                   <th>最近更新</th>
                   <th>操作</th>
@@ -374,6 +411,15 @@ export function SyncCenterPage() {
                       key={task.id}
                       className={`transfer-task-row${isFocused ? " is-active" : ""}${isSelected ? " is-selected" : ""}`}
                       onClick={() => setFocusedTaskId(task.id)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setFocusedTaskId(task.id);
+                        if (!canPrioritize(task.status)) {
+                          setContextMenu(null);
+                          return;
+                        }
+                        setContextMenu({ taskId: task.id, x: event.clientX, y: event.clientY });
+                      }}
                     >
                       <td className="transfer-selection-cell" onClick={(event) => event.stopPropagation()}>
                         <input
@@ -391,7 +437,7 @@ export function SyncCenterPage() {
                             <span>{task.totalItems} 项</span>
                             {task.currentItemName ? <span>{task.currentItemName}</span> : null}
                             {task.engineSummary ? <span>{task.engineSummary}</span> : null}
-                            {task.currentSpeed ? <span>{formatTransferSpeed(task.currentSpeed)}</span> : null}
+                            {task.priority > 0 ? <span>优先级 {task.priority}</span> : null}
                           </div>
                         </div>
                       </td>
@@ -411,6 +457,18 @@ export function SyncCenterPage() {
                           secondary={`${formatFileSize(task.completedBytes)} / ${formatFileSize(task.totalBytes)}`}
                           compact
                         />
+                      </td>
+                      <td>
+                        <div className="transfer-time-compact">
+                          <strong>{formatFileSize(task.totalBytes)}</strong>
+                          <span>{formatFileSize(task.completedBytes)} 已完成</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="transfer-time-compact">
+                          <strong>{formatTransferSpeed(task.currentSpeed)}</strong>
+                          <span>{task.engineSummary || "等待调度"}</span>
+                        </div>
                       </td>
                       <td>
                         <span className={`status-pill ${getTransferTone(task.status)}`}>{getTransferStatusLabel(task.status)}</span>
@@ -463,6 +521,31 @@ export function SyncCenterPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        ) : null}
+
+        {contextMenu && contextMenuTask && canPrioritize(contextMenuTask.status) ? (
+          <div
+            className="settings-note-card"
+            style={{
+              position: "fixed",
+              left: Math.min(Math.max(16, contextMenu.x), Math.max(16, window.innerWidth - 272)),
+              top: Math.min(Math.max(16, contextMenu.y), Math.max(16, window.innerHeight - 120)),
+              zIndex: 40,
+              width: 240
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void handlePrioritize(contextMenu.taskId)}
+              disabled={hasBusyAction}
+              style={{ width: "100%", justifyContent: "flex-start" }}
+            >
+              <ArrowUp size={15} />
+              优先开始并抢占同类最早任务
+            </button>
           </div>
         ) : null}
       </article>
@@ -838,4 +921,8 @@ function canPause(status: string) {
 
 function canResume(status: string) {
   return ["paused", "failed", "canceled"].includes(status.trim().toLowerCase());
+}
+
+function canPrioritize(status: string) {
+  return ["queued", "pending", "retrying", "paused", "failed", "canceled"].includes(status.trim().toLowerCase());
 }

@@ -33,12 +33,16 @@ func (service *Service) stageTransferItemFromAList(ctx context.Context, taskID s
 	if err != nil {
 		return err
 	}
-	sourceConfig, alistRuntime, err := service.prepareAListEndpoint(ctx, sourceEndpoint)
+	sourceConfig, alistRuntime, err := service.prepareAListBackedEndpoint(ctx, sourceEndpoint)
 	if err != nil {
 		return err
 	}
 
 	sourceEntry, err := alistRuntime.StatEntry(ctx, item.SourcePath, sourceConfig.Password, true)
+	if err != nil {
+		return err
+	}
+	linkInfo, err := alistRuntime.LinkEntry(ctx, item.SourcePath, sourceConfig.Password)
 	if err != nil {
 		return err
 	}
@@ -57,13 +61,14 @@ func (service *Service) stageTransferItemFromAList(ctx context.Context, taskID s
 		item.UpdatedAt = time.Now().UTC()
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.EngineKind = transferEngineKindAria2
-			metadata.EngineLabel = "AList -> Aria2 下载"
+			metadata.EngineLabel = "网络存储下载"
 			metadata.CurrentSpeed = 0
 			metadata.RefreshInterval = 1
 			if metadata.Aria2 == nil {
 				metadata.Aria2 = &transferItemAria2Metadata{}
 			}
-			metadata.Aria2.DownloadURI = sourceEntry.RawURL
+			metadata.Aria2.DownloadURI = linkInfo.URL
+			metadata.Aria2.Headers = flattenLinkHeaders(linkInfo.Headers)
 			metadata.Aria2.TargetDir = filepath.Dir(stagingPath)
 			metadata.Aria2.TargetOut = filepath.Base(stagingPath)
 			metadata.Aria2.TotalLength = item.TotalBytes
@@ -74,12 +79,13 @@ func (service *Service) stageTransferItemFromAList(ctx context.Context, taskID s
 
 	metadata := updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.EngineKind = transferEngineKindAria2
-		metadata.EngineLabel = "AList -> Aria2 下载"
+		metadata.EngineLabel = "网络存储下载"
 		metadata.RefreshInterval = 1
 		if metadata.Aria2 == nil {
 			metadata.Aria2 = &transferItemAria2Metadata{}
 		}
-		metadata.Aria2.DownloadURI = sourceEntry.RawURL
+		metadata.Aria2.DownloadURI = linkInfo.URL
+		metadata.Aria2.Headers = flattenLinkHeaders(linkInfo.Headers)
 		metadata.Aria2.TargetDir = filepath.Dir(stagingPath)
 		metadata.Aria2.TargetOut = filepath.Base(stagingPath)
 		metadata.Aria2.TotalLength = max(item.TotalBytes, sourceEntry.Size)
@@ -102,10 +108,10 @@ func (service *Service) stageTransferItemFromAList(ctx context.Context, taskID s
 	}
 	if needCreate {
 		gid, err = aria2Runtime.AddURI(ctx, sidecararia2.AddRequest{
-			URIs:           []string{sourceEntry.RawURL},
+			URIs:           []string{linkInfo.URL},
 			Dir:            filepath.Dir(stagingPath),
 			Out:            filepath.Base(stagingPath),
-			Headers:        metadata.Aria2.Headers,
+			Headers:        flattenLinkHeaders(linkInfo.Headers),
 			Continue:       true,
 			AllowOverwrite: false,
 		})
@@ -118,7 +124,8 @@ func (service *Service) stageTransferItemFromAList(ctx context.Context, taskID s
 			}
 			metadata.Aria2.GID = gid
 			metadata.Aria2.Status = "active"
-			metadata.Aria2.DownloadURI = sourceEntry.RawURL
+			metadata.Aria2.DownloadURI = linkInfo.URL
+			metadata.Aria2.Headers = flattenLinkHeaders(linkInfo.Headers)
 			metadata.Aria2.TargetDir = filepath.Dir(stagingPath)
 			metadata.Aria2.TargetOut = filepath.Base(stagingPath)
 			metadata.Aria2.TotalLength = max(item.TotalBytes, sourceEntry.Size)
@@ -141,7 +148,7 @@ func (service *Service) commitTransferItemToAList(
 	item *store.TransferTaskItem,
 	endpoint store.StorageEndpoint,
 ) (connectors.FileEntry, error) {
-	_, runtime, err := service.prepareAListEndpoint(ctx, endpoint)
+	_, runtime, err := service.prepareAListBackedEndpoint(ctx, endpoint)
 	if err != nil {
 		return connectors.FileEntry{}, err
 	}
@@ -158,7 +165,7 @@ func (service *Service) commitTransferItemToAList(
 	targetName := path.Base(targetPath)
 	stageName := path.Base(stageAListPath)
 
-	if err := service.ensureAListDirectoryTree(ctx, runtime, targetDir); err != nil {
+	if err := service.ensureAListDirectoryTree(ctx, runtime, targetDir, endpoint.RootPath); err != nil {
 		return connectors.FileEntry{}, err
 	}
 
@@ -167,7 +174,7 @@ func (service *Service) commitTransferItemToAList(
 	item.UpdatedAt = time.Now().UTC()
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.EngineKind = transferEngineKindAList
-		metadata.EngineLabel = "AList 复制上传"
+		metadata.EngineLabel = "网络存储上传"
 		metadata.RefreshInterval = 1
 		if metadata.AList == nil {
 			metadata.AList = &transferItemAListMetadata{}
@@ -231,7 +238,7 @@ func (service *Service) commitTransferItemToAList(
 		speed := estimateTransferSpeed(item.CommittedBytes-lastBytes, now.Sub(lastObservedAt))
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.EngineKind = transferEngineKindAList
-			metadata.EngineLabel = "AList 复制上传"
+			metadata.EngineLabel = "网络存储上传"
 			metadata.CurrentSpeed = speed
 			metadata.RefreshInterval = 1
 			if metadata.AList == nil {
@@ -253,7 +260,7 @@ func (service *Service) commitTransferItemToAList(
 
 		switch service.normalizeAListTaskStatus(taskInfo) {
 		case "complete":
-			connector, err := service.buildAListConnector(ctx, endpoint)
+			connector, err := service.buildConnector(endpoint)
 			if err != nil {
 				return connectors.FileEntry{}, err
 			}
@@ -322,6 +329,7 @@ func (service *Service) pauseExternalTransferItem(ctx context.Context, item *sto
 		if err := targetRuntime.CancelCopyTask(ctx, metadata.AList.TaskID); err != nil && !isAListUnknownTaskError(err) {
 			return err
 		}
+		service.cleanupAListTargetResidue(ctx, *item)
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.CurrentSpeed = 0
 			if metadata.AList != nil {
@@ -349,6 +357,7 @@ func (service *Service) deleteExternalTransferItem(ctx context.Context, item *st
 			return err
 		}
 	}
+	service.cleanupAListTargetResidue(ctx, *item)
 
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.CurrentSpeed = 0
@@ -359,6 +368,194 @@ func (service *Service) deleteExternalTransferItem(ctx context.Context, item *st
 			metadata.AList.TaskStatus = "canceled"
 			metadata.AList.TaskState = 7
 		}
+	})
+	return nil
+}
+
+func (service *Service) ensureAria2RuntimeAvailable(ctx context.Context) (bool, error) {
+	if err := service.getAria2Runtime().EnsureRunning(ctx); err != nil {
+		if isOptionalSidecarStartupError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (service *Service) ensureAListRuntimeAvailable(ctx context.Context) (bool, error) {
+	if err := service.getAListRuntime().EnsureRunning(ctx); err != nil {
+		if isOptionalSidecarStartupError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (service *Service) reconcileInterruptedTransferItem(
+	ctx context.Context,
+	item *store.TransferTaskItem,
+	taskStatus string,
+	aria2Available bool,
+	alistAvailable bool,
+) error {
+	if item == nil {
+		return nil
+	}
+	before := *item
+
+	if err := service.reconcileInterruptedTransferFiles(ctx, item); err != nil {
+		return err
+	}
+	if aria2Available {
+		if err := service.reconcileInterruptedAria2Transfer(ctx, item); err != nil {
+			return err
+		}
+	}
+	if alistAvailable {
+		if err := service.reconcileInterruptedAListTransfer(ctx, item); err != nil {
+			return err
+		}
+	}
+
+	normalizedTaskStatus := strings.ToLower(strings.TrimSpace(taskStatus))
+	switch normalizedTaskStatus {
+	case taskStatusPaused:
+		service.applyRecoveredTransferItemStatus(item, taskStatusPaused, transferPhasePaused)
+	case taskStatusCanceled:
+		service.applyRecoveredTransferItemStatus(item, taskStatusCanceled, transferPhaseCanceled)
+	case taskStatusFailed:
+		if !isTransferItemTerminal(item.Status) && strings.TrimSpace(strings.ToLower(item.Status)) != transferItemStatusSkipped {
+			service.applyRecoveredTransferItemStatus(item, taskStatusFailed, transferPhaseFailed)
+		}
+	default:
+		if shouldRequeueInterruptedTransferTask(normalizedTaskStatus) && canTransferItemResume(item.Status) {
+			item.Status = taskStatusQueued
+			item.Phase = restoreTransferPhase(*item)
+			item.ErrorMessage = nil
+			item.FinishedAt = nil
+		}
+	}
+
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		metadata.CurrentSpeed = 0
+	})
+	syncTransferItemProgressFromArtifacts(item)
+	if *item != before {
+		item.UpdatedAt = time.Now().UTC()
+	}
+	return nil
+}
+
+func (service *Service) applyRecoveredTransferItemStatus(item *store.TransferTaskItem, status string, phase string) {
+	if item == nil || isTransferItemTerminal(item.Status) || strings.TrimSpace(strings.ToLower(item.Status)) == transferItemStatusSkipped {
+		return
+	}
+	item.Status = status
+	item.Phase = phase
+	item.ErrorMessage = nil
+	item.FinishedAt = nil
+}
+
+func (service *Service) reconcileInterruptedTransferFiles(ctx context.Context, item *store.TransferTaskItem) error {
+	if item == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(item.StagingPath) != "" {
+		size, err := fileSizeIfExists(item.StagingPath)
+		if err != nil {
+			return err
+		}
+		item.StagedBytes = max(item.StagedBytes, size)
+	}
+
+	if !supportsLocalResumableTransfer(item.TargetEndpointType) ||
+		strings.TrimSpace(item.TargetEndpointID) == "" ||
+		strings.TrimSpace(item.TargetTempPath) == "" {
+		return nil
+	}
+
+	endpoint, err := service.store.GetStorageEndpointByID(ctx, item.TargetEndpointID)
+	if err != nil {
+		return nil
+	}
+
+	size, err := fileSizeIfExists(resolveEndpointAbsolutePath(endpoint, item.TargetTempPath))
+	if err != nil {
+		return err
+	}
+	item.CommittedBytes = max(item.CommittedBytes, size)
+	return nil
+}
+
+func (service *Service) reconcileInterruptedAria2Transfer(ctx context.Context, item *store.TransferTaskItem) error {
+	metadata := readTransferItemMetadata(*item)
+	if metadata.Aria2 == nil || strings.TrimSpace(metadata.Aria2.GID) == "" {
+		return nil
+	}
+
+	status, needCreate, err := service.resolveAria2Transfer(ctx, service.getAria2Runtime(), item, metadata.Aria2.GID)
+	if err != nil {
+		return err
+	}
+
+	if needCreate {
+		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+			if metadata.Aria2 != nil {
+				metadata.Aria2.TotalLength = max(metadata.Aria2.TotalLength, item.TotalBytes)
+			}
+		})
+		return nil
+	}
+
+	item.StagedBytes = max(item.StagedBytes, status.CompletedLength)
+	item.TotalBytes = max(item.TotalBytes, status.TotalLength)
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		if metadata.Aria2 == nil {
+			return
+		}
+		metadata.Aria2.GID = defaultString(strings.TrimSpace(status.GID), metadata.Aria2.GID)
+		metadata.Aria2.Status = strings.TrimSpace(status.Status)
+		metadata.Aria2.TotalLength = max(metadata.Aria2.TotalLength, max(status.TotalLength, item.TotalBytes))
+	})
+	return nil
+}
+
+func (service *Service) reconcileInterruptedAListTransfer(ctx context.Context, item *store.TransferTaskItem) error {
+	metadata := readTransferItemMetadata(*item)
+	if metadata.AList == nil || strings.TrimSpace(metadata.AList.TaskID) == "" {
+		return nil
+	}
+
+	taskInfo, needCreate, err := service.resolveAListCopyTask(ctx, service.getAListRuntime(), metadata.AList.TaskID)
+	if err != nil {
+		return err
+	}
+
+	if needCreate {
+		service.cleanupAListTargetResidue(ctx, *item)
+		item.CommittedBytes = 0
+		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+			if metadata.AList == nil {
+				return
+			}
+			metadata.AList.TaskID = ""
+			metadata.AList.TaskStatus = ""
+			metadata.AList.TaskState = 0
+		})
+		return nil
+	}
+
+	item.TotalBytes = max(item.TotalBytes, taskInfo.TotalBytes)
+	item.CommittedBytes = max(item.CommittedBytes, service.estimateAListCommittedBytes(item.TotalBytes, taskInfo))
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		if metadata.AList == nil {
+			return
+		}
+		metadata.AList.TaskID = defaultString(strings.TrimSpace(taskInfo.ID), metadata.AList.TaskID)
+		metadata.AList.TaskStatus = service.normalizeAListTaskStatus(taskInfo)
+		metadata.AList.TaskState = taskInfo.State
 	})
 	return nil
 }
@@ -438,7 +635,7 @@ func (service *Service) pollAria2Transfer(
 		item.UpdatedAt = time.Now().UTC()
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.EngineKind = transferEngineKindAria2
-			metadata.EngineLabel = "AList -> Aria2 下载"
+			metadata.EngineLabel = "网络存储下载"
 			metadata.CurrentSpeed = status.DownloadSpeed
 			metadata.RefreshInterval = 1
 			if metadata.Aria2 == nil {
@@ -545,14 +742,27 @@ func (service *Service) resolveAListStagePath(stagingPath string) (string, error
 	return normalizeAListEndpointPath(path.Join(alistRuntimeStagingMountPath, relativePath)), nil
 }
 
-func (service *Service) ensureAListDirectoryTree(ctx context.Context, runtime *sidecaralist.Runtime, targetDir string) error {
+func (service *Service) ensureAListDirectoryTree(ctx context.Context, runtime *sidecaralist.Runtime, targetDir string, storageRoot string) error {
 	targetDir = normalizeAListEndpointPath(targetDir)
 	if targetDir == "" || targetDir == "/" {
 		return nil
 	}
 
-	segments := strings.Split(strings.TrimPrefix(targetDir, "/"), "/")
+	floor := normalizeAListEndpointPath(storageRoot)
 	current := ""
+	relative := strings.TrimPrefix(targetDir, "/")
+	if floor != "" && floor != "/" {
+		if targetDir == floor {
+			return nil
+		}
+		if targetDir != floor && !strings.HasPrefix(targetDir, floor+"/") {
+			return fmt.Errorf("alist target dir %q escapes storage root %q", targetDir, floor)
+		}
+		current = floor
+		relative = strings.TrimPrefix(strings.TrimPrefix(targetDir, floor), "/")
+	}
+
+	segments := strings.Split(relative, "/")
 	for _, segment := range segments {
 		segment = strings.TrimSpace(segment)
 		if segment == "" {
@@ -564,6 +774,43 @@ func (service *Service) ensureAListDirectoryTree(ctx context.Context, runtime *s
 		}
 	}
 	return nil
+}
+
+func (service *Service) cleanupAListTargetResidue(ctx context.Context, item store.TransferTaskItem) {
+	metadata := readTransferItemMetadata(item)
+	if metadata.AList == nil {
+		return
+	}
+
+	targetDir := strings.TrimSpace(metadata.AList.TargetDir)
+	names := uniqueStrings(metadata.AList.Names)
+	if strings.TrimSpace(item.TargetPath) != "" {
+		names = append(names, path.Base(item.TargetPath))
+		names = uniqueStrings(names)
+	}
+	if targetDir == "" || len(names) == 0 {
+		return
+	}
+
+	_ = service.getAListRuntime().RemoveEntry(ctx, targetDir, names)
+}
+
+func flattenLinkHeaders(values map[string][]string) []string {
+	headers := make([]string, 0, len(values))
+	for key, items := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		for _, item := range items {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			headers = append(headers, fmt.Sprintf("%s: %s", key, trimmed))
+		}
+	}
+	return headers
 }
 
 func (service *Service) renameAListCopyTarget(ctx context.Context, runtime *sidecaralist.Runtime, targetDir string, sourceName string, targetName string) error {

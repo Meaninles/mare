@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -376,97 +375,7 @@ func (service *Service) SaveImportRules(ctx context.Context, request SaveImportR
 }
 
 func (service *Service) ExecuteImport(ctx context.Context, request ExecuteImportRequest) (ImportExecutionSummary, error) {
-	task, err := service.createCatalogTask(ctx, taskTypeImportExecute, request)
-	if err != nil {
-		return ImportExecutionSummary{}, err
-	}
-
-	startedAt := time.Now().UTC()
-	summary := ImportExecutionSummary{
-		TaskID:     task.ID,
-		Status:     taskStatusRunning,
-		StartedAt:  startedAt,
-		FinishedAt: startedAt,
-	}
-
-	slog.Info("import task started", "taskId", task.ID, "identitySignature", request.IdentitySignature, "fileCount", len(request.EntryPaths))
-
-	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-		Status:     taskStatusRunning,
-		RetryCount: task.RetryCount,
-		StartedAt:  &startedAt,
-		UpdatedAt:  startedAt,
-	}); err != nil {
-		return summary, err
-	}
-
-	executeErr := service.executeImport(ctx, request, task.ID, task.RetryCount, startedAt, &summary)
-	finishedAt := time.Now().UTC()
-	summary.FinishedAt = finishedAt
-	if executeErr != nil && summary.Error == "" {
-		summary.Error = executeErr.Error()
-	}
-
-	taskStatus := taskStatusSuccess
-	if summary.FailedCount > 0 || summary.PartialCount > 0 || executeErr != nil {
-		taskStatus = taskStatusFailed
-		summary.Status = taskStatusFailed
-	} else {
-		summary.Status = taskStatusSuccess
-	}
-
-	resultText := fmt.Sprintf(
-		"已处理 %d/%d 个文件（100%%），成功 %d 个，部分完成 %d 个，失败 %d 个。",
-		summary.TotalFiles,
-		summary.TotalFiles,
-		summary.SuccessCount,
-		summary.PartialCount,
-		summary.FailedCount,
-	)
-	var errorMessage *string
-	if summary.Error != "" {
-		errorMessage = &summary.Error
-	}
-
-	if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
-		Status:        taskStatus,
-		ResultSummary: &resultText,
-		ErrorMessage:  errorMessage,
-		RetryCount:    task.RetryCount,
-		StartedAt:     &startedAt,
-		FinishedAt:    &finishedAt,
-		UpdatedAt:     finishedAt,
-	}); err != nil {
-		return summary, err
-	}
-
-	if executeErr != nil {
-		slog.Error("import task failed", "taskId", task.ID, "identitySignature", request.IdentitySignature, "error", executeErr)
-		return summary, executeErr
-	}
-
-	if summary.FailedCount > 0 || summary.PartialCount > 0 {
-		slog.Warn(
-			"import task completed with partial failures",
-			"taskId", task.ID,
-			"identitySignature", request.IdentitySignature,
-			"successCount", summary.SuccessCount,
-			"partialCount", summary.PartialCount,
-			"failedCount", summary.FailedCount,
-		)
-		return summary, errors.New("import completed with failures")
-	}
-
-	slog.Info(
-		"import task completed",
-		"taskId", task.ID,
-		"identitySignature", request.IdentitySignature,
-		"successCount", summary.SuccessCount,
-		"partialCount", summary.PartialCount,
-		"failedCount", summary.FailedCount,
-	)
-
-	return summary, nil
+	return service.QueueImportExecution(ctx, request)
 }
 
 func (service *Service) executeImport(

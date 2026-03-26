@@ -77,6 +77,11 @@ type Entry struct {
 	ModifiedAt *time.Time
 }
 
+type LinkInfo struct {
+	URL     string
+	Headers map[string][]string
+}
+
 type TaskInfo struct {
 	ID         string
 	Name       string
@@ -100,6 +105,11 @@ type entryResponse struct {
 	IsDir    bool   `json:"is_dir"`
 	Size     int64  `json:"size"`
 	Modified string `json:"modified"`
+}
+
+type linkResponse struct {
+	URL    string              `json:"url"`
+	Header map[string][]string `json:"header"`
 }
 
 type taskResponse struct {
@@ -274,18 +284,19 @@ func (runtime *Runtime) StatEntry(ctx context.Context, targetPath string, passwo
 }
 
 func (runtime *Runtime) OpenReadStream(ctx context.Context, targetPath string, password string) (io.ReadCloser, error) {
-	entry, err := runtime.StatEntry(ctx, targetPath, password, true)
+	linkInfo, err := runtime.LinkEntry(ctx, targetPath, password)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(entry.RawURL) == "" {
+	if strings.TrimSpace(linkInfo.URL) == "" {
 		return nil, fmt.Errorf("alist entry %q did not expose a raw url", targetPath)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, entry.RawURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, linkInfo.URL, nil)
 	if err != nil {
 		return nil, err
 	}
+	applyHeaderValues(request.Header, linkInfo.Headers)
 
 	response, err := runtime.httpClient.Do(request)
 	if err != nil {
@@ -297,6 +308,29 @@ func (runtime *Runtime) OpenReadStream(ctx context.Context, targetPath string, p
 		return nil, fmt.Errorf("alist raw request failed: status=%d body=%s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return response.Body, nil
+}
+
+func (runtime *Runtime) LinkEntry(ctx context.Context, targetPath string, password string) (LinkInfo, error) {
+	token, err := runtime.ensureAuthenticated(ctx)
+	if err != nil {
+		return LinkInfo{}, err
+	}
+
+	payload := map[string]any{
+		"path":     normalizeAListPath(targetPath),
+		"password": strings.TrimSpace(password),
+	}
+	var response linkResponse
+	if err := runtime.doJSON(ctx, token, http.MethodPost, "/api/fs/link", payload, &response); err != nil {
+		return LinkInfo{}, err
+	}
+	if strings.TrimSpace(response.URL) == "" {
+		return LinkInfo{}, fmt.Errorf("alist link for %q did not return a url", targetPath)
+	}
+	return LinkInfo{
+		URL:     strings.TrimSpace(response.URL),
+		Headers: response.Header,
+	}, nil
 }
 
 func (runtime *Runtime) CopyIn(ctx context.Context, targetPath string, password string, overwrite bool, source io.Reader) error {
@@ -910,6 +944,22 @@ func mapEntryResponse(requestPath string, item entryResponse) Entry {
 		IsDir:      item.IsDir,
 		Size:       item.Size,
 		ModifiedAt: modifiedAt,
+	}
+}
+
+func applyHeaderValues(destination http.Header, values map[string][]string) {
+	for key, items := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		for _, item := range items {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			destination.Add(key, trimmed)
+		}
 	}
 }
 

@@ -38,6 +38,7 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/libraries/legacy/status", server.handleLegacyLibraryStatus)
 	mux.HandleFunc("/api/v1/libraries/legacy/migrate", server.handleLegacyLibraryMigrate)
 	mux.HandleFunc("/api/v1/system/logs", server.handleSystemLogs)
+	mux.HandleFunc("/api/v1/settings/transfers", server.handleTransferSettings)
 	mux.HandleFunc("/api/v1/settings/backup/export", server.handleSettingsBackupExport)
 	mux.HandleFunc("/api/v1/settings/backup/import", server.handleSettingsBackupImport)
 	mux.HandleFunc("/api/v1/catalog/endpoints", server.handleCatalogEndpoints)
@@ -52,6 +53,7 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/catalog/transfers/pause", server.handleCatalogTransferPause)
 	mux.HandleFunc("/api/v1/catalog/transfers/resume", server.handleCatalogTransferResume)
 	mux.HandleFunc("/api/v1/catalog/transfers/delete", server.handleCatalogTransferDelete)
+	mux.HandleFunc("/api/v1/catalog/transfers/prioritize", server.handleCatalogTransferPrioritize)
 	mux.HandleFunc("/api/v1/catalog/scans/full", server.handleCatalogFullScan)
 	mux.HandleFunc("/api/v1/catalog/scans/endpoint", server.handleCatalogEndpointScan)
 	mux.HandleFunc("/api/v1/catalog/sync/overview", server.handleCatalogSyncOverview)
@@ -67,9 +69,9 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/tools/media/video/analyze", server.handleVideoMediaToolAnalyze)
 	mux.HandleFunc("/api/v1/tools/media/audio/analyze", server.handleAudioMediaToolAnalyze)
 	mux.HandleFunc("/api/v1/tools/connectors/qnap/test", server.handleQNAPTest)
-	mux.HandleFunc("/api/v1/tools/connectors/cloud115/test", server.handleCloud115Test)
-	mux.HandleFunc("/api/v1/tools/connectors/cloud115/qrcode/start", server.handleCloud115QRCodeStart)
-	mux.HandleFunc("/api/v1/tools/connectors/cloud115/qrcode/poll", server.handleCloud115QRCodePoll)
+	mux.HandleFunc("/api/v1/tools/connectors/network-storage/test", server.handleNetworkStorageTest)
+	mux.HandleFunc("/api/v1/tools/network-storage/115/qrcode/start", server.handleNetworkStorage115QRCodeStart)
+	mux.HandleFunc("/api/v1/tools/network-storage/115/qrcode/poll", server.handleNetworkStorage115QRCodePoll)
 	mux.HandleFunc("/api/v1/tools/connectors/removable/devices", server.handleRemovableDevices)
 	mux.HandleFunc("/api/v1/tools/connectors/removable/test", server.handleRemovableTest)
 
@@ -122,13 +124,36 @@ func (server *Server) loggingMiddleware(next http.Handler) http.Handler {
 		startedAt := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r)
-		slog.Info("http request served",
+		log := slog.Info
+		if shouldSuppressInfoRequestLog(r, recorder.statusCode) {
+			log = slog.Debug
+		}
+		log("http request served",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", recorder.statusCode,
 			"duration", time.Since(startedAt).String(),
 		)
 	})
+}
+
+func shouldSuppressInfoRequestLog(r *http.Request, statusCode int) bool {
+	if r == nil {
+		return false
+	}
+	if statusCode >= http.StatusBadRequest &&
+		!(r.Method == http.MethodGet && r.URL.Path == "/api/v1/import/devices" && statusCode == http.StatusConflict) {
+		return false
+	}
+
+	path := r.URL.Path
+	if r.Method == http.MethodGet && (path == "/api/v1/catalog/tasks" || path == "/api/v1/catalog/transfers") {
+		return true
+	}
+	if r.Method == http.MethodGet && path == "/api/v1/import/devices" && statusCode == http.StatusConflict {
+		return true
+	}
+	return false
 }
 
 func (server *Server) corsMiddleware(next http.Handler) http.Handler {

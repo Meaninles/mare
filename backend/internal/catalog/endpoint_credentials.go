@@ -28,16 +28,12 @@ func (service *Service) buildConnector(endpoint store.StorageEndpoint) (connecto
 	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeNetwork) {
 		return service.buildNetworkStorageConnector(context.Background(), hydrated)
 	}
-	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeAList) {
-		return service.buildAListConnector(context.Background(), hydrated)
-	}
 	return service.connectorFactory(hydrated)
 }
 
 func (service *Service) hydrateEndpointForConnector(endpoint store.StorageEndpoint) (store.StorageEndpoint, error) {
 	normalizedEndpointType := normalizeEndpointType(endpoint.EndpointType)
-	if normalizedEndpointType != string(connectors.EndpointTypeCloud115) &&
-		normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
+	if normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
 		return endpoint, nil
 	}
 
@@ -68,8 +64,6 @@ func (service *Service) hydrateEndpointForConnector(endpoint store.StorageEndpoi
 
 	var hydratedConfig json.RawMessage
 	switch normalizedEndpointType {
-	case string(connectors.EndpointTypeCloud115):
-		hydratedConfig, err = injectCloud115Credential(config, record.Secret)
 	case string(connectors.EndpointTypeNetwork):
 		hydratedConfig, err = injectNetworkStorageCredential(config, record.Secret)
 	default:
@@ -169,28 +163,9 @@ func (service *Service) MigrateEndpointCredentials(ctx context.Context) error {
 	return nil
 }
 
-func injectCloud115Credential(connectionConfig json.RawMessage, secret string) (json.RawMessage, error) {
-	if len(strings.TrimSpace(string(connectionConfig))) == 0 {
-		connectionConfig = json.RawMessage(`{}`)
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(connectionConfig, &payload); err != nil {
-		return nil, fmt.Errorf("invalid connection config: %w", err)
-	}
-
-	payload["accessToken"] = strings.TrimSpace(secret)
-	normalized, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("normalize hydrated connection config: %w", err)
-	}
-	return normalized, nil
-}
-
 func extractEndpointCredential(endpointType string, payload map[string]any) *endpointCredentialInput {
 	normalizedEndpointType := normalizeEndpointType(endpointType)
-	if normalizedEndpointType != string(connectors.EndpointTypeCloud115) &&
-		normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
+	if normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
 		return nil
 	}
 
@@ -216,8 +191,6 @@ func extractEndpointCredential(endpointType string, payload map[string]any) *end
 
 func credentialProviderForEndpoint(endpointType string) string {
 	switch normalizeEndpointType(endpointType) {
-	case string(connectors.EndpointTypeCloud115):
-		return "cloud115"
 	case string(connectors.EndpointTypeNetwork):
 		return "network-storage-115"
 	default:
@@ -227,8 +200,6 @@ func credentialProviderForEndpoint(endpointType string) string {
 
 func defaultCredentialHint(endpointType string) string {
 	switch normalizeEndpointType(endpointType) {
-	case string(connectors.EndpointTypeCloud115):
-		return storedCredentialHint
 	case string(connectors.EndpointTypeNetwork):
 		return "已保存在当前机器的网盘凭证"
 	default:

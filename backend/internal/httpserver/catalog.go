@@ -24,6 +24,7 @@ type retrySyncTaskRequest struct {
 
 type transferTaskActionRequest struct {
 	TaskIDs []string `json:"taskIds"`
+	TaskID  string   `json:"taskId"`
 }
 
 type endpointRequestPayload struct {
@@ -522,6 +523,10 @@ func (server *Server) handleCatalogTransferDelete(w http.ResponseWriter, r *http
 	server.handleCatalogTransferAction(w, r, "delete")
 }
 
+func (server *Server) handleCatalogTransferPrioritize(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogTransferAction(w, r, "prioritize")
+}
+
 func (server *Server) handleCatalogTransferAction(w http.ResponseWriter, r *http.Request, action string) {
 	if r.Method != http.MethodPost {
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -553,6 +558,12 @@ func (server *Server) handleCatalogTransferAction(w http.ResponseWriter, r *http
 		summary, err = catalogService.ResumeTransferTasks(r.Context(), request.TaskIDs)
 	case "delete":
 		summary, err = catalogService.DeleteTransferTasks(r.Context(), request.TaskIDs)
+	case "prioritize":
+		taskID := strings.TrimSpace(request.TaskID)
+		if taskID == "" && len(request.TaskIDs) > 0 {
+			taskID = strings.TrimSpace(request.TaskIDs[0])
+		}
+		summary, err = catalogService.PrioritizeTransferTask(r.Context(), taskID)
 	default:
 		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,

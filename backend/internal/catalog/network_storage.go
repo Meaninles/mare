@@ -15,13 +15,13 @@ import (
 )
 
 const (
-	networkStorageProvider115       = "115"
-	networkStorageDriver115Cloud    = "115 Cloud"
-	defaultNetworkStoragePageSize   = 1000
-	defaultNetworkStorageCacheTTL   = 30
-	defaultNetworkStorageLoginMode  = "manual"
-	networkStorageLoginModeQRCode   = "qrcode"
-	networkStorageLoginModeManual   = "manual"
+	networkStorageProvider115      = "115"
+	networkStorageDriver115Cloud   = "115 Cloud"
+	defaultNetworkStoragePageSize  = 1000
+	defaultNetworkStorageCacheTTL  = 30
+	defaultNetworkStorageLoginMode = "manual"
+	networkStorageLoginModeQRCode  = "qrcode"
+	networkStorageLoginModeManual  = "manual"
 )
 
 type networkStorageEndpointConfig struct {
@@ -34,6 +34,18 @@ type networkStorageEndpointConfig struct {
 	AppType      string `json:"appType"`
 	PageSize     int    `json:"pageSize"`
 	Credential   string `json:"credential,omitempty"`
+}
+
+type PreviewNetworkStorageRequest struct {
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	StorageKey   string `json:"storageKey,omitempty"`
+	MountPath    string `json:"mountPath,omitempty"`
+	RootFolderID string `json:"rootFolderId"`
+	LoginMethod  string `json:"loginMethod,omitempty"`
+	AppType      string `json:"appType,omitempty"`
+	PageSize     int    `json:"pageSize,omitempty"`
+	Credential   string `json:"credential"`
 }
 
 func (service *Service) buildNetworkStorageConnector(
@@ -56,6 +68,44 @@ func (service *Service) buildNetworkStorageConnector(
 	}, runtime)
 }
 
+func (service *Service) PreviewNetworkStorageConnector(
+	ctx context.Context,
+	request PreviewNetworkStorageRequest,
+) (connectors.Connector, error) {
+	payload, err := normalizeNetworkStorageConnectionConfig(map[string]any{
+		"provider":     strings.TrimSpace(request.Provider),
+		"storageKey":   strings.TrimSpace(request.StorageKey),
+		"mountPath":    strings.TrimSpace(request.MountPath),
+		"rootFolderId": strings.TrimSpace(request.RootFolderID),
+		"loginMethod":  strings.TrimSpace(request.LoginMethod),
+		"appType":      strings.TrimSpace(request.AppType),
+		"pageSize":     request.PageSize,
+		"credential":   strings.TrimSpace(request.Credential),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	rootPath := strings.TrimSpace(firstNonEmptyMapString(payload, "mountPath"))
+	if rootPath == "" {
+		return nil, errors.New("network storage mount path is required")
+	}
+
+	endpoint := store.StorageEndpoint{
+		ID:               "preview-" + uuid.NewString(),
+		Name:             defaultString(strings.TrimSpace(request.Name), "网络存储"),
+		EndpointType:     string(connectors.EndpointTypeNetwork),
+		RootPath:         rootPath,
+		ConnectionConfig: string(encoded),
+	}
+	return service.buildNetworkStorageConnector(ctx, endpoint)
+}
+
 func (service *Service) prepareNetworkStorageEndpoint(
 	ctx context.Context,
 	endpoint store.StorageEndpoint,
@@ -76,6 +126,9 @@ func (service *Service) prepareNetworkStorageEndpoint(
 	runtime := service.getAListRuntime()
 	if _, err := runtime.EnsureStorage(ctx, storageSpec); err != nil {
 		return alistEndpointConfig{}, nil, wrapNetworkStorageRuntimeError(err)
+	}
+	if _, err := runtime.ListEntries(ctx, storageSpec.MountPath, "", true); err != nil {
+		return alistEndpointConfig{}, nil, explainNetworkStorageListError(config, err)
 	}
 
 	return alistEndpointConfig{
@@ -207,7 +260,7 @@ func buildNetworkStorageStorageSpec(config networkStorageEndpointConfig) (sideca
 
 func normalizeNetworkStorageProvider(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "", "115", "CLOUD115", "CLOUD_115":
+	case "", "115":
 		return networkStorageProvider115
 	default:
 		return ""
@@ -265,4 +318,28 @@ func wrapNetworkStorageRuntimeError(err error) error {
 	default:
 		return err
 	}
+}
+
+func explainNetworkStorageListError(config networkStorageEndpointConfig, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	wrapped := wrapNetworkStorageRuntimeError(err)
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	rootFolderID := strings.TrimSpace(config.RootFolderID)
+	if rootFolderID == "" {
+		rootFolderID = "0"
+	}
+
+	if strings.Contains(message, "failed get objs") ||
+		strings.Contains(message, "failed to list objs") ||
+		strings.Contains(message, "unexpected error") {
+		if rootFolderID != "0" {
+			return fmt.Errorf("115 网盘目录 ID %s 无法访问，请确认该目录仍存在且当前凭证有权限访问；如需排查，可先把根目录 ID 改成 0 验证整盘访问。原始错误：%w", rootFolderID, wrapped)
+		}
+		return fmt.Errorf("115 网盘根目录访问失败，通常是当前凭证不可用，或网络存储服务暂时无法取到目录列表。原始错误：%w", wrapped)
+	}
+
+	return wrapped
 }

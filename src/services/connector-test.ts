@@ -32,22 +32,22 @@ export async function testQNAPConnector(baseUrl: string, payload: Record<string,
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/connectors/qnap/test`, payload);
 }
 
-export async function testCloud115Connector(baseUrl: string, payload: Record<string, unknown>): Promise<ConnectorTestResponse> {
-  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/connectors/cloud115/test`, payload);
+export async function testNetworkStorageConnector(baseUrl: string, payload: Record<string, unknown>): Promise<ConnectorTestResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/connectors/network-storage/test`, payload);
 }
 
 export async function startCloud115QRCodeLogin(
   baseUrl: string,
   appType: string
 ): Promise<ConnectorTestResponse> {
-  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/connectors/cloud115/qrcode/start`, { appType });
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/network-storage/115/qrcode/start`, { appType });
 }
 
 export async function pollCloud115QRCodeLogin(
   baseUrl: string,
   session: Cloud115QRCodeSession
 ): Promise<ConnectorTestResponse> {
-  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/connectors/cloud115/qrcode/poll`, {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/tools/network-storage/115/qrcode/poll`, {
     appType: session.appType,
     qrUid: session.uid,
     qrTime: session.time,

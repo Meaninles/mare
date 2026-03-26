@@ -152,6 +152,7 @@ export interface CatalogTransferTaskRecord {
   title: string;
   direction: string;
   status: string;
+  priority: number;
   sourceLabel?: string;
   targetLabel?: string;
   engineSummary?: string;

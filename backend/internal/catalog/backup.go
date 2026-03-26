@@ -20,7 +20,9 @@ const (
 )
 
 type BackupPreferences struct {
-	Theme string `json:"theme"`
+	Theme               string `json:"theme"`
+	UploadConcurrency   int    `json:"uploadConcurrency,omitempty"`
+	DownloadConcurrency int    `json:"downloadConcurrency,omitempty"`
 }
 
 type BackupConfigurationSnapshot struct {
@@ -57,14 +59,14 @@ type ImportBackupRequest struct {
 }
 
 type ImportBackupSummary struct {
-	Mode             string    `json:"mode"`
-	ImportedEndpoints int      `json:"importedEndpoints"`
-	ImportedRules    int       `json:"importedRules"`
-	ImportedAssets   int       `json:"importedAssets"`
-	ImportedReplicas int       `json:"importedReplicas"`
-	ImportedVersions int       `json:"importedVersions"`
-	AppliedTheme     string    `json:"appliedTheme,omitempty"`
-	ImportedAt       time.Time `json:"importedAt"`
+	Mode              string    `json:"mode"`
+	ImportedEndpoints int       `json:"importedEndpoints"`
+	ImportedRules     int       `json:"importedRules"`
+	ImportedAssets    int       `json:"importedAssets"`
+	ImportedReplicas  int       `json:"importedReplicas"`
+	ImportedVersions  int       `json:"importedVersions"`
+	AppliedTheme      string    `json:"appliedTheme,omitempty"`
+	ImportedAt        time.Time `json:"importedAt"`
 }
 
 func (service *Service) ExportSettingsBackup(ctx context.Context, cfg config.Config, request ExportBackupRequest) (SettingsBackupBundle, error) {
@@ -77,6 +79,10 @@ func (service *Service) ExportSettingsBackup(ctx context.Context, cfg config.Con
 	if err != nil {
 		return SettingsBackupBundle{}, err
 	}
+	transferPreferences, err := service.GetTransferPreferences(ctx)
+	if err != nil {
+		return SettingsBackupBundle{}, err
+	}
 
 	bundle := SettingsBackupBundle{
 		FormatVersion: backupFormatVersion,
@@ -86,7 +92,9 @@ func (service *Service) ExportSettingsBackup(ctx context.Context, cfg config.Con
 			Env:  cfg.AppEnv,
 		},
 		Preferences: BackupPreferences{
-			Theme: strings.TrimSpace(request.Theme),
+			Theme:               strings.TrimSpace(request.Theme),
+			UploadConcurrency:   transferPreferences.UploadConcurrency,
+			DownloadConcurrency: transferPreferences.DownloadConcurrency,
 		},
 		Configuration: BackupConfigurationSnapshot{
 			Endpoints:   endpoints,
@@ -138,6 +146,13 @@ func (service *Service) ImportSettingsBackup(ctx context.Context, request Import
 		}
 	}
 
+	if _, err := service.UpdateTransferPreferences(ctx, UpdateTransferPreferencesRequest{
+		UploadConcurrency:   request.Bundle.Preferences.UploadConcurrency,
+		DownloadConcurrency: request.Bundle.Preferences.DownloadConcurrency,
+	}); err != nil {
+		return summary, err
+	}
+
 	existingEndpoints := map[string]store.StorageEndpoint{}
 	if mode == backupImportModeConfigOnly {
 		currentEndpoints, err := service.store.ListStorageEndpoints(ctx)
@@ -150,11 +165,19 @@ func (service *Service) ImportSettingsBackup(ctx context.Context, request Import
 	}
 
 	for _, endpointRecord := range request.Bundle.Configuration.Endpoints {
+		endpointType, err := resolveRequestedEndpointType(endpointRecord.EndpointType, endpointRecord.ConnectionConfig)
+		if err != nil {
+			return summary, err
+		}
+		if endpointType == "" {
+			return summary, fmt.Errorf("unsupported storage endpoint type in backup: %s", endpointRecord.EndpointType)
+		}
+
 		endpoint := store.StorageEndpoint{
 			ID:                 endpointRecord.ID,
 			Name:               endpointRecord.Name,
 			Note:               endpointRecord.Note,
-			EndpointType:       endpointRecord.EndpointType,
+			EndpointType:       endpointType,
 			RootPath:           endpointRecord.RootPath,
 			RoleMode:           endpointRecord.RoleMode,
 			IdentitySignature:  endpointRecord.IdentitySignature,

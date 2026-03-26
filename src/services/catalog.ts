@@ -347,6 +347,13 @@ export async function deleteCatalogTransferTasks(
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/delete`, { taskIds });
 }
 
+export async function prioritizeCatalogTransferTask(
+  baseUrl: string,
+  taskId: string
+): Promise<CatalogTransferTaskActionResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/prioritize`, { taskId });
+}
+
 export async function getCatalogSyncOverview(baseUrl: string): Promise<CatalogSyncOverviewResponse> {
   const response = await getJson<CatalogSyncOverviewResponse>(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/sync/overview`);
 

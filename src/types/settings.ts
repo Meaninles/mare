@@ -10,6 +10,20 @@ export interface SettingsBackupAppInfo {
 
 export interface SettingsBackupPreferences {
   theme: string;
+  uploadConcurrency?: number;
+  downloadConcurrency?: number;
+}
+
+export interface TransferPreferences {
+  uploadConcurrency: number;
+  downloadConcurrency: number;
+  updatedAt: string;
+}
+
+export interface TransferSettingsResponse {
+  success: boolean;
+  preferences?: TransferPreferences;
+  error?: string;
 }
 
 export interface SettingsBackupConfigurationSnapshot {

@@ -13,14 +13,26 @@ import {
   listCatalogTasks,
   listCatalogTransferTasks,
   pauseCatalogTransferTasks,
+  prioritizeCatalogTransferTask,
   resumeCatalogTransferTasks,
   restoreCatalogAsset,
   restoreCatalogAssetsToEndpoint,
   retryCatalogTask
 } from "../services/catalog";
-import type { CatalogAsset, CatalogAssetQueryOptions } from "../types/catalog";
+import type { CatalogAsset, CatalogAssetQueryOptions, CatalogTask } from "../types/catalog";
 
 const backendUrl = getDefaultCatalogBackendUrl();
+
+function hasActiveCatalogTasks(tasks: CatalogTask[] | undefined) {
+  if (!tasks || tasks.length === 0) {
+    return false;
+  }
+
+  return tasks.some((task) => {
+    const status = task.status.trim().toLowerCase();
+    return status === "pending" || status === "queued" || status === "running" || status === "processing";
+  });
+}
 
 export function useCatalogAssets(options: CatalogAssetQueryOptions = {}) {
   const { currentLibraryId, isLibraryOpen } = useLibraryContext();
@@ -110,11 +122,11 @@ export function useCatalogTasks(limit = 100) {
 
       return response.tasks ?? [];
     },
-    staleTime: 0,
-    refetchInterval: 300,
-    refetchIntervalInBackground: true,
+    staleTime: 1_000,
+    refetchInterval: (query) => (hasActiveCatalogTasks(query.state.data as CatalogTask[] | undefined) ? 1_500 : 8_000),
+    refetchIntervalInBackground: false,
     refetchOnMount: "always",
-    refetchOnWindowFocus: "always"
+    refetchOnWindowFocus: false
   });
 }
 
@@ -333,6 +345,25 @@ export function useDeleteTransferTasks() {
       const response = await deleteCatalogTransferTasks(backendUrl, taskIds);
       if (!response.summary) {
         throw new Error(response.error ?? "删除传输任务失败。");
+      }
+
+      return response.summary;
+    },
+    onSuccess: async () => {
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    }
+  });
+}
+
+export function usePrioritizeTransferTask() {
+  const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
+
+  return useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await prioritizeCatalogTransferTask(backendUrl, taskId);
+      if (!response.summary) {
+        throw new Error(response.error ?? "提升任务优先级失败。");
       }
 
       return response.summary;

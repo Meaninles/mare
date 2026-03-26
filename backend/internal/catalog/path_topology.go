@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"fmt"
 	pathpkg "path"
 	"path/filepath"
 	"strings"
@@ -69,15 +68,7 @@ func resolveReplicaDirectoryPath(endpoint store.StorageEndpoint, logicalPath str
 	rootPath := strings.TrimSpace(endpoint.RootPath)
 
 	switch normalizeEndpointType(endpoint.EndpointType) {
-	case string(connectors.EndpointTypeCloud115):
-		if rootPath == "" {
-			return directory
-		}
-		if directory == "" {
-			return fmt.Sprintf("%s:/", rootPath)
-		}
-		return fmt.Sprintf("%s:/%s", rootPath, directory)
-	case string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
+	case string(connectors.EndpointTypeNetwork):
 		if rootPath == "" {
 			if directory == "" {
 				return "/"
@@ -104,15 +95,7 @@ func canonicalReplicaPhysicalPath(endpoint store.StorageEndpoint, logicalPath st
 	rootPath := strings.TrimSpace(endpoint.RootPath)
 
 	switch normalizeEndpointType(endpoint.EndpointType) {
-	case string(connectors.EndpointTypeCloud115):
-		if rootPath == "" {
-			return relativePath
-		}
-		if relativePath == "" {
-			return fmt.Sprintf("%s:/", rootPath)
-		}
-		return fmt.Sprintf("%s:/%s", rootPath, relativePath)
-	case string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
+	case string(connectors.EndpointTypeNetwork):
 		if rootPath == "" {
 			if relativePath == "" {
 				return "/"

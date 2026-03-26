@@ -198,7 +198,7 @@ func TestBrowseImportSourceReturnsFilteredEntries(t *testing.T) {
 	}
 }
 
-func TestExecuteImportCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.T) {
+func TestQueueImportExecutionCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -277,25 +277,21 @@ func TestExecuteImportCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.
 		t.Fatalf("save import rules: %v", err)
 	}
 
-	summary, err := service.ExecuteImport(ctx, ExecuteImportRequest{
+	summary, err := service.QueueImportExecution(ctx, ExecuteImportRequest{
 		IdentitySignature: identitySignature,
 		EntryPaths:        []string{"DCIM/Shot01.jpg"},
 	})
 	if err != nil {
-		t.Fatalf("execute import: %v", err)
+		t.Fatalf("queue import execution: %v", err)
 	}
-
-	if summary.Status != taskStatusSuccess {
-		t.Fatalf("expected success summary status, got %s", summary.Status)
+	if summary.Status != taskStatusQueued {
+		t.Fatalf("expected queued summary status, got %s", summary.Status)
 	}
-	if summary.SuccessCount != 1 || summary.FailedCount != 0 || summary.PartialCount != 0 {
-		t.Fatalf("unexpected import counters: %+v", summary)
+	if summary.TotalFiles != 2 {
+		t.Fatalf("expected queued transfer item count 2, got %d", summary.TotalFiles)
 	}
-	if len(summary.Items) != 1 {
-		t.Fatalf("expected 1 import item, got %d", len(summary.Items))
-	}
-	if len(summary.Items[0].TargetResults) != 2 {
-		t.Fatalf("expected 2 target results, got %d", len(summary.Items[0].TargetResults))
+	if err := service.runTransferTask(ctx, summary.TaskID); err != nil {
+		t.Fatalf("run queued import task: %v", err)
 	}
 
 	for _, targetRoot := range []string{localTargetRoot, qnapTargetRoot} {
@@ -332,9 +328,20 @@ func TestExecuteImportCopiesFilesToMatchedEndpointsAndUpdatesCatalog(t *testing.
 	if tasks[0].Status != taskStatusSuccess {
 		t.Fatalf("expected import task success, got %s", tasks[0].Status)
 	}
+
+	detail, err := service.GetTransferTaskDetail(ctx, summary.TaskID)
+	if err != nil {
+		t.Fatalf("get transfer task detail: %v", err)
+	}
+	if detail.Task.Status != taskStatusSuccess {
+		t.Fatalf("expected transfer detail success, got %s", detail.Task.Status)
+	}
+	if len(detail.Items) != 2 {
+		t.Fatalf("expected 2 transfer items, got %d", len(detail.Items))
+	}
 }
 
-func TestExecuteImportQueuesVideoCoverTaskImmediately(t *testing.T) {
+func TestQueueImportExecutionQueuesVideoCoverTaskImmediately(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -395,15 +402,18 @@ func TestExecuteImportQueuesVideoCoverTaskImmediately(t *testing.T) {
 		t.Fatalf("save import rules: %v", err)
 	}
 
-	summary, err := service.ExecuteImport(ctx, ExecuteImportRequest{
+	summary, err := service.QueueImportExecution(ctx, ExecuteImportRequest{
 		IdentitySignature: identitySignature,
 		EntryPaths:        []string{"DCIM/Clip01.mp4"},
 	})
 	if err != nil {
-		t.Fatalf("execute import: %v", err)
+		t.Fatalf("queue import execution: %v", err)
 	}
-	if summary.Status != taskStatusSuccess {
-		t.Fatalf("expected success summary status, got %s", summary.Status)
+	if summary.Status != taskStatusQueued {
+		t.Fatalf("expected queued summary status, got %s", summary.Status)
+	}
+	if err := service.runTransferTask(ctx, summary.TaskID); err != nil {
+		t.Fatalf("run queued import task: %v", err)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)

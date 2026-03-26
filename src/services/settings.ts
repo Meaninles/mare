@@ -3,7 +3,8 @@ import type {
   BackupImportMode,
   SettingsBackupBundle,
   SettingsBackupExportResponse,
-  SettingsBackupImportResponse
+  SettingsBackupImportResponse,
+  TransferSettingsResponse
 } from "../types/settings";
 
 function normalizeBaseUrl(baseUrl: string) {
@@ -14,6 +15,23 @@ function normalizeBaseUrl(baseUrl: string) {
 async function postJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
   const response = await fetch(url, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  return readJsonResponse<TResponse>(response);
+}
+
+async function getJson<TResponse>(url: string): Promise<TResponse> {
+  const response = await fetch(url);
+  return readJsonResponse<TResponse>(response);
+}
+
+async function putJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
+  const response = await fetch(url, {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json"
     },
@@ -59,4 +77,18 @@ export async function importSettingsBackup(
   }
 ): Promise<SettingsBackupImportResponse> {
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/settings/backup/import`, payload);
+}
+
+export async function getTransferSettings(baseUrl: string): Promise<TransferSettingsResponse> {
+  return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/settings/transfers`);
+}
+
+export async function updateTransferSettings(
+  baseUrl: string,
+  payload: {
+    uploadConcurrency: number;
+    downloadConcurrency: number;
+  }
+): Promise<TransferSettingsResponse> {
+  return putJson(`${normalizeBaseUrl(baseUrl)}/api/v1/settings/transfers`, payload);
 }

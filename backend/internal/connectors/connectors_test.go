@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,65 +123,6 @@ func TestQNAPConnectorReportsMissingShare(t *testing.T) {
 	}
 }
 
-func TestCloud115ConnectorUsesInjectedClient(t *testing.T) {
-	t.Parallel()
-
-	mockClient := &mock115Client{
-		entries: []FileEntry{
-			{Name: "meeting.wav", Path: "/meeting.wav", RelativePath: "meeting.wav", Kind: EntryKindFile, MediaType: MediaTypeAudio},
-		},
-		entry:       FileEntry{Name: "meeting.wav", Path: "/meeting.wav", RelativePath: "meeting.wav", Kind: EntryKindFile, MediaType: MediaTypeAudio},
-		copyOutData: []byte("audio-stream"),
-	}
-
-	connector, err := NewCloud115Connector(Cloud115Config{
-		Name:        "115",
-		RootID:      "root-folder",
-		AccessToken: "token",
-	}, mockClient)
-	if err != nil {
-		t.Fatalf("create 115 connector: %v", err)
-	}
-
-	status, err := connector.HealthCheck(context.Background())
-	if err != nil {
-		t.Fatalf("health check: %v", err)
-	}
-	if status != HealthStatusReady {
-		t.Fatalf("expected ready, got %s", status)
-	}
-
-	entries, err := connector.ListEntries(context.Background(), ListEntriesRequest{})
-	if err != nil {
-		t.Fatalf("list entries: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
-	}
-
-	entry, err := connector.StatEntry(context.Background(), "/meeting.wav")
-	if err != nil {
-		t.Fatalf("stat entry: %v", err)
-	}
-	if entry.MediaType != MediaTypeAudio {
-		t.Fatalf("expected audio media type, got %s", entry.MediaType)
-	}
-
-	reader, err := connector.ReadStream(context.Background(), "/meeting.wav")
-	if err != nil {
-		t.Fatalf("read stream: %v", err)
-	}
-	defer reader.Close()
-
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read all stream data: %v", err)
-	}
-	if string(data) != "audio-stream" {
-		t.Fatalf("unexpected cloud115 stream content: %s", string(data))
-	}
-}
-
 func TestLocalConnectorSkipsWindowsSystemArtifacts(t *testing.T) {
 	t.Parallel()
 
@@ -275,57 +215,6 @@ func TestRemovableConnectorIdentityStable(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 removable media entry, got %d", len(entries))
 	}
-}
-
-type mock115Client struct {
-	entries      []FileEntry
-	entry        FileEntry
-	copyOutData  []byte
-	copyOutError error
-}
-
-func (client *mock115Client) HealthCheck(context.Context, string) error {
-	return nil
-}
-
-func (client *mock115Client) ListEntries(context.Context, string, ListEntriesRequest) ([]FileEntry, error) {
-	return client.entries, nil
-}
-
-func (client *mock115Client) StatEntry(context.Context, string, string) (FileEntry, error) {
-	return client.entry, nil
-}
-
-func (client *mock115Client) CopyIn(context.Context, string, string, io.Reader) (FileEntry, error) {
-	return client.entry, nil
-}
-
-func (client *mock115Client) CopyOut(_ context.Context, _ string, _ string, writer io.Writer) error {
-	if client.copyOutError != nil {
-		return client.copyOutError
-	}
-	if len(client.copyOutData) > 0 {
-		if _, err := writer.Write(client.copyOutData); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (client *mock115Client) DeleteEntry(context.Context, string, string) error {
-	return nil
-}
-
-func (client *mock115Client) RenameEntry(context.Context, string, string, string) (FileEntry, error) {
-	return client.entry, nil
-}
-
-func (client *mock115Client) MoveEntry(context.Context, string, string, string) (FileEntry, error) {
-	return client.entry, nil
-}
-
-func (client *mock115Client) MakeDirectory(context.Context, string, string) (FileEntry, error) {
-	return FileEntry{Name: "folder", Path: "/folder", RelativePath: "folder", Kind: EntryKindDirectory, IsDir: true}, nil
 }
 
 type fakeDeviceEnumerator struct {

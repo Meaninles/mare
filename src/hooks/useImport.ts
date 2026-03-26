@@ -15,21 +15,34 @@ import type { ImportBrowseMediaType, ImportDeviceRole, ImportRuleInput } from ".
 const backendUrl = getDefaultImportBackendUrl();
 
 export function useImportDevices() {
-  const { currentLibraryId, isLibraryOpen } = useLibraryContext();
+  const { currentLibraryId, currentLibrarySession, isLibraryOpen, refreshState } = useLibraryContext();
 
   return useQuery({
     queryKey: buildLibraryQueryKey(currentLibraryId, "import", "devices"),
-    enabled: isLibraryOpen,
+    enabled: isLibraryOpen && Boolean(currentLibrarySession?.ready && currentLibraryId),
     queryFn: async () => {
       const response = await listImportDevices(backendUrl);
       if (!response.success) {
+        const message = (response.error ?? "").trim().toLowerCase();
+        if (
+          message.includes("library is not open") ||
+          message.includes("library not open") ||
+          message.includes("not ready") ||
+          message.includes("unloaded")
+        ) {
+          await refreshState();
+          return [];
+        }
+
         throw new Error(response.error ?? "无法读取可移动设备。");
       }
 
       return response.devices ?? [];
     },
     staleTime: 2_000,
-    refetchInterval: 4_000
+    refetchInterval: 4_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false
   });
 }
 
