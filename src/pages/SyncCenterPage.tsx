@@ -83,6 +83,7 @@ export function SyncCenterPage() {
         task.title,
         task.sourceLabel,
         task.targetLabel,
+        task.engineSummary,
         task.currentItemName,
         task.progressLabel
       ]
@@ -389,6 +390,8 @@ export function SyncCenterPage() {
                             <span className="status-pill subtle">{getDirectionLabel(task.direction)}</span>
                             <span>{task.totalItems} 项</span>
                             {task.currentItemName ? <span>{task.currentItemName}</span> : null}
+                            {task.engineSummary ? <span>{task.engineSummary}</span> : null}
+                            {task.currentSpeed ? <span>{formatTransferSpeed(task.currentSpeed)}</span> : null}
                           </div>
                         </div>
                       </td>
@@ -552,6 +555,9 @@ function TransferTaskDetailPanel({
       </div>
 
       <div className="sync-task-detail-grid">
+        <DetailField label="引擎" value={task.engineSummary || "-"} wide />
+        <DetailField label="实时速度" value={formatTransferSpeed(task.currentSpeed)} />
+        <DetailField label="刷新间隔" value={task.refreshIntervalSeconds ? `${task.refreshIntervalSeconds}s` : "-"} />
         <DetailField label="任务 ID" value={task.id} wide />
         <DetailField label="方向" value={getDirectionLabel(task.direction)} />
         <DetailField label="总项目" value={`${task.totalItems}`} />
@@ -592,6 +598,19 @@ function TransferTaskDetailPanel({
                 <strong>{item.displayName}</strong>
                 <p>{item.sourceLabel ? `${item.sourceLabel}：${item.sourcePath}` : item.sourcePath}</p>
                 <p>{item.targetLabel ? `${item.targetLabel}：${item.targetPath}` : item.targetPath}</p>
+                {item.engineLabel || item.externalTaskId || item.externalStatus ? (
+                  <div className="replica-chip-row">
+                    {item.engineLabel ? <span className="replica-chip neutral">{item.engineLabel}</span> : null}
+                    {item.externalTaskId ? <span className="replica-chip neutral">任务 {item.externalTaskId}</span> : null}
+                    {item.externalStatus ? <span className="replica-chip neutral">状态 {item.externalStatus}</span> : null}
+                    {item.currentSpeed ? <span className="replica-chip neutral">{formatTransferSpeed(item.currentSpeed)}</span> : null}
+                  </div>
+                ) : null}
+                {(item.stagedBytes || item.committedBytes) ? (
+                  <p>
+                    缓存 {formatFileSize(item.stagedBytes ?? 0)} / 提交 {formatFileSize(item.committedBytes ?? 0)}
+                  </p>
+                ) : null}
                 {item.errorMessage ? <p className="error-copy">{item.errorMessage}</p> : null}
               </div>
 
@@ -705,6 +724,13 @@ function EmptyBlock({ icon, title, copy }: { icon: ReactNode; title: string; cop
       </div>
     </div>
   );
+}
+
+function formatTransferSpeed(value?: number) {
+  if (!value || value <= 0) {
+    return "-";
+  }
+  return `${formatFileSize(value)}/s`;
 }
 
 function matchesTransferStatus(status: string, filter: TransferStatusFilter) {

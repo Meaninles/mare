@@ -572,7 +572,7 @@ function getImportFolderName(path: string) {
 function getMediaLabel(mediaType: string) { return mediaType === "image" ? "图片" : mediaType === "video" ? "视频" : mediaType === "audio" ? "音频" : "媒体"; }
 function getTaskLabel(status: string) { return getRunLabel(status); }
 function getTaskTone(status: string) { return getRunTone(status); }
-function getEndpointTypeLabel(endpoint: CatalogEndpoint) { return endpoint.endpointType === "LOCAL" ? "本地" : endpoint.endpointType === "QNAP_SMB" ? "QNAP / SMB" : endpoint.endpointType === "CLOUD_115" ? "115 网盘" : endpoint.endpointType === "REMOVABLE" ? "可移动设备" : endpoint.endpointType; }
+function getEndpointTypeLabel(endpoint: CatalogEndpoint) { return endpoint.endpointType === "LOCAL" ? "本地" : endpoint.endpointType === "QNAP_SMB" ? "QNAP / SMB" : endpoint.endpointType === "CLOUD_115" ? "115 网盘" : endpoint.endpointType === "ALIST" ? "AList 网盘" : endpoint.endpointType === "REMOVABLE" ? "可移动设备" : endpoint.endpointType; }
 function getAvailabilityStatusLabel(status: string) { return status === "AVAILABLE" ? "可用" : status === "DISABLED" ? "停用" : status || "未知"; }
 function getEntryIcon(mediaType: string) { return mediaType === "image" ? ImageIcon : mediaType === "video" ? Video : mediaType === "audio" ? Music4 : HardDrive; }
 function getRunLabel(status: string) {

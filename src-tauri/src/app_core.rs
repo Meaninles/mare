@@ -194,22 +194,24 @@ impl AppCore {
                     .as_ref()
                     .and_then(|value| serde_json::from_str::<Value>(value).ok());
 
-                let source_endpoint_id =
-                    find_json_string(&result_json, "sourceEndpointId").or_else(|| find_json_string(&payload_json, "sourceEndpointId"));
-                let target_endpoint_id =
-                    find_json_string(&result_json, "targetEndpointId").or_else(|| find_json_string(&payload_json, "targetEndpointId"));
-                let source_endpoint_name = find_json_string(&result_json, "sourceEndpointName").or_else(|| {
-                    source_endpoint_id
-                        .as_ref()
-                        .and_then(|value| endpoint_names.get(value))
-                        .cloned()
-                });
-                let target_endpoint_name = find_json_string(&result_json, "targetEndpointName").or_else(|| {
-                    target_endpoint_id
-                        .as_ref()
-                        .and_then(|value| endpoint_names.get(value))
-                        .cloned()
-                });
+                let source_endpoint_id = find_json_string(&result_json, "sourceEndpointId")
+                    .or_else(|| find_json_string(&payload_json, "sourceEndpointId"));
+                let target_endpoint_id = find_json_string(&result_json, "targetEndpointId")
+                    .or_else(|| find_json_string(&payload_json, "targetEndpointId"));
+                let source_endpoint_name = find_json_string(&result_json, "sourceEndpointName")
+                    .or_else(|| {
+                        source_endpoint_id
+                            .as_ref()
+                            .and_then(|value| endpoint_names.get(value))
+                            .cloned()
+                    });
+                let target_endpoint_name = find_json_string(&result_json, "targetEndpointName")
+                    .or_else(|| {
+                        target_endpoint_id
+                            .as_ref()
+                            .and_then(|value| endpoint_names.get(value))
+                            .cloned()
+                    });
 
                 tasks.push(LibraryTaskRecord {
                     library_id: library.id.clone(),

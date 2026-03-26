@@ -46,6 +46,7 @@ const (
 	EndpointTypeLocal     EndpointType = "LOCAL"
 	EndpointTypeQNAP      EndpointType = "QNAP_SMB"
 	EndpointTypeCloud115  EndpointType = "CLOUD_115"
+	EndpointTypeAList     EndpointType = "ALIST"
 	EndpointTypeRemovable EndpointType = "REMOVABLE"
 )
 

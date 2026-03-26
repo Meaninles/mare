@@ -325,6 +325,16 @@ func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115Br
 	if strings.TrimSpace(client.scriptPath) == "" {
 		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeCloud115, request.Operation, ErrorCodeInvalidConfig, "115 bridge script path is empty", false, nil)
 	}
+	if !cloud115PathMatches(client.scriptPath, false) {
+		return cloud115BridgeResponse{}, newConnectorError(
+			EndpointTypeCloud115,
+			request.Operation,
+			ErrorCodeInvalidConfig,
+			"115 bridge script not found: "+client.scriptPath,
+			false,
+			nil,
+		)
+	}
 
 	if strings.TrimSpace(request.AppType) == "" {
 		request.AppType = client.appType
@@ -341,7 +351,7 @@ func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115Br
 
 	env := os.Environ()
 	env = append(env, "PYTHONIOENCODING=utf-8")
-	if strings.TrimSpace(client.pythonPath) != "" {
+	if strings.TrimSpace(client.pythonPath) != "" && cloud115PathMatches(client.pythonPath, true) {
 		existing := os.Getenv("PYTHONPATH")
 		if existing != "" {
 			env = append(env, "PYTHONPATH="+client.pythonPath+string(os.PathListSeparator)+existing)
@@ -378,40 +388,92 @@ func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115Br
 
 func resolveCloud115BridgeScript() string {
 	if value := strings.TrimSpace(os.Getenv("MAM_115_BRIDGE_SCRIPT")); value != "" {
-		return value
+		return normalizeCloud115RuntimePath(value)
 	}
 
-	candidates := []string{
+	return resolveCloud115RuntimePathWithRoots([]string{
 		filepath.Join("backend", "tools", "cloud115_bridge.py"),
 		filepath.Join("tools", "cloud115_bridge.py"),
-	}
-	for _, candidate := range candidates {
-		if absolute, err := filepath.Abs(candidate); err == nil {
-			if _, statErr := os.Stat(absolute); statErr == nil {
-				return absolute
-			}
-		}
-	}
-	return filepath.Join("backend", "tools", "cloud115_bridge.py")
+		"cloud115_bridge.py",
+	}, cloud115RuntimeRoots(), false)
 }
 
 func resolveCloud115PythonPath() string {
 	if value := strings.TrimSpace(os.Getenv("MAM_115_PYTHONPATH")); value != "" {
-		return value
+		return normalizeCloud115RuntimePath(value)
 	}
 
-	candidates := []string{
+	return resolveCloud115RuntimePathWithRoots([]string{
 		filepath.Join(".tools", "pythonlibs"),
+		filepath.Join("backend", "pythonlibs"),
+		"pythonlibs",
 		filepath.Join("..", ".tools", "pythonlibs"),
-	}
-	for _, candidate := range candidates {
-		if absolute, err := filepath.Abs(candidate); err == nil {
-			if _, statErr := os.Stat(absolute); statErr == nil {
-				return absolute
+	}, cloud115RuntimeRoots(), true)
+}
+
+func resolveCloud115RuntimePathWithRoots(candidates []string, roots []string, directory bool) string {
+	for _, root := range roots {
+		for _, candidate := range candidates {
+			fullPath := filepath.Join(root, candidate)
+			if cloud115PathMatches(fullPath, directory) {
+				return normalizeCloud115RuntimePath(fullPath)
 			}
 		}
 	}
 	return ""
+}
+
+func cloud115RuntimeRoots() []string {
+	executable, _ := os.Executable()
+	cwd, _ := os.Getwd()
+
+	roots := []string{
+		cwd,
+		filepath.Dir(cwd),
+		filepath.Dir(filepath.Dir(cwd)),
+		filepath.Dir(executable),
+		filepath.Dir(filepath.Dir(executable)),
+		filepath.Dir(filepath.Dir(filepath.Dir(executable))),
+	}
+
+	seen := make(map[string]struct{}, len(roots))
+	result := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		cleaned := normalizeCloud115RuntimePath(root)
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		result = append(result, cleaned)
+	}
+	return result
+}
+
+func cloud115PathMatches(target string, directory bool) bool {
+	info, err := os.Stat(target)
+	if err != nil {
+		return false
+	}
+	if directory {
+		return info.IsDir()
+	}
+	return !info.IsDir()
+}
+
+func normalizeCloud115RuntimePath(value string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(value))
+	switch {
+	case strings.HasPrefix(cleaned, `\\?\UNC\`):
+		return `\\` + strings.TrimPrefix(cleaned, `\\?\UNC\`)
+	case strings.HasPrefix(cleaned, `\\?\`):
+		return strings.TrimPrefix(cleaned, `\\?\`)
+	default:
+		return cleaned
+	}
 }
 
 func classifyCloud115BridgeError(operation string, message string, underlying error) error {

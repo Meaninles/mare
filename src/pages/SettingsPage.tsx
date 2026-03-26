@@ -657,6 +657,8 @@ function getRecoveryHint(endpoint: CatalogEndpoint) {
       return "请确认 SMB 共享路径和 NAS 可用性。";
     case "CLOUD_115":
       return "请检查根目录 ID，必要时刷新 115 凭据。";
+    case "ALIST":
+      return "请检查 AList 挂载路径、根路径以及驱动配置。";
     case "REMOVABLE":
       return "请重新接入同一块设备，以便再次匹配身份。";
     default:
@@ -683,6 +685,8 @@ function getEndpointTypeLabel(endpointType: string) {
       return "QNAP / SMB";
     case "CLOUD_115":
       return "115 网盘";
+    case "ALIST":
+      return "AList 网盘";
     case "REMOVABLE":
       return "可移动设备";
     default:

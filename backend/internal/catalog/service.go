@@ -18,6 +18,8 @@ import (
 
 	"mam/backend/internal/connectors"
 	"mam/backend/internal/credentials"
+	sidecaralist "mam/backend/internal/sidecars/alist"
+	sidecararia2 "mam/backend/internal/sidecars/aria2"
 	"mam/backend/internal/store"
 )
 
@@ -50,6 +52,8 @@ type Service struct {
 	transferLoopOnce      sync.Once
 	transferCloseOnce     sync.Once
 	transferWorkerGroup   sync.WaitGroup
+	alistRuntime          *sidecaralist.Runtime
+	aria2Runtime          *sidecararia2.Runtime
 }
 
 func NewService(
@@ -873,6 +877,8 @@ func normalizeEndpointType(value string) string {
 		return string(connectors.EndpointTypeQNAP)
 	case "115", "CLOUD115", "CLOUD_115":
 		return string(connectors.EndpointTypeCloud115)
+	case "ALIST":
+		return string(connectors.EndpointTypeAList)
 	case "REMOVABLE", "REMOVABLE_DRIVE":
 		return string(connectors.EndpointTypeRemovable)
 	default:
@@ -891,6 +897,13 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 	}
 
 	extractedCredential := extractEndpointCredential(endpointType, payload)
+	if endpointType == string(connectors.EndpointTypeAList) {
+		normalizedPayload, err := normalizeAListConnectionConfig(payload, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		payload = normalizedPayload
+	}
 
 	normalized, err := json.Marshal(payload)
 	if err != nil {
@@ -898,7 +911,7 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 	}
 
 	switch endpointType {
-	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeRemovable):
+	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList), string(connectors.EndpointTypeRemovable):
 		return normalized, extractedCredential, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
@@ -907,6 +920,13 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 
 func resolveRootPath(endpointType, explicitRoot string, connectionConfig json.RawMessage) (string, error) {
 	if strings.TrimSpace(explicitRoot) != "" {
+		if endpointType == string(connectors.EndpointTypeAList) {
+			root := normalizeAListEndpointPath(explicitRoot)
+			if root == "" || root == "/" {
+				return "", errors.New("alist root path is required")
+			}
+			return root, nil
+		}
 		return strings.TrimSpace(explicitRoot), nil
 	}
 
@@ -944,6 +964,22 @@ func resolveRootPath(endpointType, explicitRoot string, connectionConfig json.Ra
 			return "", errors.New("115 root id is required")
 		}
 		return strings.TrimSpace(config.RootID), nil
+	case string(connectors.EndpointTypeAList):
+		config, err := parseAListEndpointConfig(connectionConfig, explicitRoot)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(explicitRoot) != "" {
+			root := normalizeAListEndpointPath(explicitRoot)
+			if root == "" || root == "/" {
+				return "", errors.New("alist root path is required")
+			}
+			return root, nil
+		}
+		if strings.TrimSpace(config.MountPath) == "" {
+			return "", errors.New("alist mount path is required")
+		}
+		return normalizeAListEndpointPath(config.MountPath), nil
 	case string(connectors.EndpointTypeRemovable):
 		var config struct {
 			Device connectors.DeviceInfo `json:"device"`
@@ -1070,6 +1106,8 @@ func defaultEndpointName(endpointType string) string {
 		return "115 Cloud"
 	case string(connectors.EndpointTypeRemovable):
 		return "Removable Drive"
+	case string(connectors.EndpointTypeAList):
+		return "AList 网盘"
 	default:
 		return "Storage Endpoint"
 	}

@@ -79,9 +79,12 @@ type TransferTaskRecord struct {
 	Status          string     `json:"status"`
 	SourceLabel     string     `json:"sourceLabel,omitempty"`
 	TargetLabel     string     `json:"targetLabel,omitempty"`
+	EngineSummary   string     `json:"engineSummary,omitempty"`
 	ProgressPercent int        `json:"progressPercent"`
 	ProgressLabel   string     `json:"progressLabel,omitempty"`
 	CurrentItemName string     `json:"currentItemName,omitempty"`
+	CurrentSpeed    int64      `json:"currentSpeed,omitempty"`
+	RefreshInterval int        `json:"refreshIntervalSeconds,omitempty"`
 	TotalItems      int        `json:"totalItems"`
 	QueuedItems     int        `json:"queuedItems"`
 	RunningItems    int        `json:"runningItems"`
@@ -114,9 +117,17 @@ type TransferTaskItemRecord struct {
 	LogicalPathKey   string     `json:"logicalPathKey,omitempty"`
 	Status           string     `json:"status"`
 	Phase            string     `json:"phase"`
+	EngineKind       string     `json:"engineKind,omitempty"`
+	EngineLabel      string     `json:"engineLabel,omitempty"`
+	CurrentSpeed     int64      `json:"currentSpeed,omitempty"`
+	RefreshInterval  int        `json:"refreshIntervalSeconds,omitempty"`
+	ExternalTaskID   string     `json:"externalTaskId,omitempty"`
+	ExternalStatus   string     `json:"externalStatus,omitempty"`
 	ProgressPercent  int        `json:"progressPercent"`
 	TotalBytes       int64      `json:"totalBytes"`
 	TransferredBytes int64      `json:"transferredBytes"`
+	StagedBytes      int64      `json:"stagedBytes,omitempty"`
+	CommittedBytes   int64      `json:"committedBytes,omitempty"`
 	ErrorMessage     string     `json:"errorMessage,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
@@ -149,9 +160,12 @@ type transferTaskSummaryPayload struct {
 	Status          string `json:"status"`
 	SourceLabel     string `json:"sourceLabel,omitempty"`
 	TargetLabel     string `json:"targetLabel,omitempty"`
+	EngineSummary   string `json:"engineSummary,omitempty"`
 	ProgressPercent int    `json:"progressPercent"`
 	ProgressLabel   string `json:"progressLabel,omitempty"`
 	CurrentItemName string `json:"currentItemName,omitempty"`
+	CurrentSpeed    int64  `json:"currentSpeed,omitempty"`
+	RefreshInterval int    `json:"refreshIntervalSeconds,omitempty"`
 	TotalItems      int    `json:"totalItems"`
 	QueuedItems     int    `json:"queuedItems"`
 	RunningItems    int    `json:"runningItems"`
@@ -165,9 +179,35 @@ type transferTaskSummaryPayload struct {
 }
 
 type transferItemMetadata struct {
-	SourceModifiedAt string `json:"sourceModifiedAt,omitempty"`
-	SourceVersionID  string `json:"sourceVersionId,omitempty"`
-	SourceSize       int64  `json:"sourceSize,omitempty"`
+	SourceModifiedAt string                     `json:"sourceModifiedAt,omitempty"`
+	SourceVersionID  string                     `json:"sourceVersionId,omitempty"`
+	SourceSize       int64                      `json:"sourceSize,omitempty"`
+	EngineKind       string                     `json:"engineKind,omitempty"`
+	EngineLabel      string                     `json:"engineLabel,omitempty"`
+	CurrentSpeed     int64                      `json:"currentSpeed,omitempty"`
+	RefreshInterval  int                        `json:"refreshIntervalSeconds,omitempty"`
+	Aria2            *transferItemAria2Metadata `json:"aria2,omitempty"`
+	AList            *transferItemAListMetadata `json:"alist,omitempty"`
+}
+
+type transferItemAria2Metadata struct {
+	GID         string   `json:"gid,omitempty"`
+	DownloadURI string   `json:"downloadUri,omitempty"`
+	Headers     []string `json:"headers,omitempty"`
+	Status      string   `json:"status,omitempty"`
+	TotalLength int64    `json:"totalLength,omitempty"`
+	TargetDir   string   `json:"targetDir,omitempty"`
+	TargetOut   string   `json:"targetOut,omitempty"`
+}
+
+type transferItemAListMetadata struct {
+	TaskID     string   `json:"taskId,omitempty"`
+	TaskKind   string   `json:"taskKind,omitempty"`
+	TaskStatus string   `json:"taskStatus,omitempty"`
+	TaskState  int      `json:"taskState,omitempty"`
+	SourceDir  string   `json:"sourceDir,omitempty"`
+	TargetDir  string   `json:"targetDir,omitempty"`
+	Names      []string `json:"names,omitempty"`
 }
 
 func (service *Service) Start(ctx context.Context) error {
@@ -202,6 +242,16 @@ func (service *Service) Close() {
 			return true
 		})
 		service.transferWorkerGroup.Wait()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if service.aria2Runtime != nil {
+			_ = service.aria2Runtime.Shutdown(shutdownCtx)
+		}
+		if service.alistRuntime != nil {
+			_ = service.alistRuntime.Shutdown(shutdownCtx)
+		}
 	})
 }
 
@@ -799,6 +849,11 @@ func (service *Service) runTransferTaskItem(ctx context.Context, taskID string, 
 }
 
 func (service *Service) stageTransferItem(ctx context.Context, taskID string, item *store.TransferTaskItem) error {
+	if strings.TrimSpace(item.SourceKind) == transferSourceKindEndpoint &&
+		normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeAList) {
+		return service.stageTransferItemFromAList(ctx, taskID, item)
+	}
+
 	stagingPath, err := service.ensureTransferStagingPath(item)
 	if err != nil {
 		return err
@@ -899,6 +954,10 @@ func (service *Service) commitTransferItem(
 	endpoint, err := service.store.GetStorageEndpointByID(ctx, item.TargetEndpointID)
 	if err != nil {
 		return connectors.FileEntry{}, err
+	}
+
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) {
+		return service.commitTransferItemToAList(ctx, taskID, item, endpoint)
 	}
 
 	connector, err := service.buildConnector(endpoint)
@@ -1142,6 +1201,15 @@ func (service *Service) finalizeTransferItem(
 	item.Phase = transferPhaseCompleted
 	item.ProgressPercent = 100
 	item.ErrorMessage = nil
+	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+		metadata.CurrentSpeed = 0
+		if metadata.Aria2 != nil && strings.TrimSpace(metadata.Aria2.Status) == "" {
+			metadata.Aria2.Status = "complete"
+		}
+		if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskStatus) == "" {
+			metadata.AList.TaskStatus = "complete"
+		}
+	})
 	now := time.Now().UTC()
 	item.UpdatedAt = now
 	item.FinishedAt = &now
@@ -1236,9 +1304,13 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 			if !canTransferTaskPause(task.Status) {
 				continue
 			}
+			service.cancelTransferTask(task.ID)
 			for index := range items {
 				if isTransferItemTerminal(items[index].Status) {
 					continue
+				}
+				if err := service.pauseExternalTransferItem(ctx, &items[index]); err != nil {
+					return summary, err
 				}
 				items[index].Status = taskStatusPaused
 				items[index].Phase = transferPhasePaused
@@ -1257,7 +1329,6 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 			}); err != nil {
 				return summary, err
 			}
-			service.cancelTransferTask(task.ID)
 			if _, err := service.refreshTransferTaskState(ctx, task.ID); err != nil {
 				return summary, err
 			}
@@ -1275,6 +1346,9 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 				items[index].ErrorMessage = nil
 				items[index].FinishedAt = nil
 				items[index].UpdatedAt = time.Now().UTC()
+				updateTransferItemMetadata(&items[index], func(metadata *transferItemMetadata) {
+					metadata.CurrentSpeed = 0
+				})
 				if err := service.store.UpdateTransferTaskItem(ctx, items[index]); err != nil {
 					return summary, err
 				}
@@ -1299,6 +1373,11 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 			summary.Updated++
 		case "delete":
 			service.cancelTransferTask(task.ID)
+			for index := range items {
+				if err := service.deleteExternalTransferItem(ctx, &items[index]); err != nil {
+					return summary, err
+				}
+			}
 			service.cleanupTransferArtifacts(context.Background(), items)
 			if err := service.store.DeleteTaskByID(ctx, task.ID); err != nil {
 				return summary, err
@@ -1397,9 +1476,12 @@ func (service *Service) refreshTransferTaskState(ctx context.Context, taskID str
 		Status:          record.Status,
 		SourceLabel:     record.SourceLabel,
 		TargetLabel:     record.TargetLabel,
+		EngineSummary:   record.EngineSummary,
 		ProgressPercent: record.ProgressPercent,
 		ProgressLabel:   record.ProgressLabel,
 		CurrentItemName: record.CurrentItemName,
+		CurrentSpeed:    record.CurrentSpeed,
+		RefreshInterval: record.RefreshInterval,
 		TotalItems:      record.TotalItems,
 		QueuedItems:     record.QueuedItems,
 		RunningItems:    record.RunningItems,
@@ -1474,17 +1556,64 @@ func (service *Service) ensureTransferStagingPath(item *store.TransferTaskItem) 
 		return item.StagingPath, nil
 	}
 
-	extension := filepath.Ext(strings.TrimSpace(item.SourcePath))
-	if extension == "" {
-		extension = filepath.Ext(strings.TrimSpace(item.TargetPath))
-	}
-
-	stagingDir := filepath.Join(service.transferStateRoot(), "tasks", item.TaskID)
+	stagingDir := filepath.Join(service.transferStateRoot(), "tasks", item.TaskID, item.ID)
 	if err := ensureDirectory(stagingDir); err != nil {
 		return "", err
 	}
 
-	return filepath.Join(stagingDir, item.ID+extension), nil
+	return filepath.Join(stagingDir, transferStagingFileName(*item)), nil
+}
+
+func transferStagingFileName(item store.TransferTaskItem) string {
+	candidates := []string{
+		path.Base(strings.TrimSpace(item.TargetPath)),
+		path.Base(strings.TrimSpace(item.SourcePath)),
+		strings.TrimSpace(item.DisplayName),
+	}
+	for _, candidate := range candidates {
+		name := sanitizeTransferStagingFileName(candidate)
+		if name != "" {
+			return name
+		}
+	}
+
+	extension := filepath.Ext(strings.TrimSpace(item.TargetPath))
+	if extension == "" {
+		extension = filepath.Ext(strings.TrimSpace(item.SourcePath))
+	}
+	return shortTaskID(item.ID) + extension
+}
+
+func sanitizeTransferStagingFileName(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	replacer := strings.NewReplacer(
+		"<", "_",
+		">", "_",
+		":", "_",
+		"\"", "_",
+		"/", "_",
+		"\\", "_",
+		"|", "_",
+		"?", "_",
+		"*", "_",
+	)
+	trimmed = replacer.Replace(trimmed)
+	trimmed = strings.Trim(trimmed, ". ")
+	if trimmed == "" {
+		return ""
+	}
+
+	upper := strings.ToUpper(trimmed)
+	switch upper {
+	case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return "_" + trimmed
+	default:
+		return trimmed
+	}
 }
 
 func (service *Service) transferStateRoot() string {
@@ -1577,15 +1706,19 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 
 	sourceLabels := make([]string, 0, len(items))
 	targetLabels := make([]string, 0, len(items))
+	engineLabels := make([]string, 0, len(items))
 	var (
 		totalProgress int
 		progressCount int
 		currentItem   string
 		errorMessage  string
+		currentSpeed  int64
+		refreshEvery  int
 	)
 
 	for _, item := range items {
 		status := strings.ToLower(strings.TrimSpace(item.Status))
+		metadata := readTransferItemMetadata(item)
 		switch status {
 		case taskStatusQueued, taskStatusPending, taskStatusRetrying:
 			record.QueuedItems++
@@ -1622,6 +1755,9 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 		if strings.TrimSpace(item.TargetLabel) != "" {
 			targetLabels = append(targetLabels, item.TargetLabel)
 		}
+		if label := defaultString(strings.TrimSpace(metadata.EngineLabel), strings.TrimSpace(metadata.EngineKind)); label != "" {
+			engineLabels = append(engineLabels, label)
+		}
 
 		if currentItem == "" {
 			switch status {
@@ -1635,6 +1771,12 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 		if errorMessage == "" && item.ErrorMessage != nil && strings.TrimSpace(*item.ErrorMessage) != "" {
 			errorMessage = strings.TrimSpace(*item.ErrorMessage)
 		}
+		if status == taskStatusRunning {
+			currentSpeed = max(currentSpeed, metadata.CurrentSpeed)
+			if metadata.RefreshInterval > 0 && (refreshEvery == 0 || metadata.RefreshInterval < refreshEvery) {
+				refreshEvery = metadata.RefreshInterval
+			}
+		}
 
 		record.Direction = defaultString(strings.TrimSpace(record.Direction), strings.TrimSpace(item.Direction))
 		record.StartedAt = earliestTimePointer(record.StartedAt, item.StartedAt)
@@ -1646,7 +1788,10 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 	}
 	record.SourceLabel = compactTransferLabel(sourceLabels)
 	record.TargetLabel = compactTransferLabel(targetLabels)
+	record.EngineSummary = compactTransferLabel(engineLabels)
 	record.CurrentItemName = compactTransferLabel([]string{currentItem})
+	record.CurrentSpeed = currentSpeed
+	record.RefreshInterval = refreshEvery
 	record.StartedAt = preferTimePointer(task.StartedAt, record.StartedAt)
 	if !isTransferTaskTerminal(record.Status) {
 		record.FinishedAt = nil
@@ -1678,6 +1823,7 @@ func buildTransferTaskItemRecord(item store.TransferTaskItem) TransferTaskItemRe
 	if progressPercent == 0 && totalBytes > 0 {
 		progressPercent = calcTransferItemProgress(totalBytes, item.StagedBytes, item.CommittedBytes, item.Phase)
 	}
+	metadata := readTransferItemMetadata(item)
 
 	record := TransferTaskItemRecord{
 		ID:               item.ID,
@@ -1695,9 +1841,17 @@ func buildTransferTaskItemRecord(item store.TransferTaskItem) TransferTaskItemRe
 		LogicalPathKey:   item.LogicalPathKey,
 		Status:           item.Status,
 		Phase:            defaultString(strings.TrimSpace(item.Phase), restoreTransferPhase(item)),
+		EngineKind:       strings.TrimSpace(metadata.EngineKind),
+		EngineLabel:      strings.TrimSpace(metadata.EngineLabel),
+		CurrentSpeed:     metadata.CurrentSpeed,
+		RefreshInterval:  metadata.RefreshInterval,
+		ExternalTaskID:   transferItemExternalTaskID(item),
+		ExternalStatus:   transferItemExternalStatus(item),
 		ProgressPercent:  progressPercent,
 		TotalBytes:       totalBytes,
 		TransferredBytes: estimateTransferCompletedBytes(item),
+		StagedBytes:      item.StagedBytes,
+		CommittedBytes:   item.CommittedBytes,
 		ErrorMessage:     defaultStringPointer(item.ErrorMessage, ""),
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
@@ -2033,11 +2187,13 @@ func compactTransferLabel(values []string) string {
 func determineTransferDirection(sourceEndpointType string, targetEndpointType string) string {
 	sourceType := normalizeEndpointType(sourceEndpointType)
 	targetType := normalizeEndpointType(targetEndpointType)
+	sourceRemote := sourceType == string(connectors.EndpointTypeCloud115) || sourceType == string(connectors.EndpointTypeAList)
+	targetRemote := targetType == string(connectors.EndpointTypeCloud115) || targetType == string(connectors.EndpointTypeAList)
 
 	switch {
-	case targetType == string(connectors.EndpointTypeCloud115) && sourceType != string(connectors.EndpointTypeCloud115):
+	case targetRemote && !sourceRemote:
 		return transferDirectionUpload
-	case sourceType == string(connectors.EndpointTypeCloud115) && targetType != string(connectors.EndpointTypeCloud115):
+	case sourceRemote && !targetRemote:
 		return transferDirectionDownload
 	case sourceType == string(connectors.EndpointTypeRemovable) && targetType != string(connectors.EndpointTypeRemovable):
 		return transferDirectionUpload
@@ -2071,7 +2227,7 @@ func buildTransferTargetTempPath(targetPath string, itemID string) string {
 
 func commitsTransferDirectly(endpointType string) bool {
 	switch normalizeEndpointType(endpointType) {
-	case string(connectors.EndpointTypeCloud115):
+	case string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList):
 		return true
 	default:
 		return false
@@ -2079,6 +2235,16 @@ func commitsTransferDirectly(endpointType string) bool {
 }
 
 func resolveEndpointAbsolutePath(endpoint store.StorageEndpoint, relativePath string) string {
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) {
+		normalized := strings.TrimSpace(strings.ReplaceAll(relativePath, `\`, "/"))
+		if normalized == "" || normalized == "." {
+			return canonicalizePath(endpoint.RootPath)
+		}
+		if strings.HasPrefix(normalized, "/") {
+			return canonicalizePath(normalized)
+		}
+		return canonicalizePath(path.Join(endpoint.RootPath, normalized))
+	}
 	if filepath.IsAbs(relativePath) {
 		return filepath.Clean(relativePath)
 	}

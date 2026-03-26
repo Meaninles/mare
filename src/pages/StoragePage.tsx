@@ -34,10 +34,18 @@ import type { DeviceInfo } from "../types/connector-test";
 
 const backendUrl = getDefaultCatalogBackendUrl();
 
+/* const legacyEndpointTypeOptions = [
+  { value: "LOCAL", label: "本地" },
+  { value: "QNAP_SMB", label: "QNAP / SMB" },
+  { value: "CLOUD_115", label: "115 网盘" },
+  { value: "REMOVABLE", label: "可移动设备" }
+] as const; */
+
 const endpointTypeOptions = [
   { value: "LOCAL", label: "本地" },
   { value: "QNAP_SMB", label: "QNAP / SMB" },
   { value: "CLOUD_115", label: "115 网盘" },
+  { value: "ALIST", label: "AList 网盘" },
   { value: "REMOVABLE", label: "可移动设备" }
 ] as const;
 
@@ -61,6 +69,11 @@ type EndpointFormState = {
   cloud115RootId: string;
   cloud115AccessToken: string;
   cloud115AppType: string;
+  alistMountPath: string;
+  alistRootPath: string;
+  alistDriver: string;
+  alistAddition: string;
+  alistPassword: string;
   selectedMountPoint: string;
 };
 
@@ -453,6 +466,56 @@ export function StoragePage() {
               </>
             ) : null}
 
+            {form.endpointType === "ALIST" ? (
+              <>
+                <label className="field">
+                  <span>AList 挂载路径</span>
+                  <input
+                    value={form.alistMountPath}
+                    onChange={(event) => updateForm("alistMountPath", event.target.value)}
+                    placeholder="/cloud"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>AList 根路径</span>
+                  <input
+                    value={form.alistRootPath}
+                    onChange={(event) => updateForm("alistRootPath", event.target.value)}
+                    placeholder="/cloud/media"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>驱动</span>
+                  <input
+                    value={form.alistDriver}
+                    onChange={(event) => updateForm("alistDriver", event.target.value)}
+                    placeholder="Local"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>目录密码</span>
+                  <input
+                    value={form.alistPassword}
+                    onChange={(event) => updateForm("alistPassword", event.target.value)}
+                    placeholder="可选"
+                  />
+                </label>
+
+                <label className="field field-span">
+                  <span>addition(JSON)</span>
+                  <textarea
+                    value={form.alistAddition}
+                    onChange={(event) => updateForm("alistAddition", event.target.value)}
+                    placeholder='{"root_folder_path":"D:\\\\media"}'
+                    rows={4}
+                  />
+                </label>
+              </>
+            ) : null}
+
             {form.endpointType === "REMOVABLE" ? (
               <label className="field field-span">
                 <span>设备挂载点</span>
@@ -667,7 +730,7 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
   );
 }
 
-function createEmptyForm(selectedMountPoint: string): EndpointFormState {
+/* function createEmptyForm(selectedMountPoint: string): EndpointFormState {
   return {
     endpointType: "LOCAL",
     name: "",
@@ -679,6 +742,11 @@ function createEmptyForm(selectedMountPoint: string): EndpointFormState {
     cloud115RootId: "0",
     cloud115AccessToken: "",
     cloud115AppType: "windows",
+    alistMountPath: "",
+    alistRootPath: "",
+    alistDriver: "Local",
+    alistAddition: "{}",
+    alistPassword: "",
     selectedMountPoint
   };
 }
@@ -702,6 +770,11 @@ function createFormFromEndpoint(endpoint: CatalogEndpoint, devices: DeviceInfo[]
     cloud115RootId: endpointType === "CLOUD_115" ? getString(config, "rootId") || endpoint.rootPath || "0" : "0",
     cloud115AccessToken: endpointType === "CLOUD_115" ? getString(config, "accessToken") : "",
     cloud115AppType: endpointType === "CLOUD_115" ? getString(config, "appType") || "windows" : "windows",
+    alistMountPath: endpointType === "ALIST" ? getString(config, "mountPath") || endpoint.rootPath : "",
+    alistRootPath: endpointType === "ALIST" ? endpoint.rootPath || getString(config, "mountPath") : "",
+    alistDriver: endpointType === "ALIST" ? getString(config, "driver") || "Local" : "Local",
+    alistAddition: endpointType === "ALIST" ? getString(config, "addition") || "{}" : "{}",
+    alistPassword: endpointType === "ALIST" ? getString(config, "password") : "",
     selectedMountPoint
   };
 }
@@ -746,6 +819,21 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
           appType: form.cloud115AppType
         }
       };
+    case "ALIST":
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: form.alistRootPath.trim() || form.alistMountPath.trim(),
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          mountPath: form.alistMountPath.trim(),
+          driver: form.alistDriver.trim() || "Local",
+          addition: form.alistAddition.trim() || "{}",
+          password: form.alistPassword.trim()
+        }
+      };
     case "REMOVABLE":
       if (!selectedDevice) {
         throw new Error("当前没有选中的可移动设备。");
@@ -785,6 +873,173 @@ function getEndpointTypeLabel(endpointType: string) {
       return "QNAP / SMB";
     case "CLOUD_115":
       return "115 网盘";
+    case "REMOVABLE":
+      return "可移动设备";
+    default:
+      return endpointType;
+  }
+}
+
+function getAvailabilityStatusLabel(status: string) {
+  switch (status) {
+    case "AVAILABLE":
+      return "可用";
+    case "DISABLED":
+      return "停用";
+    default:
+      return status || "未知";
+  }
+}
+
+*/
+
+function createEmptyForm(selectedMountPoint: string): EndpointFormState {
+  return {
+    endpointType: "LOCAL",
+    name: "",
+    note: "",
+    roleMode: "MANAGED",
+    availabilityStatus: "AVAILABLE",
+    localRootPath: "",
+    qnapSharePath: "",
+    cloud115RootId: "0",
+    cloud115AccessToken: "",
+    cloud115AppType: "windows",
+    alistMountPath: "",
+    alistRootPath: "",
+    alistDriver: "Local",
+    alistAddition: "{}",
+    alistPassword: "",
+    selectedMountPoint
+  };
+}
+
+function createFormFromEndpoint(endpoint: CatalogEndpoint, devices: DeviceInfo[]): EndpointFormState {
+  const next = createEmptyForm(devices[0]?.mountPoint ?? "");
+  const endpointType = normalizeEndpointType(endpoint.endpointType);
+  const config = endpoint.connectionConfig ?? {};
+  const selectedMountPoint =
+    getNestedString(config, "device", "mountPoint") || endpoint.rootPath || devices[0]?.mountPoint || "";
+
+  return {
+    ...next,
+    endpointType,
+    name: endpoint.name,
+    note: endpoint.note ?? "",
+    roleMode: endpoint.roleMode || "MANAGED",
+    availabilityStatus: endpoint.availabilityStatus || "AVAILABLE",
+    localRootPath: endpointType === "LOCAL" ? getString(config, "rootPath") || endpoint.rootPath : "",
+    qnapSharePath: endpointType === "QNAP_SMB" ? getString(config, "sharePath") || endpoint.rootPath : "",
+    cloud115RootId: endpointType === "CLOUD_115" ? getString(config, "rootId") || endpoint.rootPath || "0" : "0",
+    cloud115AccessToken: endpointType === "CLOUD_115" ? getString(config, "accessToken") : "",
+    cloud115AppType: endpointType === "CLOUD_115" ? getString(config, "appType") || "windows" : "windows",
+    alistMountPath: endpointType === "ALIST" ? getString(config, "mountPath") || endpoint.rootPath : "",
+    alistRootPath: endpointType === "ALIST" ? endpoint.rootPath || getString(config, "mountPath") : "",
+    alistDriver: endpointType === "ALIST" ? getString(config, "driver") || "Local" : "Local",
+    alistAddition: endpointType === "ALIST" ? getString(config, "addition") || "{}" : "{}",
+    alistPassword: endpointType === "ALIST" ? getString(config, "password") : "",
+    selectedMountPoint
+  };
+}
+
+function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInfo | null): CatalogEndpointPayload {
+  switch (form.endpointType) {
+    case "LOCAL":
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: form.localRootPath.trim(),
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          rootPath: form.localRootPath.trim()
+        }
+      };
+    case "QNAP_SMB":
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: form.qnapSharePath.trim(),
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          sharePath: form.qnapSharePath.trim()
+        }
+      };
+    case "CLOUD_115":
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: form.cloud115RootId.trim(),
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          rootId: form.cloud115RootId.trim(),
+          accessToken: form.cloud115AccessToken.trim(),
+          appType: form.cloud115AppType
+        }
+      };
+    case "ALIST":
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: form.alistRootPath.trim() || form.alistMountPath.trim(),
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          mountPath: form.alistMountPath.trim(),
+          driver: form.alistDriver.trim() || "Local",
+          addition: form.alistAddition.trim() || "{}",
+          password: form.alistPassword.trim()
+        }
+      };
+    case "REMOVABLE":
+      if (!selectedDevice) {
+        throw new Error("当前没有选中的可移动设备。");
+      }
+      return {
+        name: form.name.trim(),
+        note: form.note.trim(),
+        endpointType: form.endpointType,
+        rootPath: selectedDevice.mountPoint,
+        roleMode: form.roleMode,
+        availabilityStatus: form.availabilityStatus,
+        connectionConfig: {
+          device: selectedDevice
+        }
+      };
+  }
+}
+
+function normalizeEndpointType(value: string): EndpointType {
+  switch (value) {
+    case "QNAP_SMB":
+      return "QNAP_SMB";
+    case "CLOUD_115":
+      return "CLOUD_115";
+    case "ALIST":
+      return "ALIST";
+    case "REMOVABLE":
+      return "REMOVABLE";
+    default:
+      return "LOCAL";
+  }
+}
+
+function getEndpointTypeLabel(endpointType: string) {
+  switch (endpointType) {
+    case "LOCAL":
+      return "本地";
+    case "QNAP_SMB":
+      return "QNAP / SMB";
+    case "CLOUD_115":
+      return "115 网盘";
+    case "ALIST":
+      return "AList 网盘";
     case "REMOVABLE":
       return "可移动设备";
     default:

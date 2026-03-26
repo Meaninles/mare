@@ -62,10 +62,7 @@ pub async fn set_library_pinned(
 }
 
 #[tauri::command]
-pub async fn delete_library_record(
-    id: String,
-    core: State<'_, AppCore>,
-) -> Result<(), AppError> {
+pub async fn delete_library_record(id: String, core: State<'_, AppCore>) -> Result<(), AppError> {
     core.delete_library_record(id).await
 }
 

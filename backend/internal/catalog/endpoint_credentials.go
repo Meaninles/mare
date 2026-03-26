@@ -25,6 +25,9 @@ func (service *Service) buildConnector(endpoint store.StorageEndpoint) (connecto
 	if err != nil {
 		return nil, err
 	}
+	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeAList) {
+		return service.buildAListConnector(context.Background(), hydrated)
+	}
 	return service.connectorFactory(hydrated)
 }
 

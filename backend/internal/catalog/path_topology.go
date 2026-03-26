@@ -77,6 +77,17 @@ func resolveReplicaDirectoryPath(endpoint store.StorageEndpoint, logicalPath str
 			return fmt.Sprintf("%s:/", rootPath)
 		}
 		return fmt.Sprintf("%s:/%s", rootPath, directory)
+	case string(connectors.EndpointTypeAList):
+		if rootPath == "" {
+			if directory == "" {
+				return "/"
+			}
+			return "/" + strings.TrimPrefix(directory, "/")
+		}
+		if directory == "" {
+			return canonicalizePath(rootPath)
+		}
+		return canonicalizePath(pathpkg.Join(rootPath, directory))
 	default:
 		if rootPath == "" {
 			return filepath.FromSlash(directory)
@@ -101,6 +112,17 @@ func canonicalReplicaPhysicalPath(endpoint store.StorageEndpoint, logicalPath st
 			return fmt.Sprintf("%s:/", rootPath)
 		}
 		return fmt.Sprintf("%s:/%s", rootPath, relativePath)
+	case string(connectors.EndpointTypeAList):
+		if rootPath == "" {
+			if relativePath == "" {
+				return "/"
+			}
+			return "/" + strings.TrimPrefix(relativePath, "/")
+		}
+		if relativePath == "" {
+			return canonicalizePath(rootPath)
+		}
+		return canonicalizePath(pathpkg.Join(rootPath, relativePath))
 	default:
 		if rootPath == "" {
 			return filepath.FromSlash(relativePath)

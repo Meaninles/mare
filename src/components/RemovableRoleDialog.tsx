@@ -86,13 +86,16 @@ export function RemovableRoleDialog() {
 
   return (
     <div className="dialog-overlay" role="presentation" onClick={closeDialog}>
-      <article className="dialog-card removable-role-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+      <article
+        className="dialog-card removable-role-dialog"
+        role="dialog"
+        aria-modal="true"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="dialog-header">
           <p className="eyebrow">设备已连接</p>
           <h4>检测到新的可移动设备，需要先确认它在 Mare 中的用途。</h4>
-          <p>
-            你可以把它作为长期纳管的管理存储，也可以把它作为一次性的导入源使用。
-          </p>
+          <p>你可以把它作为长期纳管的管理存储，也可以把它作为一次性的导入源使用。</p>
         </div>
 
         <div className="dialog-meta">
@@ -112,7 +115,7 @@ export function RemovableRoleDialog() {
             <div>
               <span>历史身份</span>
               <strong>
-                已识别为已纳管设备“{pendingDevice.knownEndpoint.name}”，当前类型为
+                已识别为已纳管设备“{pendingDevice.knownEndpoint.name}”，当前类型为{" "}
                 {getEndpointTypeLabel(pendingDevice.knownEndpoint.endpointType)}。
               </strong>
             </div>
@@ -179,6 +182,8 @@ function getEndpointTypeLabel(endpointType: string) {
       return "QNAP / SMB";
     case "CLOUD_115":
       return "115 网盘";
+    case "ALIST":
+      return "AList 网盘";
     case "REMOVABLE":
       return "可移动设备";
     default:

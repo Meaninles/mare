@@ -27,6 +27,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "resources": {
+      "../backend/server.exe": "backend/server.exe",
+      "../backend/tools/cloud115_bridge.py": "backend/tools/cloud115_bridge.py",
+      "../backend/tools/search_ai.py": "backend/tools/search_ai.py",
+      "../backend/tools/search_ai.requirements.txt": "backend/tools/search_ai.requirements.txt",
+      "../.tools/pythonlibs": "pythonlibs",
+      "../.tools/runtime/alist/extracted/alist.exe": "runtime/alist/alist.exe",
+      "../.tools/runtime/aria2/extracted/aria2-1.37.0-win-64bit-build1/aria2c.exe": "runtime/aria2/aria2c.exe"
+    }
   }
 }

@@ -1,5 +1,6 @@
 mod app_core;
 mod app_state;
+mod backend_runtime;
 mod bootstrap;
 mod catalog;
 mod config;
@@ -13,6 +14,7 @@ mod sync;
 mod tasks;
 
 use app_core::AppCore;
+use backend_runtime::BackendRuntime;
 use bootstrap::get_app_bootstrap;
 use libraries::{
     clear_active_library, create_library_record, delete_library_record, list_libraries,
@@ -33,9 +35,11 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let handle = app.handle().clone();
+            let backend_runtime = BackendRuntime::initialize(&handle)?;
             let app_core =
                 tauri::async_runtime::block_on(async move { AppCore::initialize(&handle).await })?;
 
+            app.manage(backend_runtime);
             let _ = app_core.pool();
             app.manage(app_core);
             Ok(())
