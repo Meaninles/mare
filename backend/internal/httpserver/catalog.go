@@ -515,6 +515,10 @@ func (server *Server) handleCatalogTransferPause(w http.ResponseWriter, r *http.
 	server.handleCatalogTransferAction(w, r, "pause")
 }
 
+func (server *Server) handleCatalogTransferCancel(w http.ResponseWriter, r *http.Request) {
+	server.handleCatalogTransferAction(w, r, "cancel")
+}
+
 func (server *Server) handleCatalogTransferResume(w http.ResponseWriter, r *http.Request) {
 	server.handleCatalogTransferAction(w, r, "resume")
 }
@@ -554,6 +558,8 @@ func (server *Server) handleCatalogTransferAction(w http.ResponseWriter, r *http
 	switch action {
 	case "pause":
 		summary, err = catalogService.PauseTransferTasks(r.Context(), request.TaskIDs)
+	case "cancel":
+		summary, err = catalogService.CancelTransferTasks(r.Context(), request.TaskIDs)
 	case "resume":
 		summary, err = catalogService.ResumeTransferTasks(r.Context(), request.TaskIDs)
 	case "delete":

@@ -1,788 +1,856 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowUp,
   CheckCircle2,
-  Download,
   FolderOpen,
   LoaderCircle,
+  Pause,
+  Play,
   RefreshCcw,
   Search,
-  Workflow
+  Upload,
+  Workflow,
+  XCircle
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
-import { useCatalogRetryTask } from "../hooks/useCatalog";
-import { formatCatalogDate } from "../lib/catalog-view";
 import {
-  canRetryTask,
-  getTaskStatusLabel,
-  getTaskTitle,
-  getTaskTone,
-  safeLower
-} from "../lib/task-center";
-import { listLibraries, listLibraryTasks } from "../services/desktop";
-import type { LibraryTaskRecord } from "../types/libraries";
+  useCancelTransferTasks,
+  usePauseTransferTasks,
+  usePrioritizeTransferTask,
+  useResumeTransferTasks,
+  useTransferTaskDetail,
+  useTransferTasks
+} from "../hooks/useCatalog";
+import { formatCatalogDate, formatFileSize, getMediaTypeLabel } from "../lib/catalog-view";
+import type { CatalogTransferTaskItemRecord, CatalogTransferTaskRecord } from "../types/catalog";
 
-type TaskLane = "sync" | "download";
-type LaneFilter = "all" | TaskLane;
-type StatusFilter = "all" | "running" | "failed" | "success";
+type TransferStatusFilter = "all" | "active" | "queued" | "paused" | "failed" | "success" | "canceled";
+type TransferDirectionFilter = "all" | "sync" | "upload" | "download";
 
-type TransferTaskView = {
-  task: LibraryTaskRecord;
-  lane: TaskLane;
-  laneLabel: string;
-  subject: string;
-  detail: string;
-  sourceLabel: string;
-  targetLabel: string;
-  progressPercent: number;
-  progressLabel: string;
-  latestAt?: string;
-};
-
-const laneFilters: Array<{ value: LaneFilter; label: string }> = [
-  { value: "all", label: "全部类别" },
-  { value: "sync", label: "同步任务" },
-  { value: "download", label: "下载任务" }
+const statusFilters: Array<{ value: TransferStatusFilter; label: string }> = [
+  { value: "active", label: "进行中" },
+  { value: "all", label: "全部状态" },
+  { value: "queued", label: "排队中" },
+  { value: "paused", label: "已暂停" },
+  { value: "failed", label: "失败" },
+  { value: "canceled", label: "已取消" },
+  { value: "success", label: "已完成" }
 ];
 
-const statusFilters: Array<{ value: StatusFilter; label: string }> = [
-  { value: "all", label: "全部状态" },
-  { value: "running", label: "进行中" },
-  { value: "failed", label: "失败" },
-  { value: "success", label: "已完成" }
+const directionFilters: Array<{ value: TransferDirectionFilter; label: string }> = [
+  { value: "all", label: "全部方向" },
+  { value: "download", label: "下载" },
+  { value: "upload", label: "上传" },
+  { value: "sync", label: "同步" }
 ];
 
 export function SystemTasksPage() {
   const navigate = useNavigate();
   const { currentLibrary, isLibraryOpen } = useLibraryContext();
-  const retryMutation = useCatalogRetryTask();
-  const [libraryFilter, setLibraryFilter] = useState("all");
-  const [laneFilter, setLaneFilter] = useState<LaneFilter>("sync");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("running");
+  const transferTasksQuery = useTransferTasks(240);
+  const pauseMutation = usePauseTransferTasks();
+  const resumeMutation = useResumeTransferTasks();
+  const cancelMutation = useCancelTransferTasks();
+  const prioritizeMutation = usePrioritizeTransferTask();
+
+  const [statusFilter, setStatusFilter] = useState<TransferStatusFilter>("active");
+  const [directionFilter, setDirectionFilter] = useState<TransferDirectionFilter>("all");
   const [searchValue, setSearchValue] = useState("");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [focusedTaskId, setFocusedTaskId] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const librariesQuery = useQuery({
-    queryKey: ["registered-libraries"],
-    queryFn: listLibraries,
-    staleTime: 30_000
-  });
-
-  const tasksQuery = useQuery({
-    queryKey: ["library-task-feed", "all"],
-    queryFn: () => listLibraryTasks(),
-    staleTime: 5_000,
-    refetchInterval: 8_000
-  });
-
-  const libraryLookup = useMemo(() => {
-    return new Map((librariesQuery.data ?? []).map((library) => [library.id, library]));
-  }, [librariesQuery.data]);
-
-  const taskViews = useMemo(() => {
-    return (tasksQuery.data ?? [])
-      .map((task) => buildTransferTaskView(task))
-      .filter((task): task is TransferTaskView => task !== null);
-  }, [tasksQuery.data]);
+  const transferResult = transferTasksQuery.data;
+  const tasks = transferResult?.tasks ?? [];
+  const stats = transferResult?.stats;
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
 
   const filteredTasks = useMemo(() => {
     const query = searchValue.trim().toLowerCase();
 
-    return taskViews.filter((task) => {
-      if (libraryFilter !== "all" && task.task.libraryId !== libraryFilter) {
+    return tasks.filter((task) => {
+      if (!matchesTransferStatus(task.status, statusFilter)) {
         return false;
       }
-
-      if (laneFilter !== "all" && task.lane !== laneFilter) {
+      if (!matchesTransferDirection(task.direction, directionFilter)) {
         return false;
       }
-
-      if (statusFilter !== "all" && !matchesStatusFilter(task.task.status, statusFilter)) {
-        return false;
-      }
-
       if (!query) {
         return true;
       }
 
       const haystack = [
-        task.task.libraryName,
-        task.subject,
-        task.detail,
+        task.id,
+        task.title,
+        task.fileName,
+        task.filePath,
         task.sourceLabel,
         task.targetLabel,
-        task.task.id
+        task.engineSummary,
+        task.currentItemName,
+        task.progressLabel
       ]
+        .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
       return haystack.includes(query);
     });
-  }, [laneFilter, libraryFilter, searchValue, statusFilter, taskViews]);
+  }, [directionFilter, searchValue, statusFilter, tasks]);
 
-  const summary = useMemo(() => {
-    const syncTasks = taskViews.filter((task) => task.lane === "sync");
-    const downloadTasks = taskViews.filter((task) => task.lane === "download");
-    const libraryIds = new Set(taskViews.map((task) => task.task.libraryId));
+  const visibleTaskIds = useMemo(() => filteredTasks.map((task) => task.id), [filteredTasks]);
+  const selectedTasks = useMemo(
+    () => tasks.filter((task) => selectedTaskIdSet.has(task.id)),
+    [selectedTaskIdSet, tasks]
+  );
+  const prioritizedTaskIds = useMemo(
+    () => selectedTasks.filter((task) => canPrioritizeDownload(task)).map((task) => task.id),
+    [selectedTasks]
+  );
+  const allVisibleSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((taskId) => selectedTaskIdSet.has(taskId));
+  const focusedTask =
+    filteredTasks.find((task) => task.id === focusedTaskId) ?? tasks.find((task) => task.id === focusedTaskId) ?? null;
+  const taskDetailQuery = useTransferTaskDetail(focusedTaskId);
+  const hasBusyAction =
+    pauseMutation.isPending || resumeMutation.isPending || cancelMutation.isPending || prioritizeMutation.isPending;
 
-    return {
-      syncTotal: syncTasks.length,
-      syncRunning: syncTasks.filter((task) => matchesStatusFilter(task.task.status, "running")).length,
-      downloadTotal: downloadTasks.length,
-      downloadRunning: downloadTasks.filter((task) => matchesStatusFilter(task.task.status, "running")).length,
-      failedTotal: taskViews.filter((task) => matchesStatusFilter(task.task.status, "failed")).length,
-      libraryCount: libraryIds.size
-    };
-  }, [taskViews]);
+  useEffect(() => {
+    const visibleTaskIdSet = new Set(tasks.map((task) => task.id));
+    setSelectedTaskIds((current) => current.filter((taskId) => visibleTaskIdSet.has(taskId)));
+    setFocusedTaskId((current) => (visibleTaskIdSet.has(current) ? current : tasks[0]?.id ?? ""));
+  }, [tasks]);
 
-  const selectedLibrary = libraryFilter === "all" ? undefined : libraryLookup.get(libraryFilter);
-  const activeLaneLabel = laneFilters.find((filter) => filter.value === laneFilter)?.label ?? "全部类别";
-  const activeStatusLabel = statusFilters.find((filter) => filter.value === statusFilter)?.label ?? "全部状态";
+  async function handlePause(taskIds: string[]) {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      const summary = await pauseMutation.mutateAsync(taskIds);
+      setNotice(summary.message || `已暂停 ${summary.updated} 个任务`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "暂停传输任务失败。");
+    }
+  }
+
+  async function handleResume(taskIds: string[]) {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      const summary = await resumeMutation.mutateAsync(taskIds);
+      setNotice(summary.message || `已恢复 ${summary.updated} 个任务`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "恢复传输任务失败。");
+    }
+  }
+
+  async function handleCancel(taskIds: string[]) {
+    if (taskIds.length === 0) {
+      return;
+    }
+    if (!window.confirm(`确认取消选中的 ${taskIds.length} 个任务吗？已完成的文件不会删除，后续仍可恢复继续。`)) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      const summary = await cancelMutation.mutateAsync(taskIds);
+      setNotice(summary.message || `已取消 ${summary.updated} 个任务`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "取消传输任务失败。");
+    }
+  }
+
+  async function handlePrioritize(taskIds: string[]) {
+    const candidates = taskIds
+      .map((taskId) => tasks.find((task) => task.id === taskId))
+      .filter((task): task is CatalogTransferTaskRecord => {
+        if (!task) {
+          return false;
+        }
+
+        return canPrioritizeDownload(task);
+      });
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    setNotice(null);
+
+    let updated = 0;
+    for (const task of candidates) {
+      try {
+        const summary = await prioritizeMutation.mutateAsync(task.id);
+        updated += summary.updated;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "优先下载失败。";
+        setNotice(updated > 0 ? `已处理 ${updated} 个任务，后续操作失败：${message}` : message);
+        return;
+      }
+    }
+
+    setNotice(candidates.length === 1 ? "任务已设为优先下载" : `已将 ${updated} 个任务设为优先下载`);
+  }
+
+  function toggleTaskSelection(taskId: string) {
+    setSelectedTaskIds((current) =>
+      current.includes(taskId) ? current.filter((item) => item !== taskId) : [...current, taskId]
+    );
+  }
+
+  function toggleVisibleSelection() {
+    if (visibleTaskIds.length === 0) {
+      return;
+    }
+
+    setSelectedTaskIds((current) => {
+      if (allVisibleSelected) {
+        return current.filter((taskId) => !visibleTaskIds.includes(taskId));
+      }
+
+      return Array.from(new Set([...current, ...visibleTaskIds]));
+    });
+  }
 
   return (
     <section className="page-stack system-tasks-page">
       <article className="detail-card compact-page-header system-tasks-header">
         <div className="compact-page-header-main">
-          <div className="replica-chip-row compact-page-header-metrics">
-            <span className="replica-chip warning">同步任务 {summary.syncTotal}</span>
-            <span className="replica-chip neutral">下载任务 {summary.downloadTotal}</span>
-            <span className="replica-chip danger">失败任务 {summary.failedTotal}</span>
-            <span className="replica-chip success">涉及资产库 {summary.libraryCount}</span>
+          <div className="compact-page-header-title">
+            <h3>任务列表</h3>
+            <div className="replica-chip-row compact-page-header-metrics">
+              <span className="replica-chip success">{currentLibrary ? currentLibrary.name : "未打开资产库"}</span>
+              <span className="replica-chip warning">进行中 {stats?.runningTasks ?? 0}</span>
+              <span className="replica-chip neutral">上传 {stats?.uploadTasks ?? 0}</span>
+              <span className="replica-chip neutral">下载 {stats?.downloadTasks ?? 0}</span>
+              <span className="replica-chip danger">失败 {stats?.failedTasks ?? 0}</span>
+              {selectedTaskIds.length > 0 ? <span className="replica-chip neutral">已选 {selectedTaskIds.length}</span> : null}
+            </div>
           </div>
+        </div>
+
+        <div className="compact-page-header-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void transferTasksQuery.refetch()}
+            disabled={!isLibraryOpen || transferTasksQuery.isFetching}
+          >
+            <RefreshCcw size={14} className={transferTasksQuery.isFetching ? "spin" : ""} />
+            刷新
+          </button>
+
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => navigate(isLibraryOpen ? "/assets" : "/welcome")}
+          >
+            <FolderOpen size={14} />
+            {isLibraryOpen ? "返回当前资产库" : "打开资产库"}
+          </button>
         </div>
       </article>
 
-      <article className="hero-card library-hero system-tasks-legacy-hero">
-        <div className="library-hero-copy">
-          <p className="eyebrow">传输任务</p>
-          <h3>统一查看所有资产库里的文件传输任务，并按资产库筛选。</h3>
-          <p>
-            资产库内部流转一律归到同步任务；只有从某个位置下载到资产库外文件夹的任务，才会归到下载任务。当前页面默认聚焦同步任务。
-          </p>
-        </div>
+      {notice ? <p className="inline-note">{notice}</p> : null}
 
-        <div className="hero-metrics transfer-summary-grid">
-          <SummaryCard
-            icon={<Workflow size={18} />}
-            label="同步任务"
-            value={summary.syncTotal}
-            meta={summary.syncRunning > 0 ? `${summary.syncRunning} 个进行中` : "当前空闲"}
-            tone="warning"
-          />
-          <SummaryCard
-            icon={<Download size={18} />}
-            label="下载任务"
-            value={summary.downloadTotal}
-            meta={summary.downloadRunning > 0 ? `${summary.downloadRunning} 个进行中` : "暂时没有"}
-            tone="neutral"
-          />
-          <SummaryCard
-            icon={<AlertTriangle size={18} />}
-            label="失败任务"
-            value={summary.failedTotal}
-            meta="可按资产库筛选并查看错误"
-            tone="danger"
-          />
-          <SummaryCard
-            icon={<FolderOpen size={18} />}
-            label="涉及资产库"
-            value={summary.libraryCount}
-            meta={librariesQuery.data?.length ? `共登记 ${librariesQuery.data.length} 个资产库` : "还没有登记资产库"}
-            tone="success"
-          />
-        </div>
-      </article>
-
-      <article className="detail-card system-tasks-legacy-context">
-        <div className="section-head">
-          <div className="replica-chip-row task-page-context-row">
-            <span className="replica-chip neutral">{selectedLibrary ? `筛选 ${selectedLibrary.name}` : "所有资产库"}</span>
-            <span className="replica-chip neutral">{activeLaneLabel}</span>
-            <span className="replica-chip neutral">{activeStatusLabel}</span>
-            {currentLibrary ? <span className="replica-chip success">当前打开 {currentLibrary.name}</span> : null}
-            <p className="eyebrow">当前上下文</p>
-            <h4>{selectedLibrary ? selectedLibrary.name : "所有资产库"}</h4>
+      {!isLibraryOpen ? (
+        <article className="detail-card empty-state">
+          <FolderOpen size={22} />
+          <div>
+            <h4>请先打开一个资产库</h4>
+            <p>任务页现在支持直接暂停、恢复、取消和优先下载，需要先进入当前资产库后才能操作传输队列。</p>
           </div>
+        </article>
+      ) : (
+        <>
+          <article className="detail-card">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">任务面板</p>
+                <h4>当前资产库传输队列</h4>
+              </div>
+            </div>
 
-          {isLibraryOpen && currentLibrary ? (
-            <button type="button" className="ghost-button" onClick={() => navigate("/assets")}>
-              <FolderOpen size={16} />
-              返回当前资产库
-            </button>
-          ) : (
-            <button type="button" className="ghost-button" onClick={() => navigate("/welcome")}>
-              <FolderOpen size={16} />
-              打开资产库
-            </button>
-          )}
-        </div>
+            <div className="transfer-toolbar">
+              <div className="transfer-toolbar-main">
+                <label className="transfer-search" aria-label="筛选传输任务">
+                  <Search size={16} />
+                  <input
+                    value={searchValue}
+                    onChange={(event) => setSearchValue(event.target.value)}
+                    placeholder="筛选文件名、路径、来源、目标、任务 ID"
+                  />
+                </label>
 
-        <div className="field-grid">
-          <div className="field">
-            <span>筛选范围</span>
-            <strong>{selectedLibrary ? selectedLibrary.path : "所有已登记资产库"}</strong>
-          </div>
-          <div className="field">
-            <span>当前会话</span>
-            <strong>{currentLibrary ? `当前打开：${currentLibrary.name}` : "当前没有已打开的资产库"}</strong>
-          </div>
-          <div className="field field-span">
-            <span>说明</span>
-            <strong>
-              这个页面属于应用层全局入口，不在库内导航里。你可以先看所有资产库的传输任务，再切换到某个具体资产库细看。
-            </strong>
-          </div>
-        </div>
-      </article>
+                <div className="transfer-filter-group">
+                  <div className="transfer-filter-field compact-filter-control">
+                    <Workflow size={16} aria-hidden="true" />
+                    <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TransferStatusFilter)}>
+                      {statusFilters.map((filter) => (
+                        <option key={filter.value} value={filter.value}>
+                          {filter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-      <article className="detail-card">
-        <div className="section-head">
-          <div className="replica-chip-row task-page-context-row">
-            <p className="eyebrow">任务面板</p>
-            <h4>跨资产库传输列表</h4>
-          </div>
+                  <div className="transfer-filter-field compact-filter-control">
+                    <Upload size={16} aria-hidden="true" />
+                    <select
+                      value={directionFilter}
+                      onChange={(event) => setDirectionFilter(event.target.value as TransferDirectionFilter)}
+                    >
+                      {directionFilters.map((filter) => (
+                        <option key={filter.value} value={filter.value}>
+                          {filter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-          <div className="action-row">
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => {
-                void Promise.all([tasksQuery.refetch(), librariesQuery.refetch()]);
-              }}
-              disabled={tasksQuery.isFetching || librariesQuery.isFetching}
-            >
-              <RefreshCcw size={14} className={tasksQuery.isFetching || librariesQuery.isFetching ? "spin" : ""} />
-              刷新
-            </button>
-          </div>
-        </div>
+                  <div className="action-row">
+                    <button type="button" className="ghost-button" onClick={toggleVisibleSelection} disabled={visibleTaskIds.length === 0}>
+                      {allVisibleSelected ? "取消当前筛选" : "选择当前筛选"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handlePause(selectedTaskIds)}
+                      disabled={hasBusyAction || selectedTaskIds.length === 0}
+                    >
+                      <Pause size={15} />
+                      暂停
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handleResume(selectedTaskIds)}
+                      disabled={hasBusyAction || selectedTaskIds.length === 0}
+                    >
+                      <Play size={15} />
+                      恢复
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button danger-text"
+                      onClick={() => void handleCancel(selectedTaskIds)}
+                      disabled={hasBusyAction || selectedTaskIds.length === 0}
+                    >
+                      <XCircle size={15} />
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void handlePrioritize(prioritizedTaskIds)}
+                      disabled={hasBusyAction || prioritizedTaskIds.length === 0}
+                    >
+                      <ArrowUp size={15} />
+                      优先下载
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-        <div className="transfer-toolbar">
-          <div className="transfer-toolbar-main">
-            <label className="transfer-search" aria-label="筛选传输任务">
-              <Search size={16} />
-              <input
-                value={searchValue}
-                onChange={(event) => setSearchValue(event.target.value)}
-                placeholder="筛选任务名称、来源、目标、任务 ID 或资产库"
+            <p className="transfer-bulk-summary">
+              当前筛选下共 {filteredTasks.length} 个任务，已选 {selectedTaskIds.length} 个，可优先下载 {prioritizedTaskIds.length} 个。
+            </p>
+
+            {transferTasksQuery.isLoading ? (
+              <EmptyBlock
+                icon={<LoaderCircle size={20} className="spin" />}
+                title="正在读取传输任务"
+                copy="后台正在汇总当前资产库里的上传、下载和同步任务。"
               />
-            </label>
+            ) : null}
 
-            <div className="transfer-filter-group">
-              <div className="transfer-filter-field compact-filter-control">
-                <FolderOpen size={16} aria-hidden="true" />
-                <select aria-label="按资产库筛选" value={libraryFilter} onChange={(event) => setLibraryFilter(event.target.value)}>
-                  <option value="all">所有资产库</option>
-                  {(librariesQuery.data ?? []).map((library) => (
-                    <option key={library.id} value={library.id}>
-                      {library.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {transferTasksQuery.isError ? (
+              <EmptyBlock
+                icon={<AlertTriangle size={20} />}
+                title="暂时无法读取传输任务"
+                copy={transferTasksQuery.error instanceof Error ? transferTasksQuery.error.message : "请稍后再试。"}
+              />
+            ) : null}
 
-              <div className="transfer-filter-field compact-filter-control">
-                <Workflow size={16} aria-hidden="true" />
-                <select aria-label="按任务类别筛选" value={laneFilter} onChange={(event) => setLaneFilter(event.target.value as LaneFilter)}>
-                  {laneFilters.map((filter) => (
-                    <option key={filter.value} value={filter.value}>
-                      {filter.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {!transferTasksQuery.isLoading && !transferTasksQuery.isError && filteredTasks.length === 0 ? (
+              <EmptyBlock
+                icon={<CheckCircle2 size={20} />}
+                title="当前筛选下没有传输任务"
+                copy="发起导入、恢复或下载后，这里会显示可操作的任务列表。"
+              />
+            ) : null}
 
-              <div className="transfer-filter-field compact-filter-control">
-                <CheckCircle2 size={16} aria-hidden="true" />
-                <select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-                  {statusFilters.map((filter) => (
-                    <option key={filter.value} value={filter.value}>
-                      {filter.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
+            {!transferTasksQuery.isLoading && !transferTasksQuery.isError && filteredTasks.length > 0 ? (
+              <div className="transfer-table-wrap">
+                <table className="transfer-task-table">
+                  <colgroup>
+                    <col style={{ width: "5%" }} />
+                    <col style={{ width: "24%" }} />
+                    <col style={{ width: "17%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "12%" }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>选择</th>
+                      <th>文件</th>
+                      <th>来源 / 目标</th>
+                      <th>进度</th>
+                      <th>文件大小</th>
+                      <th>传输速度</th>
+                      <th>状态</th>
+                      <th>最近更新</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredTasks.map((task) => {
+                      const isSelected = selectedTaskIdSet.has(task.id);
+                      const isFocused = focusedTaskId === task.id;
+                      const fileName = getTransferFileName(task);
+                      const filePath = getTransferFilePath(task);
+                      const fileSize = getTransferFileSize(task);
+                      const fileTransferred = getTransferFileTransferred(task);
 
-        {tasksQuery.isLoading || librariesQuery.isLoading ? (
-          <div className="sync-empty-block">
-            <LoaderCircle size={20} className="spin" />
-            <div>
-              <strong>正在汇总传输任务</strong>
-              <p>正在读取所有已登记资产库里的同步和下载任务。</p>
-            </div>
-          </div>
-        ) : null}
-
-        {tasksQuery.isError || librariesQuery.isError ? (
-          <div className="sync-empty-block">
-            <AlertTriangle size={20} />
-            <div>
-              <strong>暂时无法读取传输任务</strong>
-              <p>
-                {tasksQuery.error instanceof Error
-                  ? tasksQuery.error.message
-                  : librariesQuery.error instanceof Error
-                    ? librariesQuery.error.message
-                    : "请稍后再试。"}
-              </p>
-            </div>
-          </div>
-        ) : null}
-
-        {!tasksQuery.isLoading && !librariesQuery.isLoading && !tasksQuery.isError && !librariesQuery.isError && filteredTasks.length === 0 ? (
-          <div className="sync-empty-block">
-            <CheckCircle2 size={20} />
-            <div>
-              <strong>当前筛选下没有传输任务</strong>
-              <p>可以切回所有资产库、放宽筛选条件，或者等待下一次文件流转开始。</p>
-            </div>
-          </div>
-        ) : null}
-
-        {!tasksQuery.isLoading && !librariesQuery.isLoading && !tasksQuery.isError && !librariesQuery.isError && filteredTasks.length > 0 ? (
-          <div className="transfer-table-wrap">
-            <table className="transfer-task-table">
-              <colgroup>
-                <col style={{ width: "13%" }} />
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "25%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "10%" }} />
-                <col style={{ width: "8%" }} />
-                <col style={{ width: "6%" }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>资产库</th>
-                  <th>任务</th>
-                  <th>来源 / 目标</th>
-                  <th>进度</th>
-                  <th>状态</th>
-                  <th>最近更新</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTasks.map((item) => (
-                  <tr
-                    key={`${item.task.libraryId}-${item.task.id}`}
-                    className="transfer-task-row"
-                    title={buildTransferTaskTooltip(item)}
-                  >
-                    <td>
-                      <div className="transfer-task-library compact">
-                        <strong>{item.task.libraryName}</strong>
-                        <span className={`transfer-library-badge${item.task.libraryIsActive ? " is-active" : ""}`}>
-                          {item.task.libraryIsActive ? "当前库" : "已登记"}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="transfer-task-title compact" title={buildTransferTaskTooltip(item)}>
-                        <strong>{item.subject}</strong>
-                        <div className="transfer-inline-meta">
-                          <span className="status-pill subtle">{item.laneLabel}</span>
-                          <span>{getTaskTitle(item.task.taskType)}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div
-                        className="transfer-route-cell"
-                        title={`来源：${item.sourceLabel}\n目标：${item.targetLabel}\n说明：${item.detail}`}
-                      >
-                        <span className="transfer-endpoint-chip">{item.sourceLabel}</span>
-                        <span className="transfer-route-arrow" aria-hidden="true">
-                          →
-                        </span>
-                        <span className="transfer-endpoint-chip">{item.targetLabel}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="transfer-progress-cell compact" title={item.progressLabel}>
-                        <div className="transfer-progress-track compact" aria-hidden="true">
-                          <div className="transfer-progress-fill" style={{ width: `${item.progressPercent}%` }} />
-                        </div>
-                        <div className="transfer-progress-meta compact">
-                          <strong>{item.progressPercent}%</strong>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`status-pill ${getTaskTone(item.task.status)}`}>
-                        {getTaskStatusLabel(item.task.status)}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="transfer-time-compact" title={buildTransferTimeTooltip(item)}>
-                        <strong>{formatCatalogDate(item.latestAt)}</strong>
-                        <span>{getTransferTimeLabel(item.task)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      {canRetryTask(item.task) && item.task.libraryIsActive ? (
-                        <button
-                          type="button"
-                          className="ghost-button transfer-action-button"
-                          onClick={() => void retryMutation.mutateAsync(item.task.id)}
-                          disabled={retryMutation.isPending}
-                          title="重试这个任务"
+                      return (
+                        <tr
+                          key={task.id}
+                          className={`transfer-task-row${isFocused ? " is-active" : ""}${isSelected ? " is-selected" : ""}`}
+                          onClick={() => setFocusedTaskId(task.id)}
                         >
-                          <RefreshCcw size={14} className={retryMutation.isPending ? "spin" : ""} />
-                          重试
-                        </button>
-                      ) : canRetryTask(item.task) ? (
-                        <span className="status-pill subtle" title="需要先打开对应资产库，才能在当前会话里重试。">
-                          待重试
-                        </span>
-                      ) : (
-                        <span className="status-pill subtle" title={item.detail}>
-                          只读
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </article>
+                          <td className="transfer-selection-cell" onClick={(event) => event.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleTaskSelection(task.id)}
+                              aria-label={`选择任务 ${fileName}`}
+                            />
+                          </td>
+                          <td>
+                            <div className="transfer-task-title compact">
+                              <strong title={fileName}>{fileName}</strong>
+                              <p className="transfer-task-path" title={filePath}>
+                                {filePath || "未记录路径"}
+                              </p>
+                              <div className="transfer-inline-meta">
+                                <span className="status-pill subtle">{getDirectionLabel(task.direction)}</span>
+                                {task.totalItems > 1 ? <span>共 {task.totalItems} 项</span> : null}
+                                {task.priority > 0 ? <span>优先级 {task.priority}</span> : null}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="transfer-route-cell">
+                              <span className="transfer-endpoint-chip">{task.sourceLabel || "未记录来源"}</span>
+                              <span className="transfer-route-arrow" aria-hidden="true">
+                                →
+                              </span>
+                              <span className="transfer-endpoint-chip">{task.targetLabel || "未记录目标"}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <TransferProgress
+                              percent={task.progressPercent}
+                              primary={task.progressLabel || `${task.progressPercent}%`}
+                              secondary={`${formatFileSize(task.completedBytes)} / ${formatFileSize(task.totalBytes)}`}
+                              compact
+                            />
+                          </td>
+                          <td>
+                            <div className="transfer-time-compact">
+                              <strong>{formatFileSize(fileSize)}</strong>
+                              <span>
+                                {task.totalItems > 1
+                                  ? `任务总量 ${formatFileSize(task.totalBytes)}`
+                                  : `${formatFileSize(fileTransferred)} 已传输`}
+                              </span>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="transfer-time-compact">
+                              <strong>{formatTransferSpeed(task.currentSpeed)}</strong>
+                              <span>{task.engineSummary || "等待调度"}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`status-pill ${getTransferTone(task.status)}`}>{getTransferStatusLabel(task.status)}</span>
+                          </td>
+                          <td>
+                            <div className="transfer-time-compact">
+                              <strong>{formatCatalogDate(task.updatedAt)}</strong>
+                              <span>{task.startedAt ? `开始于 ${formatCatalogDate(task.startedAt)}` : "等待开始"}</span>
+                            </div>
+                          </td>
+                          <td onClick={(event) => event.stopPropagation()}>
+                            <div className="action-row">
+                              {canPause(task.status) ? (
+                                <button
+                                  type="button"
+                                  className="ghost-button transfer-action-button"
+                                  onClick={() => void handlePause([task.id])}
+                                  disabled={hasBusyAction}
+                                >
+                                  <Pause size={14} />
+                                  暂停
+                                </button>
+                              ) : null}
+                              {canResume(task.status) ? (
+                                <button
+                                  type="button"
+                                  className="ghost-button transfer-action-button"
+                                  onClick={() => void handleResume([task.id])}
+                                  disabled={hasBusyAction}
+                                >
+                                  <Play size={14} />
+                                  恢复
+                                </button>
+                              ) : null}
+                              {canCancel(task.status) ? (
+                                <button
+                                  type="button"
+                                  className="ghost-button transfer-action-button danger-text"
+                                  onClick={() => void handleCancel([task.id])}
+                                  disabled={hasBusyAction}
+                                >
+                                  <XCircle size={14} />
+                                  取消
+                                </button>
+                              ) : null}
+                              {canPrioritizeDownload(task) ? (
+                                <button
+                                  type="button"
+                                  className="ghost-button transfer-action-button"
+                                  onClick={() => void handlePrioritize([task.id])}
+                                  disabled={hasBusyAction}
+                                >
+                                  <ArrowUp size={14} />
+                                  优先下载
+                                </button>
+                              ) : null}
+                              {!canPause(task.status) &&
+                              !canResume(task.status) &&
+                              !canCancel(task.status) &&
+                              !canPrioritizeDownload(task) ? (
+                                <span className="status-pill subtle">只读</span>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </article>
+
+          <article className="detail-card sync-task-detail-card">
+            <TransferTaskDetailPanel
+              task={taskDetailQuery.data?.task ?? focusedTask}
+              items={taskDetailQuery.data?.items ?? []}
+              isLoading={Boolean(focusedTaskId) && taskDetailQuery.isLoading}
+              error={taskDetailQuery.error instanceof Error ? taskDetailQuery.error.message : undefined}
+            />
+          </article>
+        </>
+      )}
     </section>
   );
 }
 
-function SummaryCard({
-  icon,
-  label,
-  value,
-  meta,
-  tone
+function TransferTaskDetailPanel({
+  task,
+  items,
+  isLoading,
+  error
 }: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  meta: string;
-  tone: "success" | "warning" | "danger" | "neutral";
+  task: CatalogTransferTaskRecord | null | undefined;
+  items: CatalogTransferTaskItemRecord[];
+  isLoading: boolean;
+  error?: string;
 }) {
+  if (!task) {
+    return <EmptyBlock icon={<Workflow size={20} />} title="请选择一个任务" copy="下方会显示文件级路径、大小、速度和每个传输项的详细状态。" />;
+  }
+
   return (
-    <article className={`metric-card transfer-summary-card tone-${tone}`}>
-      <div className="transfer-summary-card-head">
-        <span className="transfer-summary-card-icon">{icon}</span>
-        <p>{label}</p>
+    <div className="sync-task-detail">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">任务详情</p>
+          <h4>{getTransferFileName(task)}</h4>
+        </div>
+        <span className={`status-pill ${getTransferTone(task.status)}`}>{getTransferStatusLabel(task.status)}</span>
       </div>
-      <strong>{value}</strong>
-      <small>{meta}</small>
-    </article>
+
+      <div className="sync-task-detail-grid">
+        <DetailField label="文件路径" value={getTransferFilePath(task) || "-"} wide />
+        <DetailField label="任务 ID" value={task.id} wide />
+        <DetailField label="方向" value={getDirectionLabel(task.direction)} />
+        <DetailField label="实时速度" value={formatTransferSpeed(task.currentSpeed)} />
+        <DetailField label="文件大小" value={formatFileSize(getTransferFileSize(task))} />
+        <DetailField label="已传输" value={formatFileSize(getTransferFileTransferred(task))} />
+        <DetailField label="来源" value={task.sourceLabel || "未记录"} wide />
+        <DetailField label="目标" value={task.targetLabel || "未记录"} wide />
+        <DetailField label="总任务项" value={`${task.totalItems}`} />
+        <DetailField label="优先级" value={`${task.priority}`} />
+        <DetailField label="创建时间" value={formatCatalogDate(task.createdAt)} />
+        <DetailField label="开始时间" value={formatCatalogDate(task.startedAt)} />
+        <DetailField label="结束时间" value={formatCatalogDate(task.finishedAt)} />
+        <DetailField label="任务总量" value={`${formatFileSize(task.completedBytes)} / ${formatFileSize(task.totalBytes)}`} />
+      </div>
+
+      <TransferProgress
+        percent={task.progressPercent}
+        primary={task.progressLabel || `${task.progressPercent}%`}
+        secondary={task.currentItemName ? `当前文件：${task.currentItemName}` : "等待处理"}
+      />
+
+      {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
+      {error ? <p className="error-copy">{error}</p> : null}
+
+      {isLoading ? (
+        <EmptyBlock icon={<LoaderCircle size={18} className="spin" />} title="正在读取文件项详情" copy="任务中的每个文件项状态正在同步中。" />
+      ) : items.length === 0 ? (
+        <EmptyBlock icon={<CheckCircle2 size={18} />} title="当前没有文件项详情" copy="如果任务刚入队，稍后会显示更完整的文件级进度。" />
+      ) : (
+        <div className="sync-task-item-list">
+          {items.map((item) => (
+            <article key={item.id} className="sync-task-item-row">
+              <div className="sync-task-item-copy">
+                <div className="replica-chip-row">
+                  <span className={`status-pill ${getTransferTone(item.status)}`}>{getTransferStatusLabel(item.status)}</span>
+                  <span className="replica-chip neutral">{getMediaTypeLabel(item.mediaType)}</span>
+                  <span className="replica-chip neutral">{getTransferPhaseLabel(item.phase)}</span>
+                </div>
+                <strong>{item.displayName}</strong>
+                <p>{item.sourceLabel ? `${item.sourceLabel}：${item.sourcePath}` : item.sourcePath}</p>
+                <p>{item.targetLabel ? `${item.targetLabel}：${item.targetPath}` : item.targetPath}</p>
+                <div className="replica-chip-row">
+                  <span className="replica-chip neutral">{formatFileSize(item.totalBytes)}</span>
+                  <span className="replica-chip neutral">{formatFileSize(item.transferredBytes)} 已传输</span>
+                  {item.currentSpeed ? <span className="replica-chip neutral">{formatTransferSpeed(item.currentSpeed)}</span> : null}
+                </div>
+                {item.errorMessage ? <p className="error-copy">{item.errorMessage}</p> : null}
+              </div>
+
+              <div className="transfer-progress-cell compact">
+                <div className="transfer-progress-track compact" aria-hidden="true">
+                  <div className="transfer-progress-fill" style={{ width: `${Math.max(0, Math.min(100, item.progressPercent))}%` }} />
+                </div>
+                <div className="transfer-progress-meta compact">
+                  <strong>{item.progressPercent}%</strong>
+                  <span>
+                    {formatFileSize(item.transferredBytes)} / {formatFileSize(item.totalBytes)}
+                  </span>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-function buildTransferTaskView(task: LibraryTaskRecord): TransferTaskView | null {
-  const payload = parseJsonRecord(task.payload);
-  const result = parseJsonRecord(task.resultSummary);
-  const lane = classifyTaskLane(task, payload, result);
-
-  if (!lane) {
-    return null;
-  }
-
-  return {
-    task,
-    lane,
-    laneLabel: lane === "sync" ? "同步任务" : "下载任务",
-    subject: resolveTaskSubject(task, payload, result),
-    detail: resolveTaskDetail(task, payload, result),
-    sourceLabel: task.sourceEndpointName ?? resolveTaskSource(task, result),
-    targetLabel: task.targetEndpointName ?? resolveTaskTarget(task, result),
-    progressPercent: resolveProgressPercent(task, payload, result),
-    progressLabel: resolveProgressLabel(task, payload, result),
-    latestAt: task.finishedAt ?? task.updatedAt ?? task.startedAt ?? task.createdAt
-  };
+function TransferProgress({
+  percent,
+  primary,
+  secondary,
+  compact = false
+}: {
+  percent: number;
+  primary: string;
+  secondary?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`transfer-progress-cell${compact ? " compact" : ""}`}>
+      <div className={`transfer-progress-track${compact ? " compact" : ""}`} aria-hidden="true">
+        <div className="transfer-progress-fill" style={{ width: `${Math.max(0, Math.min(100, percent))}%` }} />
+      </div>
+      <div className={`transfer-progress-meta${compact ? " compact" : ""}`}>
+        <strong>{Math.max(0, Math.min(100, percent))}%</strong>
+        <span>{primary}</span>
+        {secondary ? <span>{secondary}</span> : null}
+      </div>
+    </div>
+  );
 }
 
-function classifyTaskLane(
-  task: LibraryTaskRecord,
-  payload: Record<string, unknown> | null,
-  result: Record<string, unknown> | null
-): TaskLane | null {
-  const taskType = safeLower(task.taskType);
-
-  if (taskType === "import_execute" || taskType === "restore_asset" || taskType === "restore_batch") {
-    return "sync";
-  }
-
-  if (taskType.startsWith("download")) {
-    return "download";
-  }
-
-  const destinationFolder = readStringField(payload, "destinationFolder") ?? readStringField(result, "destinationFolder");
-  if (destinationFolder) {
-    return "download";
-  }
-
-  return null;
+function DetailField({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={`sync-info-field${wide ? " wide" : ""}`}>
+      <span>{label}</span>
+      <strong title={value}>{value}</strong>
+    </div>
+  );
 }
 
-function resolveTaskSubject(
-  task: LibraryTaskRecord,
-  payload: Record<string, unknown> | null,
-  result: Record<string, unknown> | null
-) {
-  const displayName = readStringField(result, "displayName");
-  if (displayName) {
-    return displayName;
-  }
-
-  const deviceLabel = readStringField(result, "deviceLabel");
-  if (deviceLabel) {
-    return deviceLabel;
-  }
-
-  const totalAssets = readNumberField(result, "totalAssets");
-  if (typeof totalAssets === "number" && totalAssets > 1) {
-    return `${totalAssets} 个资产`;
-  }
-
-  const totalFiles = readNumberField(result, "totalFiles");
-  if (typeof totalFiles === "number" && totalFiles > 0) {
-    return `${totalFiles} 个文件`;
-  }
-
-  const assetIds = readStringArrayField(payload, "assetIds");
-  if (assetIds.length > 1) {
-    return `${assetIds.length} 个资产`;
-  }
-
-  const entryPaths = readStringArrayField(payload, "entryPaths");
-  if (entryPaths.length > 0) {
-    return entryPaths.length === 1 ? entryPaths[0] : `${entryPaths.length} 个导入文件`;
-  }
-
-  return task.id;
+function EmptyBlock({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
+  return (
+    <div className="sync-empty-block">
+      {icon}
+      <div>
+        <strong>{title}</strong>
+        <p>{copy}</p>
+      </div>
+    </div>
+  );
 }
 
-function resolveTaskDetail(
-  task: LibraryTaskRecord,
-  payload: Record<string, unknown> | null,
-  result: Record<string, unknown> | null
-) {
-  if (task.errorMessage) {
-    return task.errorMessage;
-  }
-
-  const targetPhysicalPath = readStringField(result, "targetPhysicalPath");
-  if (targetPhysicalPath) {
-    return targetPhysicalPath;
-  }
-
-  const logicalPathKey = readStringField(result, "logicalPathKey");
-  if (logicalPathKey) {
-    return logicalPathKey;
-  }
-
-  const totalFiles = readNumberField(result, "totalFiles");
-  const successCount = readNumberField(result, "successCount");
-  const partialCount = readNumberField(result, "partialCount");
-  const failedCount = readNumberField(result, "failedCount");
-  if (typeof totalFiles === "number") {
-    return `共 ${totalFiles} 个文件，成功 ${successCount ?? 0}，部分完成 ${partialCount ?? 0}，失败 ${failedCount ?? 0}`;
-  }
-
-  const totalAssets = readNumberField(result, "totalAssets");
-  if (typeof totalAssets === "number") {
-    return `批量同步 ${totalAssets} 个资产`;
-  }
-
-  return task.resultSummary || task.payload || "等待后端返回更详细的处理说明。";
-}
-
-function resolveTaskSource(task: LibraryTaskRecord, result: Record<string, unknown> | null) {
-  const deviceLabel = readStringField(result, "deviceLabel");
-  if (deviceLabel) {
-    return deviceLabel;
-  }
-
-  return task.sourceEndpointId ?? "-";
-}
-
-function resolveTaskTarget(task: LibraryTaskRecord, result: Record<string, unknown> | null) {
-  const targetPhysicalPath = readStringField(result, "targetPhysicalPath");
-  if (targetPhysicalPath) {
-    return targetPhysicalPath;
-  }
-
-  return task.targetEndpointId ?? "-";
-}
-
-function matchesStatusFilter(status: string, filter: StatusFilter) {
-  const normalized = safeLower(status);
-
+function matchesTransferStatus(status: string, filter: TransferStatusFilter) {
+  const normalizedStatus = status.trim().toLowerCase();
   switch (filter) {
-    case "running":
-      return ["pending", "running", "retrying"].includes(normalized);
+    case "active":
+      return ["queued", "pending", "running", "retrying"].includes(normalizedStatus);
+    case "queued":
+      return normalizedStatus === "queued";
+    case "paused":
+      return normalizedStatus === "paused";
     case "failed":
-      return ["failed", "error"].includes(normalized);
+      return ["failed", "error"].includes(normalizedStatus);
     case "success":
-      return normalized === "success";
+      return normalizedStatus === "success";
+    case "canceled":
+      return normalizedStatus === "canceled";
     default:
       return true;
   }
 }
 
-function resolveProgressPercent(
-  task: LibraryTaskRecord,
-  payload: Record<string, unknown> | null,
-  result: Record<string, unknown> | null
-) {
-  const jsonPercent = readNumberField(result, "progressPercent");
-  if (typeof jsonPercent === "number") {
-    return clampPercent(jsonPercent);
+function matchesTransferDirection(direction: string, filter: TransferDirectionFilter) {
+  if (filter === "all") {
+    return true;
+  }
+  return direction.trim().toLowerCase() === filter;
+}
+
+function canPrioritizeDownload(task: CatalogTransferTaskRecord) {
+  if (task.direction.trim().toLowerCase() !== "download") {
+    return false;
   }
 
-  const summaryPercent = extractPercentFromText(task.resultSummary);
-  if (typeof summaryPercent === "number") {
-    return clampPercent(summaryPercent);
-  }
+  return ["queued", "pending", "retrying", "paused", "failed", "canceled"].includes(task.status.trim().toLowerCase());
+}
 
-  const status = safeLower(task.status);
-  switch (status) {
-    case "success":
-      return 100;
+function getTransferFileName(task: CatalogTransferTaskRecord) {
+  return task.fileName?.trim() || task.currentItemName?.trim() || task.title || task.id;
+}
+
+function getTransferFilePath(task: CatalogTransferTaskRecord) {
+  return task.filePath?.trim() || "";
+}
+
+function getTransferFileSize(task: CatalogTransferTaskRecord) {
+  return task.fileSize && task.fileSize > 0 ? task.fileSize : task.totalBytes;
+}
+
+function getTransferFileTransferred(task: CatalogTransferTaskRecord) {
+  return task.fileTransferredBytes && task.fileTransferredBytes > 0 ? task.fileTransferredBytes : task.completedBytes;
+}
+
+function formatTransferSpeed(value?: number) {
+  if (!value || value <= 0) {
+    return "-";
+  }
+  return `${formatFileSize(value)}/s`;
+}
+
+function getDirectionLabel(direction: string) {
+  switch (direction.trim().toLowerCase()) {
+    case "upload":
+      return "上传";
+    case "download":
+      return "下载";
+    default:
+      return "同步";
+  }
+}
+
+function getTransferStatusLabel(status: string) {
+  switch (status.trim().toLowerCase()) {
+    case "queued":
+      return "排队中";
+    case "pending":
+      return "等待中";
+    case "running":
+      return "进行中";
+    case "paused":
+      return "已暂停";
     case "failed":
     case "error":
-      return 100;
-    case "retrying":
-      return 10;
-    case "running":
-      return 5;
+      return "失败";
+    case "success":
+      return "成功";
+    case "canceled":
+      return "已取消";
+    case "skipped":
+      return "已跳过";
     default:
-      return 0;
+      return status || "未知";
   }
 }
 
-function resolveProgressLabel(
-  task: LibraryTaskRecord,
-  payload: Record<string, unknown> | null,
-  result: Record<string, unknown> | null
-) {
-  const jsonLabel = readStringField(result, "progressLabel");
-  if (jsonLabel) {
-    return jsonLabel;
-  }
-
-  const summary = task.resultSummary?.trim();
-  if (summary) {
-    return summary;
-  }
-
-  const status = safeLower(task.status);
-  if (status === "success") {
-    return "已完成";
-  }
-  if (status === "failed" || status === "error") {
-    return task.errorMessage?.trim() || "执行失败";
-  }
-
-  const totalFiles = readNumberField(result, "totalFiles") ?? readNumberField(payload, "totalFiles");
-  if (typeof totalFiles === "number" && totalFiles > 0) {
-    return `等待处理，共 ${totalFiles} 个文件`;
-  }
-
-  return "等待后端上报进度";
-}
-
-function parseJsonRecord(value?: string) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
+function getTransferTone(status: string) {
+  switch (status.trim().toLowerCase()) {
+    case "success":
+    case "skipped":
+      return "success";
+    case "failed":
+    case "error":
+      return "danger";
+    case "paused":
+    case "canceled":
+      return "neutral";
+    default:
+      return "warning";
   }
 }
 
-function readStringField(record: Record<string, unknown> | null, key: string) {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function getTransferPhaseLabel(phase: string) {
+  switch (phase.trim().toLowerCase()) {
+    case "pending":
+      return "待处理";
+    case "staging":
+      return "缓存中";
+    case "committing":
+      return "提交中";
+    case "finalizing":
+      return "收尾中";
+    case "completed":
+      return "已完成";
+    case "paused":
+      return "已暂停";
+    case "canceled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    default:
+      return phase || "未记录";
+  }
 }
 
-function readNumberField(record: Record<string, unknown> | null, key: string) {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function canPause(status: string) {
+  return ["queued", "pending", "running", "retrying"].includes(status.trim().toLowerCase());
 }
 
-function readStringArrayField(record: Record<string, unknown> | null, key: string) {
-  const value = record?.[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+function canResume(status: string) {
+  return ["paused", "failed", "canceled"].includes(status.trim().toLowerCase());
 }
 
-function extractPercentFromText(value?: string) {
-  if (!value) {
-    return undefined;
-  }
-
-  const matched = value.match(/(\d{1,3})\s*%/);
-  if (!matched) {
-    return undefined;
-  }
-
-  return clampPercent(Number(matched[1]));
-}
-
-function clampPercent(value: number) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  if (value < 0) {
-    return 0;
-  }
-  if (value > 100) {
-    return 100;
-  }
-  return Math.round(value);
-}
-
-function buildTransferTaskTooltip(item: TransferTaskView) {
-  return [
-    `资产库：${item.task.libraryName}`,
-    `任务：${item.subject}`,
-    `类别：${item.laneLabel} / ${getTaskTitle(item.task.taskType)}`,
-    `任务 ID：${item.task.id}`,
-    `来源：${item.sourceLabel}`,
-    `目标：${item.targetLabel}`,
-    `状态：${getTaskStatusLabel(item.task.status)}`,
-    `进度：${item.progressPercent}%`,
-    `说明：${item.detail}`
-  ].join("\n");
-}
-
-function buildTransferTimeTooltip(item: TransferTaskView) {
-  return [
-    `创建：${formatCatalogDate(item.task.createdAt)}`,
-    item.task.startedAt ? `开始：${formatCatalogDate(item.task.startedAt)}` : null,
-    item.task.finishedAt ? `完成：${formatCatalogDate(item.task.finishedAt)}` : null,
-    `最近：${formatCatalogDate(item.latestAt)}`
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function getTransferTimeLabel(task: LibraryTaskRecord) {
-  if (task.finishedAt) {
-    return "已完成";
-  }
-  if (task.startedAt) {
-    return "进行中";
-  }
-  return "已创建";
+function canCancel(status: string) {
+  return ["queued", "pending", "running", "retrying", "paused"].includes(status.trim().toLowerCase());
 }

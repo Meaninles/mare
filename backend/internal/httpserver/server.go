@@ -51,6 +51,7 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/catalog/transfers", server.handleCatalogTransfers)
 	mux.HandleFunc("/api/v1/catalog/transfers/", server.handleCatalogTransferResource)
 	mux.HandleFunc("/api/v1/catalog/transfers/pause", server.handleCatalogTransferPause)
+	mux.HandleFunc("/api/v1/catalog/transfers/cancel", server.handleCatalogTransferCancel)
 	mux.HandleFunc("/api/v1/catalog/transfers/resume", server.handleCatalogTransferResume)
 	mux.HandleFunc("/api/v1/catalog/transfers/delete", server.handleCatalogTransferDelete)
 	mux.HandleFunc("/api/v1/catalog/transfers/prioritize", server.handleCatalogTransferPrioritize)

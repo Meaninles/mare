@@ -600,20 +600,18 @@ function LibraryCatalogView() {
                   </th>
                   <th>名称</th>
                   <th>类型</th>
-                  <th>状态</th>
-                  <th>修改时间</th>
-                  <th>信息</th>
-                  <th>副本</th>
-                  <th>位置</th>
+                  <th>大小</th>
+                  <th>修改日期</th>
+                  <th>存储状态</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleFolders.map((folder) => (
-                  <ExplorerFolderRow key={folder.path} folder={folder} onOpenDirectory={openDirectory} />
+                  <ExplorerFolderManagerRow key={folder.path} folder={folder} onOpenDirectory={openDirectory} />
                 ))}
 
                 {visibleAssets.map((item) => (
-                  <ExplorerAssetRow
+                  <ExplorerAssetManagerRow
                     key={item.asset.id}
                     item={item}
                     detailSearch={location.search}
@@ -731,6 +729,114 @@ function ExplorerAssetRow({
       </td>
       <td>{formatCatalogDate(getAssetTimestamp(asset))}</td>
       <td>{item.sizeLabel}</td>
+    </tr>
+  );
+}
+
+function ExplorerFolderManagerRow({
+  folder,
+  onOpenDirectory
+}: {
+  folder: FolderSummary;
+  onOpenDirectory: (path: string) => void;
+}) {
+  return (
+    <tr className="explorer-row folder-row">
+      <td className="explorer-select-cell" />
+      <td>
+        <div className="explorer-name-cell">
+          <div className="explorer-icon explorer-folder-icon">
+            <Folder size={18} />
+          </div>
+
+          <div className="explorer-name-copy">
+            <button type="button" className="explorer-row-button" onClick={() => onOpenDirectory(folder.path)}>
+              {folder.name}
+            </button>
+            <p className="explorer-subtitle">
+              包含 {folder.directAssetCount} 个文件
+              {folder.childFolderCount > 0 ? ` · ${folder.childFolderCount} 个子目录` : ""}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td>文件夹</td>
+      <td>—</td>
+      <td>{formatCatalogDate(folder.latestTimestamp)}</td>
+      <td>
+        <span className="source-status-chip is-online" title={`已索引 ${folder.endpointCount} 个位置`}>
+          <span className="source-status-dot" aria-hidden="true" />
+          <span className="source-status-name">已索引 {folder.endpointCount} 个位置</span>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+function ExplorerAssetManagerRow({
+  item,
+  detailSearch,
+  selected,
+  onToggleSelect
+}: {
+  item: DecoratedAsset;
+  detailSearch: string;
+  selected: boolean;
+  onToggleSelect: (assetId: string) => void;
+}) {
+  const { asset } = item;
+  const tone = getAssetTone(asset);
+  const MediaIcon = getMediaIcon(asset.mediaType);
+  const detailParams = new URLSearchParams(detailSearch);
+  detailParams.set("assetId", asset.id);
+
+  return (
+    <tr className="explorer-row">
+      <td className="explorer-select-cell">
+        <button
+          type="button"
+          className={`explorer-selection-button${selected ? " is-selected" : ""}`}
+          onClick={() => onToggleSelect(asset.id)}
+          title={selected ? "取消选择" : "选择资产"}
+        >
+          {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+        </button>
+      </td>
+      <td>
+        <div className="explorer-name-cell">
+          <div className={`explorer-icon tone-${tone}${asset.poster?.url ? " has-poster" : ""}`}>
+            {asset.poster?.url ? (
+              <img src={asset.poster.url} alt={asset.displayName} className="explorer-poster" loading="lazy" />
+            ) : (
+              <MediaIcon size={18} strokeWidth={1.8} />
+            )}
+          </div>
+
+          <div className="explorer-name-copy">
+            <Link to={`/assets?${detailParams.toString()}`} className="explorer-link">
+              {asset.displayName}
+            </Link>
+            <p className="explorer-subtitle">{asset.logicalPathKey || formatReplicaSummary(asset)}</p>
+          </div>
+        </div>
+      </td>
+      <td>{getMediaTypeLabel(asset.mediaType)}</td>
+      <td>{item.sizeLabel}</td>
+      <td>{formatCatalogDate(getAssetTimestamp(asset))}</td>
+      <td className="explorer-source-cell">
+        <div className="source-status-list" aria-label="存储状态">
+          {item.endpointStates.map((endpoint) => (
+            <span
+              key={endpoint.id}
+              className={`source-status-chip ${endpoint.exists ? "is-online" : "is-offline"}`}
+              title={`${endpoint.name} ${endpoint.exists ? "可用" : "缺失"}`}
+            >
+              <span className="source-status-dot" aria-hidden="true" />
+              <span className="source-status-name">{endpoint.name}</span>
+            </span>
+          ))}
+        </div>
+      </td>
     </tr>
   );
 }

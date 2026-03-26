@@ -1,11 +1,12 @@
 import {
   Archive,
   ArrowDownToLine,
-  ChevronLeft,
+  ChevronsUpDown,
   FolderTree,
   LibraryBig,
   RefreshCcw,
-  Server
+  Server,
+  Settings2
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
@@ -44,7 +45,7 @@ export function getRouteMeta(pathname: string) {
 
   return routeMeta[pathname] ?? {
     label: "Mare",
-    caption: "资产库"
+    caption: "资产平台"
   };
 }
 
@@ -53,59 +54,67 @@ export function SidebarNav() {
   const { currentLibrary } = useLibraryContext();
 
   return (
-    <aside className="sidebar sidebar-rail">
+    <aside className="sidebar sidebar-rail sidebar-trident">
       <div className="sidebar-inner">
-        <div className="brand-panel rail-brand">
+        <div className="brand-panel rail-brand sidebar-brand">
           <MareLogo className="brand-mark rail-brand-mark" />
-          <div className="rail-brand-copy">
-            <p className="eyebrow">Mare</p>
+          <div className="rail-brand-copy sidebar-brand-copy">
+            <strong>Mare</strong>
+            <span>媒体资产台</span>
           </div>
         </div>
 
-        {currentLibrary ? (
-          <div className="rail-library-context" title={currentLibrary.name}>
-            <span className="rail-library-context-icon">
-              <LibraryBig size={15} strokeWidth={1.9} />
-            </span>
-            <div className="rail-library-context-copy">
-              <small>当前资产库</small>
-              <strong>{currentLibrary.name}</strong>
-            </div>
-          </div>
-        ) : null}
-
-        <NavLink
-          to="/welcome"
-          className="sidebar-tool-button sidebar-return-link"
-          title="返回欢迎页"
-          aria-label="返回欢迎页"
-        >
-          <ChevronLeft size={18} strokeWidth={1.9} />
+        <NavLink to="/welcome" className="sidebar-workspace-switch" title={currentLibrary?.name ?? "选择资产库"}>
+          <span className="sidebar-workspace-icon">
+            <LibraryBig size={15} strokeWidth={1.9} />
+          </span>
+          <span className="sidebar-workspace-copy">
+            <small>当前资产库</small>
+            <strong>{currentLibrary?.name ?? "未打开资产库"}</strong>
+          </span>
+          <ChevronsUpDown size={15} strokeWidth={1.9} />
         </NavLink>
 
-        <nav className="nav-list nav-rail" aria-label="库内导航">
-          {primaryNavigationItems.map((item) => {
-            const Icon = item.icon;
-            const isActive =
-              location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+        <div className="sidebar-nav-group">
+          <p className="sidebar-section-label">功能导航</p>
 
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={`nav-item rail-nav-item${isActive ? " active" : ""}`}
-                title={item.label}
-              >
-                <span className="nav-item-icon rail-nav-icon">
-                  <Icon size={18} strokeWidth={1.85} />
-                </span>
-                <span className="nav-item-copy rail-nav-copy">
-                  <strong>{item.label}</strong>
-                </span>
-              </NavLink>
-            );
-          })}
-        </nav>
+          <nav className="nav-list nav-rail sidebar-nav-list" aria-label="库内导航">
+            {primaryNavigationItems.map((item) => {
+              const Icon = item.icon;
+              const isActive =
+                location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  className={`nav-item rail-nav-item${isActive ? " active" : ""}`}
+                  title={item.label}
+                >
+                  <span className="nav-item-icon rail-nav-icon">
+                    <Icon size={18} strokeWidth={1.85} />
+                  </span>
+                  <span className="nav-item-copy rail-nav-copy">
+                    <strong>{item.label}</strong>
+                    <span>{routeMeta[item.path]?.caption ?? ""}</span>
+                  </span>
+                </NavLink>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
+
+      <div className="sidebar-footer-actions">
+        <NavLink to="/settings" className="nav-item rail-nav-item sidebar-settings-link" title="设置">
+          <span className="nav-item-icon rail-nav-icon">
+            <Settings2 size={18} strokeWidth={1.85} />
+          </span>
+          <span className="nav-item-copy rail-nav-copy">
+            <strong>设置</strong>
+            <span>主题与偏好</span>
+          </span>
+        </NavLink>
       </div>
     </aside>
   );

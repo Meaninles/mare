@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -141,16 +142,18 @@ type uploadTaskCreateResponse struct {
 }
 
 type uploadTaskResponse struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	State      string  `json:"state"`
-	Status     string  `json:"status"`
-	Progress   float64 `json:"progress"`
-	TotalBytes int64   `json:"total_bytes"`
-	Error      string  `json:"error"`
-	StartTime  string  `json:"start_time"`
-	EndTime    string  `json:"end_time"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	State      uploadTaskStateRaw `json:"state"`
+	Status     string             `json:"status"`
+	Progress   float64            `json:"progress"`
+	TotalBytes int64              `json:"total_bytes"`
+	Error      string             `json:"error"`
+	StartTime  string             `json:"start_time"`
+	EndTime    string             `json:"end_time"`
 }
+
+type uploadTaskStateRaw string
 
 type apiEnvelope[T any] struct {
 	Code    int    `json:"code"`
@@ -534,15 +537,12 @@ func (runtime *Runtime) GetUploadTask(ctx context.Context, taskID string) (TaskI
 		return TaskInfo{}, err
 	}
 
-	var response []uploadTaskResponse
+	var response json.RawMessage
 	endpoint := fmt.Sprintf("/api/task/upload/info?tid=%s", taskID)
 	if err := runtime.doJSON(ctx, token, http.MethodPost, endpoint, nil, &response); err != nil {
 		return TaskInfo{}, err
 	}
-	if len(response) == 0 {
-		return TaskInfo{}, errors.New("alist upload task not found")
-	}
-	return mapUploadTaskInfo(response[0]), nil
+	return parseUploadTaskInfoPayload(response)
 }
 
 func (runtime *Runtime) CancelUploadTask(ctx context.Context, taskID string) error {
@@ -594,15 +594,15 @@ func (runtime *Runtime) ensureRunningLocked(ctx context.Context) error {
 	runtime.port = state.Port
 	runtime.baseURL = fmt.Sprintf("http://127.0.0.1:%d", runtime.port)
 
+	if _, err := runtime.loginLocked(ctx); err == nil {
+		return nil
+	}
+
 	if err := runtime.initializeAdminPassword(ctx); err != nil {
 		return err
 	}
 	if err := runtime.ensureConfigFile(); err != nil {
 		return err
-	}
-
-	if _, err := runtime.loginLocked(ctx); err == nil {
-		return nil
 	}
 
 	if runtime.process != nil && runtime.process.Process != nil {
@@ -1087,14 +1087,12 @@ func mapTaskInfo(item taskResponse) TaskInfo {
 }
 
 func mapUploadTaskInfo(item uploadTaskResponse) TaskInfo {
-	status := strings.TrimSpace(item.Status)
-	if status == "" {
-		status = strings.TrimSpace(item.State)
-	}
+	rawState := item.State.String()
+	status := normalizeUploadTaskStatus(item.Status, rawState)
 	return TaskInfo{
 		ID:         item.ID,
 		Name:       item.Name,
-		State:      mapUploadTaskState(item.State),
+		State:      mapUploadTaskState(rawState),
 		Status:     status,
 		Progress:   item.Progress,
 		TotalBytes: item.TotalBytes,
@@ -1105,6 +1103,9 @@ func mapUploadTaskInfo(item uploadTaskResponse) TaskInfo {
 }
 
 func mapUploadTaskState(value string) int {
+	if numeric, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+		return numeric
+	}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "succeeded", "success", "complete", "completed":
 		return 2
@@ -1119,6 +1120,84 @@ func mapUploadTaskState(value string) int {
 	default:
 		return 0
 	}
+}
+
+func normalizeUploadTaskStatus(status string, rawState string) string {
+	status = strings.TrimSpace(status)
+	if status != "" {
+		return status
+	}
+
+	switch mapUploadTaskState(rawState) {
+	case 2:
+		return "complete"
+	case 7:
+		return "canceled"
+	case 6:
+		return "failed"
+	case 1:
+		return "running"
+	case 0:
+		return "pending"
+	default:
+		return strings.TrimSpace(rawState)
+	}
+}
+
+func (value *uploadTaskStateRaw) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*value = ""
+		return nil
+	}
+
+	if strings.HasPrefix(trimmed, "\"") {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*value = uploadTaskStateRaw(strings.TrimSpace(text))
+		return nil
+	}
+
+	*value = uploadTaskStateRaw(trimmed)
+	return nil
+}
+
+func (value uploadTaskStateRaw) String() string {
+	return strings.TrimSpace(string(value))
+}
+
+func parseUploadTaskInfoPayload(raw json.RawMessage) (TaskInfo, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return TaskInfo{}, errors.New("alist upload task not found")
+	}
+
+	if trimmed[0] == '[' {
+		var items []uploadTaskResponse
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			return TaskInfo{}, fmt.Errorf("alist decode upload task payload: %w", err)
+		}
+		if len(items) == 0 {
+			return TaskInfo{}, errors.New("alist upload task not found")
+		}
+		return mapUploadTaskInfo(items[0]), nil
+	}
+
+	var item uploadTaskResponse
+	if err := json.Unmarshal(trimmed, &item); err == nil && strings.TrimSpace(item.ID) != "" {
+		return mapUploadTaskInfo(item), nil
+	}
+
+	var wrapped struct {
+		Task uploadTaskResponse `json:"task"`
+	}
+	if err := json.Unmarshal(trimmed, &wrapped); err == nil && strings.TrimSpace(wrapped.Task.ID) != "" {
+		return mapUploadTaskInfo(wrapped.Task), nil
+	}
+
+	return TaskInfo{}, fmt.Errorf("alist decode upload task payload: unsupported shape %s", string(trimmed))
 }
 
 func parseTimestamp(value string) *time.Time {
@@ -1200,11 +1279,17 @@ func defaultMessage(primary string, fallback string) string {
 }
 
 func urlEncodePath(value string) string {
-	replacer := strings.NewReplacer(
-		"%", "%25",
-		" ", "%20",
-		"#", "%23",
-		"?", "%3F",
-	)
-	return replacer.Replace(normalizeAListPath(value))
+	normalized := normalizeAListPath(value)
+	segments := strings.Split(normalized, "/")
+	for index, segment := range segments {
+		if segment == "" {
+			continue
+		}
+		segments[index] = url.PathEscape(segment)
+	}
+	encoded := strings.Join(segments, "/")
+	if encoded == "" {
+		return "/"
+	}
+	return encoded
 }

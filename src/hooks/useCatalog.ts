@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLibraryContext } from "../context/LibraryContext";
 import { buildLibraryQueryKey, invalidateLibraryQueries } from "../lib/query-keys";
 import {
+  cancelCatalogTransferTasks,
   deleteCatalogTransferTasks,
   deleteCatalogReplica,
   getCatalogAssetInsights,
@@ -326,6 +327,25 @@ export function useResumeTransferTasks() {
       const response = await resumeCatalogTransferTasks(backendUrl, taskIds);
       if (!response.summary) {
         throw new Error(response.error ?? "恢复传输任务失败。");
+      }
+
+      return response.summary;
+    },
+    onSuccess: async () => {
+      await invalidateCatalogQueries(queryClient, currentLibraryId);
+    }
+  });
+}
+
+export function useCancelTransferTasks() {
+  const queryClient = useQueryClient();
+  const { currentLibraryId } = useLibraryContext();
+
+  return useMutation({
+    mutationFn: async (taskIds: string[]) => {
+      const response = await cancelCatalogTransferTasks(backendUrl, taskIds);
+      if (!response.summary) {
+        throw new Error(response.error ?? "取消传输任务失败。");
       }
 
       return response.summary;

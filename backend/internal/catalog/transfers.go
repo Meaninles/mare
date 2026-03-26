@@ -91,6 +91,10 @@ type TransferTaskRecord struct {
 	ProgressPercent int        `json:"progressPercent"`
 	ProgressLabel   string     `json:"progressLabel,omitempty"`
 	CurrentItemName string     `json:"currentItemName,omitempty"`
+	FileName        string     `json:"fileName,omitempty"`
+	FilePath        string     `json:"filePath,omitempty"`
+	FileSize        int64      `json:"fileSize,omitempty"`
+	FileTransferred int64      `json:"fileTransferredBytes,omitempty"`
 	CurrentSpeed    int64      `json:"currentSpeed,omitempty"`
 	RefreshInterval int        `json:"refreshIntervalSeconds,omitempty"`
 	TotalItems      int        `json:"totalItems"`
@@ -179,6 +183,10 @@ type transferTaskSummaryPayload struct {
 	ProgressPercent int    `json:"progressPercent"`
 	ProgressLabel   string `json:"progressLabel,omitempty"`
 	CurrentItemName string `json:"currentItemName,omitempty"`
+	FileName        string `json:"fileName,omitempty"`
+	FilePath        string `json:"filePath,omitempty"`
+	FileSize        int64  `json:"fileSize,omitempty"`
+	FileTransferred int64  `json:"fileTransferredBytes,omitempty"`
 	CurrentSpeed    int64  `json:"currentSpeed,omitempty"`
 	RefreshInterval int    `json:"refreshIntervalSeconds,omitempty"`
 	TotalItems      int    `json:"totalItems"`
@@ -455,6 +463,10 @@ func (service *Service) PauseTransferTasks(ctx context.Context, taskIDs []string
 
 func (service *Service) ResumeTransferTasks(ctx context.Context, taskIDs []string) (TransferTaskActionSummary, error) {
 	return service.updateTransferTasks(ctx, taskIDs, "resume")
+}
+
+func (service *Service) CancelTransferTasks(ctx context.Context, taskIDs []string) (TransferTaskActionSummary, error) {
+	return service.updateTransferTasks(ctx, taskIDs, "cancel")
 }
 
 func (service *Service) DeleteTransferTasks(ctx context.Context, taskIDs []string) (TransferTaskActionSummary, error) {
@@ -1442,6 +1454,43 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 				return summary, err
 			}
 			summary.Updated++
+		case "cancel":
+			if !canTransferTaskCancel(task.Status) {
+				continue
+			}
+			service.cancelTransferTask(task.ID)
+			now := time.Now().UTC()
+			for index := range items {
+				if isTransferItemTerminal(items[index].Status) {
+					continue
+				}
+				if err := service.pauseExternalTransferItem(ctx, &items[index]); err != nil {
+					return summary, err
+				}
+				items[index].Status = taskStatusCanceled
+				items[index].Phase = transferPhaseCanceled
+				items[index].ErrorMessage = nil
+				items[index].FinishedAt = cloneTimePointer(&now)
+				items[index].UpdatedAt = now
+				if err := service.store.UpdateTransferTaskItem(ctx, items[index]); err != nil {
+					return summary, err
+				}
+			}
+			if err := service.store.UpdateTaskStatus(ctx, task.ID, store.TaskStatusUpdate{
+				Status:        taskStatusCanceled,
+				ResultSummary: task.ResultSummary,
+				ErrorMessage:  nil,
+				RetryCount:    task.RetryCount,
+				StartedAt:     task.StartedAt,
+				FinishedAt:    &now,
+				UpdatedAt:     now,
+			}); err != nil {
+				return summary, err
+			}
+			if _, err := service.refreshTransferTaskState(ctx, task.ID); err != nil {
+				return summary, err
+			}
+			summary.Updated++
 		case "resume":
 			if !canTransferTaskResume(task.Status) {
 				continue
@@ -1490,9 +1539,23 @@ func (service *Service) updateTransferTasks(ctx context.Context, taskIDs []strin
 		}
 	}
 
+	/*
+		switch action {
+		case "pause":
+			summary.Message = fmt.Sprintf("已暂停 %d 个任务", summary.Updated)
+		case "cancel":
+			summary.Message = fmt.Sprintf("已取消 %d 个任务", summary.Updated)
+		case "resume":
+			summary.Message = fmt.Sprintf("已恢复 %d 个任务", summary.Updated)
+		case "delete":
+			summary.Message = fmt.Sprintf("已删除 %d 个任务", summary.Updated)
+		}
+	*/
 	switch action {
 	case "pause":
 		summary.Message = fmt.Sprintf("已暂停 %d 个任务", summary.Updated)
+	case "cancel":
+		summary.Message = fmt.Sprintf("已取消 %d 个任务", summary.Updated)
 	case "resume":
 		summary.Message = fmt.Sprintf("已恢复 %d 个任务", summary.Updated)
 	case "delete":
@@ -1598,6 +1661,10 @@ func (service *Service) refreshTransferTaskState(ctx context.Context, taskID str
 		ProgressPercent: record.ProgressPercent,
 		ProgressLabel:   record.ProgressLabel,
 		CurrentItemName: record.CurrentItemName,
+		FileName:        record.FileName,
+		FilePath:        record.FilePath,
+		FileSize:        record.FileSize,
+		FileTransferred: record.FileTransferred,
 		CurrentSpeed:    record.CurrentSpeed,
 		RefreshInterval: record.RefreshInterval,
 		TotalItems:      record.TotalItems,
@@ -1913,6 +1980,8 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 		errorMessage  string
 		currentSpeed  int64
 		refreshEvery  int
+		fileItem      store.TransferTaskItem
+		hasFileItem   bool
 	)
 
 	for _, item := range items {
@@ -1947,6 +2016,10 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 		}
 		totalProgress += itemProgress
 		progressCount++
+		if !hasFileItem || shouldPreferTransferDisplayItem(item, fileItem) {
+			fileItem = item
+			hasFileItem = true
+		}
 
 		if strings.TrimSpace(item.SourceLabel) != "" {
 			sourceLabels = append(sourceLabels, item.SourceLabel)
@@ -1989,6 +2062,19 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 	record.TargetLabel = compactTransferLabel(targetLabels)
 	record.EngineSummary = compactTransferLabel(engineLabels)
 	record.CurrentItemName = compactTransferLabel([]string{currentItem})
+	if hasFileItem {
+		fileSize := fileItem.TotalBytes
+		if fileSize <= 0 {
+			fileSize = parseTransferMetadataSize(fileItem.MetadataJSON)
+		}
+		record.FileName = transferDisplayItemName(fileItem)
+		record.FilePath = transferDisplayItemPath(fileItem)
+		record.FileSize = fileSize
+		record.FileTransferred = estimateTransferCompletedBytes(fileItem)
+		if record.FileSize > 0 {
+			record.FileTransferred = minInt64(record.FileTransferred, record.FileSize)
+		}
+	}
 	record.CurrentSpeed = currentSpeed
 	record.RefreshInterval = refreshEvery
 	record.StartedAt = preferTimePointer(task.StartedAt, record.StartedAt)
@@ -2228,6 +2314,15 @@ func canTransferTaskPause(status string) bool {
 func canTransferTaskResume(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case taskStatusPaused, taskStatusFailed, taskStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func canTransferTaskCancel(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case taskStatusQueued, taskStatusPending, taskStatusRetrying, taskStatusRunning, taskStatusPaused:
 		return true
 	default:
 		return false
@@ -2885,6 +2980,65 @@ func firstTransferDisplayName(items []store.TransferTaskItem) string {
 	for _, item := range items {
 		if strings.TrimSpace(item.DisplayName) != "" {
 			return item.DisplayName
+		}
+	}
+	return ""
+}
+
+func shouldPreferTransferDisplayItem(candidate store.TransferTaskItem, current store.TransferTaskItem) bool {
+	candidateRank := transferDisplayItemRank(candidate.Status)
+	currentRank := transferDisplayItemRank(current.Status)
+	if candidateRank != currentRank {
+		return candidateRank < currentRank
+	}
+	if candidate.ItemIndex != current.ItemIndex {
+		return candidate.ItemIndex < current.ItemIndex
+	}
+	return strings.TrimSpace(candidate.ID) < strings.TrimSpace(current.ID)
+}
+
+func transferDisplayItemRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case taskStatusRunning:
+		return 0
+	case taskStatusQueued, taskStatusPending, taskStatusRetrying:
+		return 1
+	case taskStatusPaused:
+		return 2
+	case taskStatusFailed:
+		return 3
+	case taskStatusCanceled:
+		return 4
+	case taskStatusSuccess:
+		return 5
+	case transferItemStatusSkipped:
+		return 6
+	default:
+		return 7
+	}
+}
+
+func transferDisplayItemName(item store.TransferTaskItem) string {
+	if name := strings.TrimSpace(item.DisplayName); name != "" {
+		return name
+	}
+
+	for _, candidate := range []string{strings.TrimSpace(item.SourcePath), strings.TrimSpace(item.TargetPath)} {
+		if candidate == "" {
+			continue
+		}
+		if baseName := strings.TrimSpace(path.Base(candidate)); baseName != "" && baseName != "." && baseName != "/" {
+			return baseName
+		}
+	}
+
+	return "未命名文件"
+}
+
+func transferDisplayItemPath(item store.TransferTaskItem) string {
+	for _, candidate := range []string{strings.TrimSpace(item.SourcePath), strings.TrimSpace(item.TargetPath)} {
+		if candidate != "" {
+			return candidate
 		}
 	}
 	return ""

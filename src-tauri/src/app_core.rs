@@ -18,6 +18,7 @@ use crate::{
     search::SearchModule,
     sync::SyncModule,
     tasks::TasksModule,
+    upload::{UploadModule, UploadStore},
 };
 
 pub struct AppCore {
@@ -28,6 +29,11 @@ pub struct AppCore {
 impl AppCore {
     pub async fn initialize(app: &tauri::AppHandle) -> Result<Self, AppError> {
         let database = DatabaseManager::initialize(app).await?;
+        let upload_store = UploadStore::new(database.pool());
+        let recovered_jobs = upload_store
+            .recover_interrupted_jobs("应用启动自动恢复")
+            .await?;
+
         let module_statuses = vec![
             CatalogModule::new().status(),
             SyncModule::new().status(),
@@ -35,11 +41,19 @@ impl AppCore {
             SearchModule::new().status(),
             ConnectorsModule::new().status(),
             TasksModule::new().status(),
+            UploadModule::new().status(),
             ConfigModule::new().status(),
         ];
 
         for module in &module_statuses {
             info!(module = %module.name, ready = module.ready, "module initialized");
+        }
+
+        if !recovered_jobs.is_empty() {
+            info!(
+                recovered_count = recovered_jobs.len(),
+                "recovered interrupted upload jobs on startup"
+            );
         }
 
         info!(database = %database.path().display(), "database initialized");

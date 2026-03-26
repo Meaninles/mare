@@ -12,6 +12,7 @@ mod libraries;
 mod search;
 mod sync;
 mod tasks;
+mod upload;
 
 use app_core::AppCore;
 use backend_runtime::BackendRuntime;

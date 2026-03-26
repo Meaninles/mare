@@ -333,6 +333,13 @@ export async function pauseCatalogTransferTasks(
   return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/pause`, { taskIds });
 }
 
+export async function cancelCatalogTransferTasks(
+  baseUrl: string,
+  taskIds: string[]
+): Promise<CatalogTransferTaskActionResponse> {
+  return postJson(`${normalizeBaseUrl(baseUrl)}/api/v1/catalog/transfers/cancel`, { taskIds });
+}
+
 export async function resumeCatalogTransferTasks(
   baseUrl: string,
   taskIds: string[]

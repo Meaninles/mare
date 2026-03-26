@@ -159,6 +159,10 @@ export interface CatalogTransferTaskRecord {
   progressPercent: number;
   progressLabel?: string;
   currentItemName?: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize?: number;
+  fileTransferredBytes?: number;
   currentSpeed?: number;
   refreshIntervalSeconds?: number;
   totalItems: number;
