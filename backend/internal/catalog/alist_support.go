@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,29 @@ func (service *Service) getAria2Runtime() *sidecararia2.Runtime {
 		service.aria2Runtime = sidecararia2.NewRuntime(service.transferStateRoot())
 	}
 	return service.aria2Runtime
+}
+
+func (service *Service) ensureTransferSidecarsRunning(ctx context.Context) error {
+	if err := service.getAListRuntime().EnsureRunning(ctx); err != nil {
+		if isOptionalSidecarStartupError(err) {
+			slog.Warn("skip alist sidecar prewarm", "error", err)
+		} else {
+			return fmt.Errorf("start alist sidecar: %w", err)
+		}
+	}
+	if err := service.getAria2Runtime().EnsureRunning(ctx); err != nil {
+		if isOptionalSidecarStartupError(err) {
+			slog.Warn("skip aria2 sidecar prewarm", "error", err)
+		} else {
+			return fmt.Errorf("start aria2 sidecar: %w", err)
+		}
+	}
+	return nil
+}
+
+func isOptionalSidecarStartupError(err error) bool {
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "binary not found")
 }
 
 func (service *Service) buildAListConnector(ctx context.Context, endpoint store.StorageEndpoint) (connectors.Connector, error) {

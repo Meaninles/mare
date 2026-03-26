@@ -180,6 +180,8 @@ function getEndpointTypeLabel(endpointType: string) {
       return "本地";
     case "QNAP_SMB":
       return "QNAP / SMB";
+    case "NETWORK_STORAGE":
+      return "网盘";
     case "CLOUD_115":
       return "115 网盘";
     case "ALIST":

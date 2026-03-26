@@ -676,10 +676,12 @@ function getRestoreSourcePriority(endpointType?: string) {
       return 1;
     case "QNAP_SMB":
       return 2;
-    case "ALIST":
+    case "NETWORK_STORAGE":
       return 3;
-    case "CLOUD_115":
+    case "ALIST":
       return 4;
+    case "CLOUD_115":
+      return 5;
     default:
       return 9;
   }

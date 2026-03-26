@@ -1,9 +1,11 @@
 package httpserver
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,6 +24,18 @@ type retrySyncTaskRequest struct {
 
 type transferTaskActionRequest struct {
 	TaskIDs []string `json:"taskIds"`
+}
+
+type endpointRequestPayload struct {
+	Name               string
+	Note               string
+	EndpointType       string
+	RootPath           string
+	RoleMode           string
+	AvailabilityStatus string
+	IdentitySignature  string
+	CredentialRef      string
+	ConnectionConfig   json.RawMessage
 }
 
 func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -46,8 +60,8 @@ func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Requ
 			"endpoints": records,
 		})
 	case http.MethodPost:
-		var request catalog.RegisterEndpointRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		payload, err := decodeEndpointRequestPayload(r.Body)
+		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
 				"success": false,
 				"error":   "invalid JSON payload",
@@ -55,6 +69,17 @@ func (server *Server) handleCatalogEndpoints(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		request := catalog.RegisterEndpointRequest{
+			Name:               payload.Name,
+			Note:               payload.Note,
+			EndpointType:       payload.EndpointType,
+			RootPath:           payload.RootPath,
+			RoleMode:           payload.RoleMode,
+			AvailabilityStatus: payload.AvailabilityStatus,
+			IdentitySignature:  payload.IdentitySignature,
+			CredentialRef:      payload.CredentialRef,
+			ConnectionConfig:   payload.ConnectionConfig,
+		}
 		record, err := catalogService.RegisterEndpoint(r.Context(), request)
 		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -87,8 +112,8 @@ func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *ht
 
 	switch r.Method {
 	case http.MethodPut:
-		var request catalog.UpdateEndpointRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		payload, err := decodeEndpointRequestPayload(r.Body)
+		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
 				"success": false,
 				"error":   "invalid JSON payload",
@@ -96,6 +121,17 @@ func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *ht
 			return
 		}
 
+		request := catalog.UpdateEndpointRequest{
+			Name:               payload.Name,
+			Note:               payload.Note,
+			EndpointType:       payload.EndpointType,
+			RootPath:           payload.RootPath,
+			RoleMode:           payload.RoleMode,
+			AvailabilityStatus: payload.AvailabilityStatus,
+			IdentitySignature:  payload.IdentitySignature,
+			CredentialRef:      payload.CredentialRef,
+			ConnectionConfig:   payload.ConnectionConfig,
+		}
 		record, err := catalogService.UpdateEndpoint(r.Context(), endpointID, request)
 		if err != nil {
 			server.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -126,6 +162,73 @@ func (server *Server) handleCatalogEndpointResource(w http.ResponseWriter, r *ht
 	default:
 		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 	}
+}
+
+func decodeEndpointRequestPayload(body io.Reader) (endpointRequestPayload, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(body).Decode(&raw); err != nil {
+		return endpointRequestPayload{}, err
+	}
+
+	connectionConfig := firstRawField(raw, "connectionConfig", "connection_config")
+	if len(bytes.TrimSpace(connectionConfig)) == 0 {
+		configPayload := make(map[string]json.RawMessage)
+		for key, value := range raw {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "name", "note", "endpointtype", "endpoint_type", "type", "rootpath", "root_path",
+				"rolemode", "role_mode", "availabilitystatus", "availability_status",
+				"identitysignature", "identity_signature", "credentialref", "credential_ref",
+				"connectionconfig", "connection_config":
+				continue
+			default:
+				configPayload[key] = value
+			}
+		}
+		if len(configPayload) > 0 {
+			encoded, err := json.Marshal(configPayload)
+			if err != nil {
+				return endpointRequestPayload{}, err
+			}
+			connectionConfig = encoded
+		}
+	}
+
+	return endpointRequestPayload{
+		Name:               firstStringField(raw, "name"),
+		Note:               firstStringField(raw, "note"),
+		EndpointType:       firstStringField(raw, "endpointType", "endpoint_type", "type"),
+		RootPath:           firstStringField(raw, "rootPath", "root_path"),
+		RoleMode:           firstStringField(raw, "roleMode", "role_mode"),
+		AvailabilityStatus: firstStringField(raw, "availabilityStatus", "availability_status"),
+		IdentitySignature:  firstStringField(raw, "identitySignature", "identity_signature"),
+		CredentialRef:      firstStringField(raw, "credentialRef", "credential_ref"),
+		ConnectionConfig:   connectionConfig,
+	}, nil
+}
+
+func firstStringField(raw map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var result string
+		if err := json.Unmarshal(value, &result); err == nil {
+			return strings.TrimSpace(result)
+		}
+	}
+	return ""
+}
+
+func firstRawField(raw map[string]json.RawMessage, keys ...string) json.RawMessage {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok || len(bytes.TrimSpace(value)) == 0 {
+			continue
+		}
+		return value
+	}
+	return nil
 }
 
 func (server *Server) handleCatalogAssets(w http.ResponseWriter, r *http.Request) {

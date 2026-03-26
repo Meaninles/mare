@@ -1390,7 +1390,7 @@ func readableReplicaPriority(endpointType string) int {
 		return 2
 	case string(connectors.EndpointTypeCloud115):
 		return 3
-	case string(connectors.EndpointTypeAList):
+	case string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
 		return 4
 	default:
 		return 9

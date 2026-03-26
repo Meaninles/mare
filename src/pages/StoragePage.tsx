@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   HardDrive,
@@ -21,7 +21,11 @@ import {
   saveCatalogEndpoint,
   updateCatalogEndpoint
 } from "../services/catalog";
-import { listRemovableDevices } from "../services/connector-test";
+import {
+  listRemovableDevices,
+  pollCloud115QRCodeLogin,
+  startCloud115QRCodeLogin
+} from "../services/connector-test";
 import { useCatalogEndpoints } from "../hooks/useCatalog";
 import { formatCatalogDate } from "../lib/catalog-view";
 import type {
@@ -30,23 +34,22 @@ import type {
   EndpointScanSummary,
   FullScanSummary
 } from "../types/catalog";
-import type { DeviceInfo } from "../types/connector-test";
+import type { Cloud115QRCodeSession, DeviceInfo } from "../types/connector-test";
 
 const backendUrl = getDefaultCatalogBackendUrl();
-
-/* const legacyEndpointTypeOptions = [
-  { value: "LOCAL", label: "本地" },
-  { value: "QNAP_SMB", label: "QNAP / SMB" },
-  { value: "CLOUD_115", label: "115 网盘" },
-  { value: "REMOVABLE", label: "可移动设备" }
-] as const; */
 
 const endpointTypeOptions = [
   { value: "LOCAL", label: "本地" },
   { value: "QNAP_SMB", label: "QNAP / SMB" },
-  { value: "CLOUD_115", label: "115 网盘" },
-  { value: "ALIST", label: "AList 网盘" },
+  { value: "NETWORK_STORAGE", label: "网盘" },
   { value: "REMOVABLE", label: "可移动设备" }
+] as const;
+
+const networkProviderOptions = [{ value: "115", label: "115 网盘" }] as const;
+
+const networkLoginMethodOptions = [
+  { value: "qrcode", label: "扫码登录" },
+  { value: "manual", label: "手动填写凭证" }
 ] as const;
 
 const cloud115AppOptions = [
@@ -57,6 +60,8 @@ const cloud115AppOptions = [
 ] as const;
 
 type EndpointType = (typeof endpointTypeOptions)[number]["value"];
+type NetworkProvider = (typeof networkProviderOptions)[number]["value"];
+type NetworkLoginMethod = (typeof networkLoginMethodOptions)[number]["value"];
 
 type EndpointFormState = {
   endpointType: EndpointType;
@@ -66,14 +71,16 @@ type EndpointFormState = {
   availabilityStatus: string;
   localRootPath: string;
   qnapSharePath: string;
-  cloud115RootId: string;
-  cloud115AccessToken: string;
-  cloud115AppType: string;
-  alistMountPath: string;
-  alistRootPath: string;
-  alistDriver: string;
-  alistAddition: string;
-  alistPassword: string;
+  networkProvider: NetworkProvider;
+  networkStorageKey: string;
+  networkMountPath: string;
+  networkDriver: string;
+  networkRootFolderId: string;
+  networkLoginMethod: NetworkLoginMethod;
+  networkAppType: string;
+  networkCredential: string;
+  networkHasStoredCredential: boolean;
+  networkPageSize: number;
   selectedMountPoint: string;
 };
 
@@ -88,10 +95,31 @@ export function StoragePage() {
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [latestSummary, setLatestSummary] = useState<FullScanSummary | EndpointScanSummary | null>(null);
+  const [networkQRCodeSession, setNetworkQRCodeSession] = useState<Cloud115QRCodeSession | null>(null);
+  const qrPollTimerRef = useRef<number | null>(null);
+  const qrSessionRef = useRef<Cloud115QRCodeSession | null>(null);
 
   useEffect(() => {
     void refreshDevices();
   }, []);
+
+  useEffect(() => {
+    qrSessionRef.current = networkQRCodeSession;
+  }, [networkQRCodeSession]);
+
+  useEffect(() => {
+    return () => {
+      clearQRCodePolling();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (form.endpointType !== "NETWORK_STORAGE" || form.networkLoginMethod !== "qrcode") {
+      clearQRCodePolling();
+      qrSessionRef.current = null;
+      setNetworkQRCodeSession(null);
+    }
+  }, [form.endpointType, form.networkLoginMethod]);
 
   useEffect(() => {
     if (endpointsQuery.isLoading) {
@@ -105,11 +133,7 @@ export function StoragePage() {
     }
 
     const target = endpoints.find((endpoint) => endpoint.id === editEndpointId);
-    if (!target) {
-      return;
-    }
-
-    if (editingEndpointId === target.id) {
+    if (!target || editingEndpointId === target.id) {
       return;
     }
 
@@ -162,6 +186,9 @@ export function StoragePage() {
   const managedEndpointCount = endpoints.filter((endpoint) => endpoint.roleMode === "MANAGED").length;
   const currentTypeLabel =
     endpointTypeOptions.find((option) => option.value === form.endpointType)?.label ?? form.endpointType;
+  const isSavingEndpoint = busyAction === "save-endpoint";
+  const isStartingQRCode = busyAction === "network-qrcode-start";
+  const isPollingQRCode = busyAction === "network-qrcode-poll";
 
   async function refreshDevices() {
     try {
@@ -175,6 +202,26 @@ export function StoragePage() {
     }
   }
 
+  function clearQRCodePolling() {
+    if (qrPollTimerRef.current !== null) {
+      window.clearTimeout(qrPollTimerRef.current);
+      qrPollTimerRef.current = null;
+    }
+  }
+
+  function resetQRCodeSession() {
+    clearQRCodePolling();
+    qrSessionRef.current = null;
+    setNetworkQRCodeSession(null);
+  }
+
+  function scheduleQRCodePoll(delayMs = 2500) {
+    clearQRCodePolling();
+    qrPollTimerRef.current = window.setTimeout(() => {
+      void pollNetworkStorageQRCode(false);
+    }, delayMs);
+  }
+
   function updateForm<K extends keyof EndpointFormState>(key: K, value: EndpointFormState[K]) {
     setForm((current) => ({
       ...current,
@@ -184,6 +231,7 @@ export function StoragePage() {
 
   function resetForm() {
     setEditingEndpointId(null);
+    resetQRCodeSession();
     setForm(createEmptyForm(devices[0]?.mountPoint ?? ""));
   }
 
@@ -191,10 +239,101 @@ export function StoragePage() {
     setNotice(null);
     setError(null);
     setEditingEndpointId(endpoint.id);
+    resetQRCodeSession();
     setForm(createFormFromEndpoint(endpoint, devices));
   }
 
+  async function handleStartNetworkQRCode() {
+    if (form.endpointType !== "NETWORK_STORAGE" || form.networkProvider !== "115") {
+      return;
+    }
+
+    resetQRCodeSession();
+    setBusyAction("network-qrcode-start");
+    setNotice(null);
+    setError(null);
+
+    try {
+      const response = await startCloud115QRCodeLogin(backendUrl, form.networkAppType);
+      if (!response.success || !response.qrCodeSession) {
+        setError(response.error ?? "生成 115 登录二维码失败。");
+        return;
+      }
+
+      qrSessionRef.current = response.qrCodeSession;
+      setNetworkQRCodeSession(response.qrCodeSession);
+      setNotice("二维码已生成，请使用 115 客户端扫码登录。");
+
+      if (!response.qrCodeSession.credential) {
+        scheduleQRCodePoll();
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "生成 115 登录二维码失败。");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function pollNetworkStorageQRCode(manual: boolean) {
+    const session = qrSessionRef.current;
+    if (!session) {
+      return;
+    }
+
+    if (manual) {
+      setBusyAction("network-qrcode-poll");
+    }
+    setError(null);
+
+    try {
+      const response = await pollCloud115QRCodeLogin(backendUrl, session);
+      if (!response.success || !response.qrCodeSession) {
+        setError(response.error ?? "轮询二维码登录状态失败。");
+        return;
+      }
+
+      qrSessionRef.current = response.qrCodeSession;
+      setNetworkQRCodeSession(response.qrCodeSession);
+
+      if (response.qrCodeSession.credential) {
+        clearQRCodePolling();
+        setForm((current) => ({
+          ...current,
+          networkCredential: response.qrCodeSession?.credential?.trim() ?? current.networkCredential,
+          networkAppType: response.qrCodeSession?.appType ?? current.networkAppType,
+          networkLoginMethod: "qrcode",
+          networkHasStoredCredential: true
+        }));
+        setNotice("扫码登录成功，凭证已写入表单。保存后会存到本机凭证库。");
+        return;
+      }
+
+      const statusCode = response.qrCodeSession.statusCode;
+      if ((statusCode === 0 || statusCode === 1) && !manual) {
+        scheduleQRCodePoll();
+      } else if (statusCode !== 0 && statusCode !== 1) {
+        clearQRCodePolling();
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "轮询二维码登录状态失败。");
+    } finally {
+      if (manual) {
+        setBusyAction(null);
+      }
+    }
+  }
+
   async function handleSubmitEndpoint() {
+    if (
+      form.endpointType === "NETWORK_STORAGE" &&
+      form.networkProvider === "115" &&
+      !form.networkCredential.trim() &&
+      !form.networkHasStoredCredential
+    ) {
+      setError(form.networkLoginMethod === "qrcode" ? "请先扫码登录，或手动填写 115 凭证。" : "请填写 115 凭证。");
+      return;
+    }
+
     setBusyAction("save-endpoint");
     setNotice(null);
     setError(null);
@@ -210,12 +349,7 @@ export function StoragePage() {
         return;
       }
 
-      setNotice(
-        editingEndpointId
-          ? `已更新存储端点：${response.endpoint.name}`
-          : `已添加存储端点：${response.endpoint.name}`
-      );
-
+      setNotice(editingEndpointId ? `已更新存储端点：${response.endpoint.name}` : `已添加存储端点：${response.endpoint.name}`);
       resetForm();
       await Promise.all([endpointsQuery.refetch(), refreshDevices()]);
     } catch (requestError) {
@@ -248,9 +382,7 @@ export function StoragePage() {
         resetForm();
       }
 
-      setNotice(
-        `已删除 ${response.summary.endpointName}，移除了 ${response.summary.removedReplicaCount} 条副本记录。`
-      );
+      setNotice(`已删除 ${response.summary.endpointName}，移除了 ${response.summary.removedReplicaCount} 条副本记录。`);
       await endpointsQuery.refetch();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "删除存储端点失败。");
@@ -308,8 +440,8 @@ export function StoragePage() {
       <article className="hero-card library-hero">
         <div className="library-hero-copy">
           <p className="eyebrow">存储管理</p>
-          <h3>节点</h3>
-          <p>节点目录、设备状态、扫描结果和编辑区现在会分开出现，不再是一整页连续往下读。</p>
+          <h3>端点</h3>
+          <p>现在的网盘端点统一走一个入口配置。当前只开放 115 网盘，底层由打包的 AList 负责云盘交互。</p>
         </div>
 
         <div className="hero-metrics">
@@ -333,19 +465,14 @@ export function StoragePage() {
 
             <div className="endpoint-panel-actions">
               {editingEndpointId ? (
-                <button type="button" className="ghost-button" onClick={resetForm} disabled={busyAction === "save-endpoint"}>
+                <button type="button" className="ghost-button" onClick={resetForm} disabled={isSavingEndpoint}>
                   <X size={16} />
                   取消
                 </button>
               ) : null}
 
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => void handleSubmitEndpoint()}
-                disabled={busyAction === "save-endpoint"}
-              >
-                {busyAction === "save-endpoint" ? (
+              <button type="button" className="primary-button" onClick={() => void handleSubmitEndpoint()} disabled={isSavingEndpoint}>
+                {isSavingEndpoint ? (
                   <LoaderCircle size={16} className="spin" />
                 ) : editingEndpointId ? (
                   <Save size={16} />
@@ -376,7 +503,7 @@ export function StoragePage() {
               <input
                 value={form.name}
                 onChange={(event) => updateForm("name", event.target.value)}
-                placeholder="主 NAS / 本地 SSD / 115 网盘"
+                placeholder={`例如：家用 NAS / 本地 SSD / ${currentTypeLabel}`}
               />
             </label>
 
@@ -390,10 +517,7 @@ export function StoragePage() {
 
             <label className="field">
               <span>状态</span>
-              <select
-                value={form.availabilityStatus}
-                onChange={(event) => updateForm("availabilityStatus", event.target.value)}
-              >
+              <select value={form.availabilityStatus} onChange={(event) => updateForm("availabilityStatus", event.target.value)}>
                 <option value="AVAILABLE">可用</option>
                 <option value="DISABLED">停用</option>
               </select>
@@ -404,7 +528,7 @@ export function StoragePage() {
               <textarea
                 value={form.note}
                 onChange={(event) => updateForm("note", event.target.value)}
-                placeholder="可选备注、用途提示、路径含义或维护信息。"
+                placeholder="可选备注、用途提示、路径含义或维护说明。"
                 rows={3}
               />
             </label>
@@ -431,22 +555,48 @@ export function StoragePage() {
               </label>
             ) : null}
 
-            {form.endpointType === "CLOUD_115" ? (
+            {form.endpointType === "NETWORK_STORAGE" ? (
               <>
                 <label className="field">
-                  <span>115 根目录 ID</span>
+                  <span>网盘类型</span>
+                  <select
+                    value={form.networkProvider}
+                    onChange={(event) => updateForm("networkProvider", normalizeNetworkProvider(event.target.value))}
+                  >
+                    {networkProviderOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>登录方式</span>
+                  <select
+                    value={form.networkLoginMethod}
+                    onChange={(event) => updateForm("networkLoginMethod", normalizeNetworkLoginMethod(event.target.value))}
+                  >
+                    {networkLoginMethodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>根目录 ID</span>
                   <input
-                    value={form.cloud115RootId}
-                    onChange={(event) => updateForm("cloud115RootId", event.target.value)}
+                    value={form.networkRootFolderId}
+                    onChange={(event) => updateForm("networkRootFolderId", event.target.value)}
+                    placeholder="0 表示全部文件"
                   />
                 </label>
 
                 <label className="field">
-                  <span>115 应用类型</span>
-                  <select
-                    value={form.cloud115AppType}
-                    onChange={(event) => updateForm("cloud115AppType", event.target.value)}
-                  >
+                  <span>扫码设备类型</span>
+                  <select value={form.networkAppType} onChange={(event) => updateForm("networkAppType", event.target.value)}>
                     {cloud115AppOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
@@ -455,63 +605,77 @@ export function StoragePage() {
                   </select>
                 </label>
 
+                {form.networkLoginMethod === "qrcode" ? (
+                  <div className="field field-span qr-session-panel">
+                    <span>扫码登录</span>
+                    <div className="action-row">
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => void handleStartNetworkQRCode()}
+                        disabled={isSavingEndpoint || isStartingQRCode || isPollingQRCode}
+                      >
+                        {isStartingQRCode ? <LoaderCircle size={16} className="spin" /> : null}
+                        生成二维码
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => void pollNetworkStorageQRCode(true)}
+                        disabled={isSavingEndpoint || isStartingQRCode || isPollingQRCode || networkQRCodeSession === null}
+                      >
+                        {isPollingQRCode ? <LoaderCircle size={16} className="spin" /> : null}
+                        轮询状态
+                      </button>
+                    </div>
+
+                    {networkQRCodeSession ? (
+                      <div className="qr-grid">
+                        <div className="qr-box">
+                          <img src={networkQRCodeSession.qrCodeUrl} alt="115 登录二维码" />
+                        </div>
+                        <div className="qr-meta">
+                          <div>
+                            <strong>状态：</strong>
+                            {networkQRCodeSession.status}
+                          </div>
+                          <div>
+                            <strong>设备：</strong>
+                            {networkQRCodeSession.appType}
+                          </div>
+                          <div>
+                            <strong>UID：</strong>
+                            {networkQRCodeSession.uid}
+                          </div>
+                          <div>
+                            <strong>时间：</strong>
+                            {String(networkQRCodeSession.time)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="secondary-text">生成二维码后，使用 115 客户端扫码。成功后会自动把凭证回填到表单。</p>
+                    )}
+                  </div>
+                ) : null}
+
                 <label className="field field-span">
-                  <span>凭证 / Cookies</span>
+                  <span>115 凭证 / Cookie</span>
                   <input
-                    value={form.cloud115AccessToken}
-                    onChange={(event) => updateForm("cloud115AccessToken", event.target.value)}
-                    placeholder="粘贴当前可用的 115 凭证字符串"
+                    value={form.networkCredential}
+                    onChange={(event) => {
+                      updateForm("networkCredential", event.target.value);
+                      if (event.target.value.trim()) {
+                        updateForm("networkHasStoredCredential", true);
+                      }
+                    }}
+                    placeholder={
+                      form.networkLoginMethod === "qrcode"
+                        ? "扫码成功后会自动填入，也可手动粘贴覆盖"
+                        : "粘贴当前可用的 115 凭证或 Cookie 字符串"
+                    }
                   />
-                </label>
-              </>
-            ) : null}
-
-            {form.endpointType === "ALIST" ? (
-              <>
-                <label className="field">
-                  <span>AList 挂载路径</span>
-                  <input
-                    value={form.alistMountPath}
-                    onChange={(event) => updateForm("alistMountPath", event.target.value)}
-                    placeholder="/cloud"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>AList 根路径</span>
-                  <input
-                    value={form.alistRootPath}
-                    onChange={(event) => updateForm("alistRootPath", event.target.value)}
-                    placeholder="/cloud/media"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>驱动</span>
-                  <input
-                    value={form.alistDriver}
-                    onChange={(event) => updateForm("alistDriver", event.target.value)}
-                    placeholder="Local"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>目录密码</span>
-                  <input
-                    value={form.alistPassword}
-                    onChange={(event) => updateForm("alistPassword", event.target.value)}
-                    placeholder="可选"
-                  />
-                </label>
-
-                <label className="field field-span">
-                  <span>addition(JSON)</span>
-                  <textarea
-                    value={form.alistAddition}
-                    onChange={(event) => updateForm("alistAddition", event.target.value)}
-                    placeholder='{"root_folder_path":"D:\\\\media"}'
-                    rows={4}
-                  />
+                  <p className="secondary-text">{getNetworkCredentialHint(form, editingEndpointId !== null)}</p>
                 </label>
               </>
             ) : null}
@@ -519,10 +683,7 @@ export function StoragePage() {
             {form.endpointType === "REMOVABLE" ? (
               <label className="field field-span">
                 <span>设备挂载点</span>
-                <select
-                  value={form.selectedMountPoint}
-                  onChange={(event) => updateForm("selectedMountPoint", event.target.value)}
-                >
+                <select value={form.selectedMountPoint} onChange={(event) => updateForm("selectedMountPoint", event.target.value)}>
                   {devices.length === 0 ? <option value="">当前未检测到可移动设备</option> : null}
                   {devices.map((device) => (
                     <option key={device.mountPoint} value={device.mountPoint}>
@@ -553,7 +714,7 @@ export function StoragePage() {
               <HardDrive size={20} />
               <div>
                 <strong>当前未检测到可移动设备。</strong>
-                <p>如果要把 U 盘或移动硬盘登记为管理端点，请先接入设备。</p>
+                <p>如果要把 U 盘或移动硬盘登记为端点，请先接入设备。</p>
               </div>
             </div>
           ) : (
@@ -581,9 +742,9 @@ export function StoragePage() {
 
       <article className="detail-card storage-directory-card">
         <div className="section-head">
-            <div>
-              <p className="eyebrow">已连接端点</p>
-              <h4>端点列表</h4>
+          <div>
+            <p className="eyebrow">已连接端点</p>
+            <h4>端点列表</h4>
           </div>
 
           <button type="button" className="primary-button" onClick={() => void handleFullScan()} disabled={busyAction === "full-scan"}>
@@ -597,7 +758,7 @@ export function StoragePage() {
             <LoaderCircle size={20} className="spin" />
             <div>
               <strong>正在加载存储端点...</strong>
-                <p>后台服务正在拉取当前端点列表。</p>
+              <p>后台服务正在拉取当前端点列表。</p>
             </div>
           </div>
         ) : endpoints.length === 0 ? (
@@ -605,7 +766,7 @@ export function StoragePage() {
             <Server size={20} />
             <div>
               <strong>还没有登记任何存储端点。</strong>
-              <p>可以先在上方添加本地磁盘、NAS、115 网盘或可移动存储。</p>
+              <p>可以先在上方添加本地磁盘、QNAP / SMB、网盘或可移动设备。</p>
             </div>
           </div>
         ) : (
@@ -625,8 +786,8 @@ export function StoragePage() {
 
                 <div className="endpoint-panel-meta">
                   <div>
-                    <span>路径 / 根标识</span>
-                    <strong>{endpoint.rootPath}</strong>
+                    <span>位置 / 根标识</span>
+                    <strong>{getEndpointRootLabel(endpoint)}</strong>
                   </div>
                   <div>
                     <span>角色</span>
@@ -730,169 +891,6 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* function createEmptyForm(selectedMountPoint: string): EndpointFormState {
-  return {
-    endpointType: "LOCAL",
-    name: "",
-    note: "",
-    roleMode: "MANAGED",
-    availabilityStatus: "AVAILABLE",
-    localRootPath: "",
-    qnapSharePath: "",
-    cloud115RootId: "0",
-    cloud115AccessToken: "",
-    cloud115AppType: "windows",
-    alistMountPath: "",
-    alistRootPath: "",
-    alistDriver: "Local",
-    alistAddition: "{}",
-    alistPassword: "",
-    selectedMountPoint
-  };
-}
-
-function createFormFromEndpoint(endpoint: CatalogEndpoint, devices: DeviceInfo[]): EndpointFormState {
-  const next = createEmptyForm(devices[0]?.mountPoint ?? "");
-  const endpointType = normalizeEndpointType(endpoint.endpointType);
-  const config = endpoint.connectionConfig ?? {};
-  const selectedMountPoint =
-    getNestedString(config, "device", "mountPoint") || endpoint.rootPath || devices[0]?.mountPoint || "";
-
-  return {
-    ...next,
-    endpointType,
-    name: endpoint.name,
-    note: endpoint.note ?? "",
-    roleMode: endpoint.roleMode || "MANAGED",
-    availabilityStatus: endpoint.availabilityStatus || "AVAILABLE",
-    localRootPath: endpointType === "LOCAL" ? getString(config, "rootPath") || endpoint.rootPath : "",
-    qnapSharePath: endpointType === "QNAP_SMB" ? getString(config, "sharePath") || endpoint.rootPath : "",
-    cloud115RootId: endpointType === "CLOUD_115" ? getString(config, "rootId") || endpoint.rootPath || "0" : "0",
-    cloud115AccessToken: endpointType === "CLOUD_115" ? getString(config, "accessToken") : "",
-    cloud115AppType: endpointType === "CLOUD_115" ? getString(config, "appType") || "windows" : "windows",
-    alistMountPath: endpointType === "ALIST" ? getString(config, "mountPath") || endpoint.rootPath : "",
-    alistRootPath: endpointType === "ALIST" ? endpoint.rootPath || getString(config, "mountPath") : "",
-    alistDriver: endpointType === "ALIST" ? getString(config, "driver") || "Local" : "Local",
-    alistAddition: endpointType === "ALIST" ? getString(config, "addition") || "{}" : "{}",
-    alistPassword: endpointType === "ALIST" ? getString(config, "password") : "",
-    selectedMountPoint
-  };
-}
-
-function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInfo | null): CatalogEndpointPayload {
-  switch (form.endpointType) {
-    case "LOCAL":
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.localRootPath.trim(),
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          rootPath: form.localRootPath.trim()
-        }
-      };
-    case "QNAP_SMB":
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.qnapSharePath.trim(),
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          sharePath: form.qnapSharePath.trim()
-        }
-      };
-    case "CLOUD_115":
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.cloud115RootId.trim(),
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          rootId: form.cloud115RootId.trim(),
-          accessToken: form.cloud115AccessToken.trim(),
-          appType: form.cloud115AppType
-        }
-      };
-    case "ALIST":
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.alistRootPath.trim() || form.alistMountPath.trim(),
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          mountPath: form.alistMountPath.trim(),
-          driver: form.alistDriver.trim() || "Local",
-          addition: form.alistAddition.trim() || "{}",
-          password: form.alistPassword.trim()
-        }
-      };
-    case "REMOVABLE":
-      if (!selectedDevice) {
-        throw new Error("当前没有选中的可移动设备。");
-      }
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: selectedDevice.mountPoint,
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          device: selectedDevice
-        }
-      };
-  }
-}
-
-function normalizeEndpointType(value: string): EndpointType {
-  switch (value) {
-    case "QNAP_SMB":
-      return "QNAP_SMB";
-    case "CLOUD_115":
-      return "CLOUD_115";
-    case "REMOVABLE":
-      return "REMOVABLE";
-    default:
-      return "LOCAL";
-  }
-}
-
-function getEndpointTypeLabel(endpointType: string) {
-  switch (endpointType) {
-    case "LOCAL":
-      return "本地";
-    case "QNAP_SMB":
-      return "QNAP / SMB";
-    case "CLOUD_115":
-      return "115 网盘";
-    case "REMOVABLE":
-      return "可移动设备";
-    default:
-      return endpointType;
-  }
-}
-
-function getAvailabilityStatusLabel(status: string) {
-  switch (status) {
-    case "AVAILABLE":
-      return "可用";
-    case "DISABLED":
-      return "停用";
-    default:
-      return status || "未知";
-  }
-}
-
-*/
-
 function createEmptyForm(selectedMountPoint: string): EndpointFormState {
   return {
     endpointType: "LOCAL",
@@ -902,14 +900,16 @@ function createEmptyForm(selectedMountPoint: string): EndpointFormState {
     availabilityStatus: "AVAILABLE",
     localRootPath: "",
     qnapSharePath: "",
-    cloud115RootId: "0",
-    cloud115AccessToken: "",
-    cloud115AppType: "windows",
-    alistMountPath: "",
-    alistRootPath: "",
-    alistDriver: "Local",
-    alistAddition: "{}",
-    alistPassword: "",
+    networkProvider: "115",
+    networkStorageKey: "",
+    networkMountPath: "",
+    networkDriver: "",
+    networkRootFolderId: "0",
+    networkLoginMethod: "qrcode",
+    networkAppType: "windows",
+    networkCredential: "",
+    networkHasStoredCredential: false,
+    networkPageSize: 1000,
     selectedMountPoint
   };
 }
@@ -930,25 +930,31 @@ function createFormFromEndpoint(endpoint: CatalogEndpoint, devices: DeviceInfo[]
     availabilityStatus: endpoint.availabilityStatus || "AVAILABLE",
     localRootPath: endpointType === "LOCAL" ? getString(config, "rootPath") || endpoint.rootPath : "",
     qnapSharePath: endpointType === "QNAP_SMB" ? getString(config, "sharePath") || endpoint.rootPath : "",
-    cloud115RootId: endpointType === "CLOUD_115" ? getString(config, "rootId") || endpoint.rootPath || "0" : "0",
-    cloud115AccessToken: endpointType === "CLOUD_115" ? getString(config, "accessToken") : "",
-    cloud115AppType: endpointType === "CLOUD_115" ? getString(config, "appType") || "windows" : "windows",
-    alistMountPath: endpointType === "ALIST" ? getString(config, "mountPath") || endpoint.rootPath : "",
-    alistRootPath: endpointType === "ALIST" ? endpoint.rootPath || getString(config, "mountPath") : "",
-    alistDriver: endpointType === "ALIST" ? getString(config, "driver") || "Local" : "Local",
-    alistAddition: endpointType === "ALIST" ? getString(config, "addition") || "{}" : "{}",
-    alistPassword: endpointType === "ALIST" ? getString(config, "password") : "",
+    networkProvider: endpointType === "NETWORK_STORAGE" ? normalizeNetworkProvider(getString(config, "provider")) : "115",
+    networkStorageKey: endpointType === "NETWORK_STORAGE" ? getString(config, "storageKey") : "",
+    networkMountPath: endpointType === "NETWORK_STORAGE" ? getString(config, "mountPath") || endpoint.rootPath : "",
+    networkDriver: endpointType === "NETWORK_STORAGE" ? getString(config, "driver") : "",
+    networkRootFolderId:
+      endpointType === "NETWORK_STORAGE" ? getString(config, "rootFolderId") || getString(config, "root_folder_id") || "0" : "0",
+    networkLoginMethod:
+      endpointType === "NETWORK_STORAGE" ? normalizeNetworkLoginMethod(getString(config, "loginMethod")) : "qrcode",
+    networkAppType: endpointType === "NETWORK_STORAGE" ? getString(config, "appType") || "windows" : "windows",
+    networkCredential: endpointType === "NETWORK_STORAGE" ? getString(config, "credential") : "",
+    networkHasStoredCredential: endpointType === "NETWORK_STORAGE" ? endpoint.hasCredential || !!getString(config, "credential") : false,
+    networkPageSize: endpointType === "NETWORK_STORAGE" ? getNumber(config, "pageSize", 1000) : 1000,
     selectedMountPoint
   };
 }
 
 function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInfo | null): CatalogEndpointPayload {
-  switch (form.endpointType) {
+  const endpointType = resolveSubmissionEndpointType(form);
+
+  switch (endpointType) {
     case "LOCAL":
       return {
         name: form.name.trim(),
         note: form.note.trim(),
-        endpointType: form.endpointType,
+        endpointType,
         rootPath: form.localRootPath.trim(),
         roleMode: form.roleMode,
         availabilityStatus: form.availabilityStatus,
@@ -960,7 +966,7 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
       return {
         name: form.name.trim(),
         note: form.note.trim(),
-        endpointType: form.endpointType,
+        endpointType,
         rootPath: form.qnapSharePath.trim(),
         roleMode: form.roleMode,
         availabilityStatus: form.availabilityStatus,
@@ -968,35 +974,38 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
           sharePath: form.qnapSharePath.trim()
         }
       };
-    case "CLOUD_115":
+    case "NETWORK_STORAGE": {
+      const connectionConfig: Record<string, unknown> = {
+        provider: form.networkProvider,
+        rootFolderId: form.networkRootFolderId.trim() || "0",
+        loginMethod: form.networkLoginMethod,
+        appType: form.networkAppType,
+        pageSize: form.networkPageSize
+      };
+
+      if (form.networkStorageKey.trim()) {
+        connectionConfig.storageKey = form.networkStorageKey.trim();
+      }
+      if (form.networkMountPath.trim()) {
+        connectionConfig.mountPath = form.networkMountPath.trim();
+      }
+      if (form.networkDriver.trim()) {
+        connectionConfig.driver = form.networkDriver.trim();
+      }
+      if (form.networkCredential.trim()) {
+        connectionConfig.credential = form.networkCredential.trim();
+      }
+
       return {
         name: form.name.trim(),
         note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.cloud115RootId.trim(),
+        endpointType,
+        rootPath: "",
         roleMode: form.roleMode,
         availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          rootId: form.cloud115RootId.trim(),
-          accessToken: form.cloud115AccessToken.trim(),
-          appType: form.cloud115AppType
-        }
+        connectionConfig
       };
-    case "ALIST":
-      return {
-        name: form.name.trim(),
-        note: form.note.trim(),
-        endpointType: form.endpointType,
-        rootPath: form.alistRootPath.trim() || form.alistMountPath.trim(),
-        roleMode: form.roleMode,
-        availabilityStatus: form.availabilityStatus,
-        connectionConfig: {
-          mountPath: form.alistMountPath.trim(),
-          driver: form.alistDriver.trim() || "Local",
-          addition: form.alistAddition.trim() || "{}",
-          password: form.alistPassword.trim()
-        }
-      };
+    }
     case "REMOVABLE":
       if (!selectedDevice) {
         throw new Error("当前没有选中的可移动设备。");
@@ -1004,7 +1013,7 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
       return {
         name: form.name.trim(),
         note: form.note.trim(),
-        endpointType: form.endpointType,
+        endpointType,
         rootPath: selectedDevice.mountPoint,
         roleMode: form.roleMode,
         availabilityStatus: form.availabilityStatus,
@@ -1012,22 +1021,48 @@ function buildEndpointPayload(form: EndpointFormState, selectedDevice: DeviceInf
           device: selectedDevice
         }
       };
+    default:
+      throw new Error(`不支持的端点类型：${endpointType}`);
   }
+}
+
+function resolveSubmissionEndpointType(form: EndpointFormState): EndpointType {
+  if (form.endpointType === "NETWORK_STORAGE") {
+    return "NETWORK_STORAGE";
+  }
+  if (
+    form.networkCredential.trim() ||
+    form.networkProvider === "115" ||
+    form.networkStorageKey.trim() ||
+    form.networkMountPath.trim() ||
+    form.networkDriver.trim() ||
+    form.networkRootFolderId.trim() !== "0"
+  ) {
+    return "NETWORK_STORAGE";
+  }
+  return form.endpointType;
 }
 
 function normalizeEndpointType(value: string): EndpointType {
   switch (value) {
     case "QNAP_SMB":
       return "QNAP_SMB";
-    case "CLOUD_115":
-      return "CLOUD_115";
-    case "ALIST":
-      return "ALIST";
+    case "NETWORK_STORAGE":
+    case "NETWORK":
+      return "NETWORK_STORAGE";
     case "REMOVABLE":
       return "REMOVABLE";
     default:
       return "LOCAL";
   }
+}
+
+function normalizeNetworkProvider(_value: string): NetworkProvider {
+  return "115";
+}
+
+function normalizeNetworkLoginMethod(value: string): NetworkLoginMethod {
+  return value === "manual" ? "manual" : "qrcode";
 }
 
 function getEndpointTypeLabel(endpointType: string) {
@@ -1036,10 +1071,8 @@ function getEndpointTypeLabel(endpointType: string) {
       return "本地";
     case "QNAP_SMB":
       return "QNAP / SMB";
-    case "CLOUD_115":
-      return "115 网盘";
-    case "ALIST":
-      return "AList 网盘";
+    case "NETWORK_STORAGE":
+      return "网盘";
     case "REMOVABLE":
       return "可移动设备";
     default:
@@ -1058,9 +1091,45 @@ function getAvailabilityStatusLabel(status: string) {
   }
 }
 
+function getEndpointRootLabel(endpoint: CatalogEndpoint) {
+  if (endpoint.endpointType !== "NETWORK_STORAGE") {
+    return endpoint.rootPath;
+  }
+
+  const config = endpoint.connectionConfig ?? {};
+  const provider = normalizeNetworkProvider(getString(config, "provider"));
+  const rootFolderId = getString(config, "rootFolderId") || getString(config, "root_folder_id") || "0";
+  const providerLabel = provider === "115" ? "115 网盘" : "网盘";
+
+  if (rootFolderId === "0") {
+    return `${providerLabel} / 全部文件`;
+  }
+
+  return `${providerLabel} / 目录 ID ${rootFolderId}`;
+}
+
+function getNetworkCredentialHint(form: EndpointFormState, isEditing: boolean) {
+  if (form.networkCredential.trim()) {
+    return isEditing ? "保存后将覆盖当前已保存的本机凭证。" : "保存后会写入本机凭证库，不会以明文长期展示。";
+  }
+
+  if (form.networkHasStoredCredential) {
+    return "当前端点已保存本机凭证，留空则继续沿用。";
+  }
+
+  return form.networkLoginMethod === "qrcode"
+    ? "建议先扫码登录，拿到有效凭证后再保存端点。"
+    : "请填写当前可用的 115 凭证或 Cookie。";
+}
+
 function getString(config: Record<string, unknown>, key: string): string {
   const value = config[key];
   return typeof value === "string" ? value : "";
+}
+
+function getNumber(config: Record<string, unknown>, key: string, fallback: number): number {
+  const value = config[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function getNestedString(config: Record<string, unknown>, key: string, nestedKey: string): string {

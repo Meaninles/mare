@@ -655,6 +655,8 @@ function getRecoveryHint(endpoint: CatalogEndpoint) {
       return "请确认当前机器上的本地根路径是否正确。";
     case "QNAP_SMB":
       return "请确认 SMB 共享路径和 NAS 可用性。";
+    case "NETWORK_STORAGE":
+      return "请检查网盘登录状态、根目录 ID 和本机保存的凭证是否有效。";
     case "CLOUD_115":
       return "请检查根目录 ID，必要时刷新 115 凭据。";
     case "ALIST":
@@ -683,6 +685,8 @@ function getEndpointTypeLabel(endpointType: string) {
       return "本地";
     case "QNAP_SMB":
       return "QNAP / SMB";
+    case "NETWORK_STORAGE":
+      return "网盘";
     case "CLOUD_115":
       return "115 网盘";
     case "ALIST":

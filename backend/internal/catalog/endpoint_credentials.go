@@ -13,7 +13,7 @@ import (
 	"mam/backend/internal/store"
 )
 
-const storedCredentialHint = "Stored locally on this machine"
+const storedCredentialHint = "已保存在当前机器"
 
 type endpointCredentialInput struct {
 	Secret string
@@ -25,6 +25,9 @@ func (service *Service) buildConnector(endpoint store.StorageEndpoint) (connecto
 	if err != nil {
 		return nil, err
 	}
+	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeNetwork) {
+		return service.buildNetworkStorageConnector(context.Background(), hydrated)
+	}
 	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeAList) {
 		return service.buildAListConnector(context.Background(), hydrated)
 	}
@@ -32,7 +35,9 @@ func (service *Service) buildConnector(endpoint store.StorageEndpoint) (connecto
 }
 
 func (service *Service) hydrateEndpointForConnector(endpoint store.StorageEndpoint) (store.StorageEndpoint, error) {
-	if normalizeEndpointType(endpoint.EndpointType) != string(connectors.EndpointTypeCloud115) {
+	normalizedEndpointType := normalizeEndpointType(endpoint.EndpointType)
+	if normalizedEndpointType != string(connectors.EndpointTypeCloud115) &&
+		normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
 		return endpoint, nil
 	}
 
@@ -61,7 +66,15 @@ func (service *Service) hydrateEndpointForConnector(endpoint store.StorageEndpoi
 		return endpoint, err
 	}
 
-	hydratedConfig, err := injectCloud115Credential(config, record.Secret)
+	var hydratedConfig json.RawMessage
+	switch normalizedEndpointType {
+	case string(connectors.EndpointTypeCloud115):
+		hydratedConfig, err = injectCloud115Credential(config, record.Secret)
+	case string(connectors.EndpointTypeNetwork):
+		hydratedConfig, err = injectNetworkStorageCredential(config, record.Secret)
+	default:
+		return endpoint, nil
+	}
 	if err != nil {
 		return endpoint, err
 	}
@@ -175,14 +188,18 @@ func injectCloud115Credential(connectionConfig json.RawMessage, secret string) (
 }
 
 func extractEndpointCredential(endpointType string, payload map[string]any) *endpointCredentialInput {
-	if normalizeEndpointType(endpointType) != string(connectors.EndpointTypeCloud115) {
+	normalizedEndpointType := normalizeEndpointType(endpointType)
+	if normalizedEndpointType != string(connectors.EndpointTypeCloud115) &&
+		normalizedEndpointType != string(connectors.EndpointTypeNetwork) {
 		return nil
 	}
 
-	secret := firstNonEmptyMapString(payload, "accessToken", "cookies", "credential")
+	secret := firstNonEmptyMapString(payload, "accessToken", "cookies", "credential", "cookie", "token")
 	delete(payload, "accessToken")
 	delete(payload, "cookies")
 	delete(payload, "credential")
+	delete(payload, "cookie")
+	delete(payload, "token")
 	delete(payload, "credentialRef")
 	delete(payload, "credentialHint")
 	delete(payload, "hasCredential")
@@ -201,6 +218,8 @@ func credentialProviderForEndpoint(endpointType string) string {
 	switch normalizeEndpointType(endpointType) {
 	case string(connectors.EndpointTypeCloud115):
 		return "cloud115"
+	case string(connectors.EndpointTypeNetwork):
+		return "network-storage-115"
 	default:
 		return strings.ToLower(strings.TrimSpace(endpointType))
 	}
@@ -210,9 +229,29 @@ func defaultCredentialHint(endpointType string) string {
 	switch normalizeEndpointType(endpointType) {
 	case string(connectors.EndpointTypeCloud115):
 		return storedCredentialHint
+	case string(connectors.EndpointTypeNetwork):
+		return "已保存在当前机器的网盘凭证"
 	default:
 		return storedCredentialHint
 	}
+}
+
+func injectNetworkStorageCredential(connectionConfig json.RawMessage, secret string) (json.RawMessage, error) {
+	if len(strings.TrimSpace(string(connectionConfig))) == 0 {
+		connectionConfig = json.RawMessage(`{}`)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(connectionConfig, &payload); err != nil {
+		return nil, fmt.Errorf("invalid connection config: %w", err)
+	}
+
+	payload["credential"] = strings.TrimSpace(secret)
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("normalize hydrated network storage config: %w", err)
+	}
+	return normalized, nil
 }
 
 func firstNonEmptyMapString(payload map[string]any, keys ...string) string {

@@ -219,6 +219,11 @@ func (service *Service) Start(ctx context.Context) error {
 			return
 		}
 
+		if err := service.ensureTransferSidecarsRunning(ctx); err != nil {
+			startErr = err
+			return
+		}
+
 		if err := service.normalizeInterruptedTransferTasks(ctx); err != nil {
 			startErr = err
 			return
@@ -850,7 +855,8 @@ func (service *Service) runTransferTaskItem(ctx context.Context, taskID string, 
 
 func (service *Service) stageTransferItem(ctx context.Context, taskID string, item *store.TransferTaskItem) error {
 	if strings.TrimSpace(item.SourceKind) == transferSourceKindEndpoint &&
-		normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeAList) {
+		(normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeAList) ||
+			normalizeEndpointType(item.SourceEndpointType) == string(connectors.EndpointTypeNetwork)) {
 		return service.stageTransferItemFromAList(ctx, taskID, item)
 	}
 
@@ -956,7 +962,8 @@ func (service *Service) commitTransferItem(
 		return connectors.FileEntry{}, err
 	}
 
-	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) {
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) ||
+		normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
 		return service.commitTransferItemToAList(ctx, taskID, item, endpoint)
 	}
 
@@ -2187,8 +2194,12 @@ func compactTransferLabel(values []string) string {
 func determineTransferDirection(sourceEndpointType string, targetEndpointType string) string {
 	sourceType := normalizeEndpointType(sourceEndpointType)
 	targetType := normalizeEndpointType(targetEndpointType)
-	sourceRemote := sourceType == string(connectors.EndpointTypeCloud115) || sourceType == string(connectors.EndpointTypeAList)
-	targetRemote := targetType == string(connectors.EndpointTypeCloud115) || targetType == string(connectors.EndpointTypeAList)
+	sourceRemote := sourceType == string(connectors.EndpointTypeCloud115) ||
+		sourceType == string(connectors.EndpointTypeAList) ||
+		sourceType == string(connectors.EndpointTypeNetwork)
+	targetRemote := targetType == string(connectors.EndpointTypeCloud115) ||
+		targetType == string(connectors.EndpointTypeAList) ||
+		targetType == string(connectors.EndpointTypeNetwork)
 
 	switch {
 	case targetRemote && !sourceRemote:
@@ -2227,7 +2238,7 @@ func buildTransferTargetTempPath(targetPath string, itemID string) string {
 
 func commitsTransferDirectly(endpointType string) bool {
 	switch normalizeEndpointType(endpointType) {
-	case string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList):
+	case string(connectors.EndpointTypeCloud115), string(connectors.EndpointTypeAList), string(connectors.EndpointTypeNetwork):
 		return true
 	default:
 		return false
@@ -2235,7 +2246,8 @@ func commitsTransferDirectly(endpointType string) bool {
 }
 
 func resolveEndpointAbsolutePath(endpoint store.StorageEndpoint, relativePath string) string {
-	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) {
+	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeAList) ||
+		normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
 		normalized := strings.TrimSpace(strings.ReplaceAll(relativePath, `\`, "/"))
 		if normalized == "" || normalized == "." {
 			return canonicalizePath(endpoint.RootPath)

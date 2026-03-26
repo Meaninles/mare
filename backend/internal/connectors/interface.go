@@ -45,6 +45,7 @@ type EndpointType string
 const (
 	EndpointTypeLocal     EndpointType = "LOCAL"
 	EndpointTypeQNAP      EndpointType = "QNAP_SMB"
+	EndpointTypeNetwork   EndpointType = "NETWORK_STORAGE"
 	EndpointTypeCloud115  EndpointType = "CLOUD_115"
 	EndpointTypeAList     EndpointType = "ALIST"
 	EndpointTypeRemovable EndpointType = "REMOVABLE"
