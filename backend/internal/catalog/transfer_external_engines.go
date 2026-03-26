@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -148,22 +149,14 @@ func (service *Service) commitTransferItemToAList(
 	item *store.TransferTaskItem,
 	endpoint store.StorageEndpoint,
 ) (connectors.FileEntry, error) {
-	_, runtime, err := service.prepareAListBackedEndpoint(ctx, endpoint)
+	config, runtime, err := service.prepareAListBackedEndpoint(ctx, endpoint)
 	if err != nil {
-		return connectors.FileEntry{}, err
-	}
-	if err := service.ensureAListRuntimeStagingStorage(ctx, runtime); err != nil {
 		return connectors.FileEntry{}, err
 	}
 
-	stageAListPath, err := service.resolveAListStagePath(item.StagingPath)
-	if err != nil {
-		return connectors.FileEntry{}, err
-	}
 	targetPath := resolveEndpointAbsolutePath(endpoint, item.TargetPath)
 	targetDir := path.Dir(targetPath)
 	targetName := path.Base(targetPath)
-	stageName := path.Base(stageAListPath)
 
 	if err := service.ensureAListDirectoryTree(ctx, runtime, targetDir, endpoint.RootPath); err != nil {
 		return connectors.FileEntry{}, err
@@ -174,15 +167,15 @@ func (service *Service) commitTransferItemToAList(
 	item.UpdatedAt = time.Now().UTC()
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.EngineKind = transferEngineKindAList
-		metadata.EngineLabel = "网络存储上传"
+		metadata.EngineLabel = "??????"
 		metadata.RefreshInterval = 1
 		if metadata.AList == nil {
 			metadata.AList = &transferItemAListMetadata{}
 		}
-		metadata.AList.TaskKind = "copy"
-		metadata.AList.SourceDir = path.Dir(stageAListPath)
+		metadata.AList.TaskKind = "upload"
+		metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
 		metadata.AList.TargetDir = targetDir
-		metadata.AList.Names = []string{stageName}
+		metadata.AList.Names = []string{targetName}
 	})
 	if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 		return connectors.FileEntry{}, err
@@ -194,12 +187,23 @@ func (service *Service) commitTransferItemToAList(
 		existingTaskID = strings.TrimSpace(metadata.AList.TaskID)
 	}
 
-	taskInfo, needCreate, err := service.resolveAListCopyTask(ctx, runtime, existingTaskID)
+	taskInfo, needCreate, err := service.resolveAListUploadTask(ctx, runtime, existingTaskID)
 	if err != nil {
 		return connectors.FileEntry{}, err
 	}
 	if needCreate {
-		taskInfo, err = runtime.CreateCopyTask(ctx, path.Dir(stageAListPath), targetDir, []string{stageName}, true)
+		stageFile, err := os.Open(item.StagingPath)
+		if err != nil {
+			return connectors.FileEntry{}, err
+		}
+		defer stageFile.Close()
+
+		stageInfo, err := stageFile.Stat()
+		if err != nil {
+			return connectors.FileEntry{}, err
+		}
+
+		taskInfo, err = runtime.CreateUploadTask(ctx, targetPath, config.Password, true, stageFile, stageInfo.Size())
 		if err != nil {
 			return connectors.FileEntry{}, err
 		}
@@ -208,12 +212,12 @@ func (service *Service) commitTransferItemToAList(
 				metadata.AList = &transferItemAListMetadata{}
 			}
 			metadata.AList.TaskID = taskInfo.ID
-			metadata.AList.TaskKind = "copy"
+			metadata.AList.TaskKind = "upload"
 			metadata.AList.TaskStatus = service.normalizeAListTaskStatus(taskInfo)
 			metadata.AList.TaskState = taskInfo.State
-			metadata.AList.SourceDir = path.Dir(stageAListPath)
+			metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
 			metadata.AList.TargetDir = targetDir
-			metadata.AList.Names = []string{stageName}
+			metadata.AList.Names = []string{targetName}
 		})
 		if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 			return connectors.FileEntry{}, err
@@ -227,7 +231,7 @@ func (service *Service) commitTransferItemToAList(
 			return connectors.FileEntry{}, err
 		}
 		if strings.TrimSpace(taskInfo.ID) == "" {
-			return connectors.FileEntry{}, fmt.Errorf("alist copy task id is empty")
+			return connectors.FileEntry{}, fmt.Errorf("alist upload task id is empty")
 		}
 
 		currentBytes := service.estimateAListCommittedBytes(item.TotalBytes, taskInfo)
@@ -238,19 +242,19 @@ func (service *Service) commitTransferItemToAList(
 		speed := estimateTransferSpeed(item.CommittedBytes-lastBytes, now.Sub(lastObservedAt))
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.EngineKind = transferEngineKindAList
-			metadata.EngineLabel = "网络存储上传"
+			metadata.EngineLabel = "??????"
 			metadata.CurrentSpeed = speed
 			metadata.RefreshInterval = 1
 			if metadata.AList == nil {
 				metadata.AList = &transferItemAListMetadata{}
 			}
 			metadata.AList.TaskID = taskInfo.ID
-			metadata.AList.TaskKind = "copy"
+			metadata.AList.TaskKind = "upload"
 			metadata.AList.TaskStatus = service.normalizeAListTaskStatus(taskInfo)
 			metadata.AList.TaskState = taskInfo.State
-			metadata.AList.SourceDir = path.Dir(stageAListPath)
+			metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
 			metadata.AList.TargetDir = targetDir
-			metadata.AList.Names = []string{stageName}
+			metadata.AList.Names = []string{targetName}
 		})
 		if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 			return connectors.FileEntry{}, err
@@ -263,13 +267,6 @@ func (service *Service) commitTransferItemToAList(
 			connector, err := service.buildConnector(endpoint)
 			if err != nil {
 				return connectors.FileEntry{}, err
-			}
-			if stageName != targetName {
-				if _, err := connector.StatEntry(ctx, targetPath); err != nil {
-					if err := service.renameAListCopyTarget(ctx, runtime, targetDir, stageName, targetName); err != nil {
-						return connectors.FileEntry{}, err
-					}
-				}
 			}
 
 			item.CommittedBytes = max(item.CommittedBytes, item.TotalBytes)
@@ -293,7 +290,7 @@ func (service *Service) commitTransferItemToAList(
 		case "canceled":
 			return connectors.FileEntry{}, context.Canceled
 		case "failed":
-			return connectors.FileEntry{}, fmt.Errorf("alist copy failed: %s", defaultString(strings.TrimSpace(taskInfo.Error), strings.TrimSpace(taskInfo.Status)))
+			return connectors.FileEntry{}, fmt.Errorf("alist upload failed: %s", defaultString(strings.TrimSpace(taskInfo.Error), strings.TrimSpace(taskInfo.Status)))
 		}
 
 		select {
@@ -302,7 +299,7 @@ func (service *Service) commitTransferItemToAList(
 		case <-time.After(transferExternalPollInterval):
 		}
 
-		taskInfo, err = runtime.GetCopyTask(ctx, taskInfo.ID)
+		taskInfo, err = runtime.GetUploadTask(ctx, taskInfo.ID)
 		if err != nil {
 			return connectors.FileEntry{}, err
 		}
@@ -326,7 +323,7 @@ func (service *Service) pauseExternalTransferItem(ctx context.Context, item *sto
 
 	if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskID) != "" {
 		targetRuntime := service.getAListRuntime()
-		if err := targetRuntime.CancelCopyTask(ctx, metadata.AList.TaskID); err != nil && !isAListUnknownTaskError(err) {
+		if err := service.cancelAListTask(ctx, targetRuntime, metadata.AList.TaskID, metadata.AList.TaskKind); err != nil && !isAListUnknownTaskError(err) {
 			return err
 		}
 		service.cleanupAListTargetResidue(ctx, *item)
@@ -353,7 +350,10 @@ func (service *Service) deleteExternalTransferItem(ctx context.Context, item *st
 
 	if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskID) != "" {
 		targetRuntime := service.getAListRuntime()
-		if err := targetRuntime.CancelCopyTask(ctx, metadata.AList.TaskID); err != nil && !isAListUnknownTaskError(err) {
+		if err := service.cancelAListTask(ctx, targetRuntime, metadata.AList.TaskID, metadata.AList.TaskKind); err != nil && !isAListUnknownTaskError(err) {
+			return err
+		}
+		if err := service.deleteAListTask(ctx, targetRuntime, metadata.AList.TaskID, metadata.AList.TaskKind); err != nil && !isAListUnknownTaskError(err) {
 			return err
 		}
 	}
@@ -528,7 +528,7 @@ func (service *Service) reconcileInterruptedAListTransfer(ctx context.Context, i
 		return nil
 	}
 
-	taskInfo, needCreate, err := service.resolveAListCopyTask(ctx, service.getAListRuntime(), metadata.AList.TaskID)
+	taskInfo, needCreate, err := service.resolveAListTask(ctx, service.getAListRuntime(), metadata.AList.TaskID, metadata.AList.TaskKind)
 	if err != nil {
 		return err
 	}
@@ -698,6 +698,22 @@ func (service *Service) pollAria2Transfer(
 	}
 }
 
+func (service *Service) resolveAListTask(
+	ctx context.Context,
+	runtime *sidecaralist.Runtime,
+	taskID string,
+	taskKind string,
+) (sidecaralist.TaskInfo, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(taskKind)) {
+	case "", "copy":
+		return service.resolveAListCopyTask(ctx, runtime, taskID)
+	case "upload":
+		return service.resolveAListUploadTask(ctx, runtime, taskID)
+	default:
+		return sidecaralist.TaskInfo{}, true, nil
+	}
+}
+
 func (service *Service) resolveAListCopyTask(ctx context.Context, runtime *sidecaralist.Runtime, taskID string) (sidecaralist.TaskInfo, bool, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -717,6 +733,46 @@ func (service *Service) resolveAListCopyTask(ctx context.Context, runtime *sidec
 		return sidecaralist.TaskInfo{}, true, nil
 	default:
 		return taskInfo, false, nil
+	}
+}
+
+func (service *Service) resolveAListUploadTask(ctx context.Context, runtime *sidecaralist.Runtime, taskID string) (sidecaralist.TaskInfo, bool, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return sidecaralist.TaskInfo{}, true, nil
+	}
+
+	taskInfo, err := runtime.GetUploadTask(ctx, taskID)
+	if err != nil {
+		if isAListUnknownTaskError(err) {
+			return sidecaralist.TaskInfo{}, true, nil
+		}
+		return sidecaralist.TaskInfo{}, false, err
+	}
+
+	switch service.normalizeAListTaskStatus(taskInfo) {
+	case "failed", "canceled":
+		return sidecaralist.TaskInfo{}, true, nil
+	default:
+		return taskInfo, false, nil
+	}
+}
+
+func (service *Service) cancelAListTask(ctx context.Context, runtime *sidecaralist.Runtime, taskID string, taskKind string) error {
+	switch strings.ToLower(strings.TrimSpace(taskKind)) {
+	case "upload":
+		return runtime.CancelUploadTask(ctx, taskID)
+	default:
+		return runtime.CancelCopyTask(ctx, taskID)
+	}
+}
+
+func (service *Service) deleteAListTask(ctx context.Context, runtime *sidecaralist.Runtime, taskID string, taskKind string) error {
+	switch strings.ToLower(strings.TrimSpace(taskKind)) {
+	case "upload":
+		return runtime.DeleteUploadTask(ctx, taskID)
+	default:
+		return nil
 	}
 }
 

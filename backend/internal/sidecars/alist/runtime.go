@@ -53,6 +53,9 @@ type StorageSpec struct {
 	CacheExpiration int
 	Order           int
 	Disabled        bool
+	WebProxy        bool
+	WebDAVPolicy    string
+	ProxyRange      bool
 }
 
 type Storage struct {
@@ -65,6 +68,9 @@ type Storage struct {
 	CacheExpiration int    `json:"cache_expiration"`
 	Order           int    `json:"order"`
 	Disabled        bool   `json:"disabled"`
+	WebProxy        bool   `json:"web_proxy"`
+	WebDAVPolicy    string `json:"webdav_policy"`
+	ProxyRange      bool   `json:"proxy_range"`
 }
 
 type Entry struct {
@@ -128,6 +134,22 @@ type copyTaskCreateResponse struct {
 	Tasks []struct {
 		ID string `json:"id"`
 	} `json:"tasks"`
+}
+
+type uploadTaskCreateResponse struct {
+	Task uploadTaskResponse `json:"task"`
+}
+
+type uploadTaskResponse struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	State      string  `json:"state"`
+	Status     string  `json:"status"`
+	Progress   float64 `json:"progress"`
+	TotalBytes int64   `json:"total_bytes"`
+	Error      string  `json:"error"`
+	StartTime  string  `json:"start_time"`
+	EndTime    string  `json:"end_time"`
 }
 
 type apiEnvelope[T any] struct {
@@ -459,6 +481,86 @@ func (runtime *Runtime) RetryCopyTask(ctx context.Context, taskID string) error 
 	return runtime.doJSON(ctx, token, http.MethodPost, fmt.Sprintf("/api/admin/task/copy/retry?tid=%s", taskID), nil, nil)
 }
 
+func (runtime *Runtime) CreateUploadTask(ctx context.Context, targetPath string, password string, overwrite bool, source io.Reader, size int64) (TaskInfo, error) {
+	token, err := runtime.ensureAuthenticated(ctx)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+	if size < 0 {
+		size = 0
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, runtime.baseURL+"/api/fs/put", source)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+	request.Header.Set("Authorization", token)
+	request.Header.Set("File-Path", urlEncodePath(targetPath))
+	request.Header.Set("Password", strings.TrimSpace(password))
+	request.Header.Set("Overwrite", strconv.FormatBool(overwrite))
+	request.Header.Set("As-Task", "true")
+	request.ContentLength = size
+
+	response, err := runtime.httpClient.Do(request)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+	defer response.Body.Close()
+
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return TaskInfo{}, fmt.Errorf("alist upload task failed: status=%d body=%s", response.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var envelope apiEnvelope[uploadTaskCreateResponse]
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return TaskInfo{}, fmt.Errorf("alist decode upload task response: %w", err)
+	}
+	if envelope.Code != 200 {
+		return TaskInfo{}, fmt.Errorf("alist api error: %s", defaultMessage(envelope.Message, string(raw)))
+	}
+	if strings.TrimSpace(envelope.Data.Task.ID) == "" {
+		return TaskInfo{}, errors.New("alist upload task did not return a task id")
+	}
+	return mapUploadTaskInfo(envelope.Data.Task), nil
+}
+
+func (runtime *Runtime) GetUploadTask(ctx context.Context, taskID string) (TaskInfo, error) {
+	token, err := runtime.ensureAuthenticated(ctx)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+
+	var response []uploadTaskResponse
+	endpoint := fmt.Sprintf("/api/task/upload/info?tid=%s", taskID)
+	if err := runtime.doJSON(ctx, token, http.MethodPost, endpoint, nil, &response); err != nil {
+		return TaskInfo{}, err
+	}
+	if len(response) == 0 {
+		return TaskInfo{}, errors.New("alist upload task not found")
+	}
+	return mapUploadTaskInfo(response[0]), nil
+}
+
+func (runtime *Runtime) CancelUploadTask(ctx context.Context, taskID string) error {
+	token, err := runtime.ensureAuthenticated(ctx)
+	if err != nil {
+		return err
+	}
+	return runtime.doJSON(ctx, token, http.MethodPost, fmt.Sprintf("/api/task/upload/cancel?tid=%s", taskID), nil, nil)
+}
+
+func (runtime *Runtime) DeleteUploadTask(ctx context.Context, taskID string) error {
+	token, err := runtime.ensureAuthenticated(ctx)
+	if err != nil {
+		return err
+	}
+	return runtime.doJSON(ctx, token, http.MethodPost, fmt.Sprintf("/api/task/upload/delete?tid=%s", taskID), nil, nil)
+}
+
 func (runtime *Runtime) ensureAuthenticated(ctx context.Context) (string, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -705,7 +807,7 @@ func (runtime *Runtime) ensureConfigFile() error {
 		}
 	}
 
-	config["site_url"] = ""
+	config["site_url"] = runtime.baseURL
 	config["cdn"] = ""
 	config["temp_dir"] = filepath.Join(runtime.dataDir(), "temp")
 	config["bleve_dir"] = filepath.Join(runtime.dataDir(), "bleve")
@@ -840,6 +942,7 @@ func normalizeStorageSpec(spec StorageSpec) (StorageSpec, error) {
 	spec.Driver = strings.TrimSpace(spec.Driver)
 	spec.Addition = strings.TrimSpace(spec.Addition)
 	spec.Remark = strings.TrimSpace(spec.Remark)
+	spec.WebDAVPolicy = strings.TrimSpace(spec.WebDAVPolicy)
 	if spec.MountPath == "" || spec.MountPath == "/" {
 		return StorageSpec{}, errors.New("alist mount path is required")
 	}
@@ -864,6 +967,9 @@ func specToPayload(spec StorageSpec) map[string]any {
 		"cache_expiration": spec.CacheExpiration,
 		"order":            spec.Order,
 		"disabled":         spec.Disabled,
+		"web_proxy":        spec.WebProxy,
+		"webdav_policy":    spec.WebDAVPolicy,
+		"proxy_range":      spec.ProxyRange,
 	}
 	if spec.ID > 0 {
 		payload["id"] = spec.ID
@@ -878,7 +984,10 @@ func storageEquivalent(existing Storage, spec StorageSpec) bool {
 		strings.TrimSpace(existing.Remark) == strings.TrimSpace(spec.Remark) &&
 		existing.CacheExpiration == spec.CacheExpiration &&
 		existing.Order == spec.Order &&
-		existing.Disabled == spec.Disabled
+		existing.Disabled == spec.Disabled &&
+		existing.WebProxy == spec.WebProxy &&
+		strings.TrimSpace(existing.WebDAVPolicy) == strings.TrimSpace(spec.WebDAVPolicy) &&
+		existing.ProxyRange == spec.ProxyRange
 }
 
 func normalizeJSONText(raw string) string {
@@ -974,6 +1083,41 @@ func mapTaskInfo(item taskResponse) TaskInfo {
 		Error:      item.Error,
 		StartTime:  parseTimestamp(item.StartTime),
 		EndTime:    parseTimestamp(item.EndTime),
+	}
+}
+
+func mapUploadTaskInfo(item uploadTaskResponse) TaskInfo {
+	status := strings.TrimSpace(item.Status)
+	if status == "" {
+		status = strings.TrimSpace(item.State)
+	}
+	return TaskInfo{
+		ID:         item.ID,
+		Name:       item.Name,
+		State:      mapUploadTaskState(item.State),
+		Status:     status,
+		Progress:   item.Progress,
+		TotalBytes: item.TotalBytes,
+		Error:      item.Error,
+		StartTime:  parseTimestamp(item.StartTime),
+		EndTime:    parseTimestamp(item.EndTime),
+	}
+}
+
+func mapUploadTaskState(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "succeeded", "success", "complete", "completed":
+		return 2
+	case "canceled", "cancelled", "stopped":
+		return 7
+	case "running", "active", "uploading":
+		return 1
+	case "pending", "waiting", "queued":
+		return 0
+	case "failed", "error":
+		return 6
+	default:
+		return 0
 	}
 }
 

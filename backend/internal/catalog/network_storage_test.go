@@ -75,6 +75,26 @@ func TestNormalizeConnectionConfigForNetworkStorageExtractsCredentialAndBuildsIn
 	}
 }
 
+func TestBuildNetworkStorageStorageSpecEnablesLocalProxyDownload(t *testing.T) {
+	spec, err := buildNetworkStorageStorageSpec(networkStorageEndpointConfig{
+		Provider:     networkStorageProvider115,
+		StorageKey:   "test-storage",
+		MountPath:    "/network/115/test-storage",
+		Driver:       networkStorageDriver115Cloud,
+		RootFolderID: "0",
+		Credential:   "token-123",
+	})
+	if err != nil {
+		t.Fatalf("build network storage spec: %v", err)
+	}
+	if !spec.WebProxy {
+		t.Fatal("expected network storage spec to enable web proxy for download compatibility")
+	}
+	if !spec.ProxyRange {
+		t.Fatal("expected network storage spec to enable proxy range for resumable downloads")
+	}
+}
+
 func TestResolveRequestedEndpointTypeRejectsLegacy115DirectType(t *testing.T) {
 	resolved, err := resolveRequestedEndpointType("115", nil)
 	if err == nil {

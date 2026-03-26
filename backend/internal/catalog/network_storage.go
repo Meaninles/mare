@@ -252,6 +252,8 @@ func buildNetworkStorageStorageSpec(config networkStorageEndpointConfig) (sideca
 			Addition:        addition,
 			Remark:          fmt.Sprintf("mare-network:%s", strings.TrimSpace(config.StorageKey)),
 			CacheExpiration: defaultNetworkStorageCacheTTL,
+			WebProxy:        true,
+			ProxyRange:      true,
 		}, nil
 	default:
 		return sidecaralist.StorageSpec{}, fmt.Errorf("unsupported network storage provider: %s", config.Provider)
