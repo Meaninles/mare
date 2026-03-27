@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, FolderOpen, HardDrive, Image as ImageIcon, LoaderCircle, Music4, RefreshCcw, Route, Settings2, Upload, Video } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
+import { PaginationControls } from "../components/PaginationControls";
 import { useCatalogEndpoints, useCatalogTasks } from "../hooks/useCatalog";
 import { useExecuteImport, useImportDevices, useImportRules, useImportSource, useSaveImportRules, useSelectImportDeviceRole } from "../hooks/useImport";
+import { usePagination } from "../hooks/usePagination";
 import { formatCatalogDate, formatFileSize } from "../lib/catalog-view";
 import { getCatalogEndpointTypeLabel } from "../lib/storage-endpoints";
 import { getTaskDisplaySummary } from "../lib/task-center";
@@ -97,6 +99,11 @@ export function ImportCenterPage() {
       });
   }, [sourceEntries]);
   const importTasks = (tasksQuery.data ?? []).filter((task) => task.taskType.toLowerCase().includes("import"));
+  const devicesPagination = usePagination(devices, 20);
+  const endpointsPagination = usePagination(activeManagedEndpoints, 20);
+  const sourceGroupsPagination = usePagination(groupedSourceEntries, 20);
+  const summaryItemsPagination = usePagination(lastSummary?.items ?? [], 20);
+  const importTasksPagination = usePagination(importTasks, 20);
   const selectedEntries = sourceEntries.filter((entry) => selectedPaths.includes(entry.relativePath));
   const configuredRuleCount =
     Object.values(mediaRuleTargets).filter((targetIds) => targetIds.length > 0).length +
@@ -210,7 +217,7 @@ export function ImportCenterPage() {
 
           {devices.length > 0 ? (
             <div className="device-card-list">
-              {devices.map((device) => (
+              {devicesPagination.pagedItems.map((device) => (
                 <article key={device.identitySignature} className={`device-card${selectedDevice?.identitySignature === device.identitySignature ? " active" : ""}`}>
                   <button
                     type="button"
@@ -252,6 +259,8 @@ export function ImportCenterPage() {
               ))}
             </div>
           ) : null}
+
+          <PaginationControls pagination={devicesPagination} itemLabel="???" />
         </article>
 
         <article className="detail-card import-target-card">
@@ -265,7 +274,7 @@ export function ImportCenterPage() {
             <EmptyBlock icon={<Route size={20} />} title="当前没有可用目标端点" copy="请先在存储管理中接入本地、QNAP、115 或可移动存储端点。" />
           ) : (
             <div className="endpoint-grid compact-grid">
-              {activeManagedEndpoints.map((endpoint) => (
+              {endpointsPagination.pagedItems.map((endpoint) => (
                 <article key={endpoint.id} className="endpoint-panel compact-panel">
                   <div className="endpoint-panel-head">
                     <strong>{endpoint.name}</strong>
@@ -333,7 +342,7 @@ export function ImportCenterPage() {
               <EmptyBlock icon={<CheckCircle2 size={20} />} title="当前筛选下没有可导入文件" copy="你可以切换媒体类型筛选，或重新扫描来源设备。" />
             ) : (
               <div className="import-folder-list">
-                {groupedSourceEntries.map((group) => {
+                {sourceGroupsPagination.pagedItems.map((group) => {
                   const folderSelectedCount = group.entries.filter((entry) => selectedPaths.includes(entry.relativePath)).length;
                   const allSelected = folderSelectedCount === group.entries.length && group.entries.length > 0;
 
@@ -384,6 +393,8 @@ export function ImportCenterPage() {
                 })}
               </div>
             )}
+
+            <PaginationControls pagination={sourceGroupsPagination} itemLabel="????" />
           </>
         ) : null}
       </article>
@@ -411,7 +422,7 @@ export function ImportCenterPage() {
                   <span className="status-pill subtle">{mediaRuleTargets[rule.value].length} 个目标</span>
                 </div>
                 <div className="endpoint-toggle-row">
-                  {activeManagedEndpoints.map((endpoint) => (
+                  {endpointsPagination.pagedItems.map((endpoint) => (
                     <button key={`${rule.value}-${endpoint.id}`} type="button" className={`ghost-button${mediaRuleTargets[rule.value].includes(endpoint.id) ? " is-selected" : ""}`} onClick={() => setMediaRuleTargets((current) => ({ ...current, [rule.value]: toggleString(current[rule.value], endpoint.id) }))}>
                       {endpoint.name}
                     </button>
@@ -451,7 +462,7 @@ export function ImportCenterPage() {
                   <input value={rule.extension} placeholder=".jpg / .mov / .wav" onChange={(event) => setExtensionRules((current) => current.map((item) => item.id === rule.id ? { ...item, extension: event.target.value } : item))} />
                 </label>
                 <div className="endpoint-toggle-row">
-                  {activeManagedEndpoints.map((endpoint) => (
+                  {endpointsPagination.pagedItems.map((endpoint) => (
                     <button key={`${rule.id}-${endpoint.id}`} type="button" className={`ghost-button${rule.targetEndpointIds.includes(endpoint.id) ? " is-selected" : ""}`} onClick={() => setExtensionRules((current) => current.map((item) => item.id === rule.id ? { ...item, targetEndpointIds: toggleString(item.targetEndpointIds, endpoint.id) } : item))}>
                       {endpoint.name}
                     </button>
@@ -489,7 +500,7 @@ export function ImportCenterPage() {
               </article>
               {lastSummary.items.length > 0 ? (
                 <div className="import-summary-list">
-                  {lastSummary.items.slice(0, 8).map((item) => (
+                  {summaryItemsPagination.pagedItems.map((item) => (
                     <article key={`${item.relativePath}-${item.logicalPathKey || item.displayName}`} className="import-summary-item">
                       <div className="rule-card-head">
                         <div>
@@ -516,6 +527,7 @@ export function ImportCenterPage() {
                   ))}
                 </div>
               ) : null}
+              {lastSummary.items.length > 0 ? <PaginationControls pagination={summaryItemsPagination} itemLabel="???" /> : null}
             </div>
           ) : (
             <EmptyBlock icon={<Upload size={20} />} title="还没有导入结果" copy="执行一次导入后，这里会显示摘要与失败提示。" />
@@ -526,11 +538,13 @@ export function ImportCenterPage() {
             <EmptyBlock icon={<Upload size={20} />} title="还没有导入任务" copy="任务执行后，这里会显示最近的导入记录。" />
           ) : (
             <div className="task-list">
-              {importTasks.slice(0, 6).map((task) => (
+              {importTasksPagination.pagedItems.map((task) => (
                 <ImportTaskCard key={task.id} task={task} />
               ))}
             </div>
           )}
+
+          <PaginationControls pagination={endpointsPagination} itemLabel="???" />
         </article>
       </div>
     </section>

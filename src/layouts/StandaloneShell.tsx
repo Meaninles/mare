@@ -1,6 +1,7 @@
-import { ChevronsUpDown, LibraryBig, Settings2, Workflow } from "lucide-react";
+import { LibraryBig, Settings2, Workflow } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { MareLogo } from "../components/MareLogo";
+import { MareWordmark } from "../components/MareWordmark";
 
 export function StandaloneShell() {
   return (
@@ -10,21 +11,9 @@ export function StandaloneShell() {
           <div className="brand-panel rail-brand sidebar-brand">
             <MareLogo className="brand-mark rail-brand-mark" />
             <div className="rail-brand-copy sidebar-brand-copy">
-              <strong>Mare</strong>
-              <span>媒体资产台</span>
+              <MareWordmark />
             </div>
           </div>
-
-          <NavLink to="/welcome" className="sidebar-workspace-switch" title="应用导航">
-            <span className="sidebar-workspace-icon">
-              <LibraryBig size={15} strokeWidth={1.9} />
-            </span>
-            <span className="sidebar-workspace-copy">
-              <small>当前入口</small>
-              <strong>桌面工作台</strong>
-            </span>
-            <ChevronsUpDown size={15} strokeWidth={1.9} />
-          </NavLink>
 
           <div className="sidebar-nav-group">
             <p className="sidebar-section-label">功能导航</p>
@@ -40,7 +29,6 @@ export function StandaloneShell() {
                 </span>
                 <span className="nav-item-copy rail-nav-copy">
                   <strong>资产库</strong>
-                  <span>选择与管理入口</span>
                 </span>
               </NavLink>
 
@@ -54,7 +42,6 @@ export function StandaloneShell() {
                 </span>
                 <span className="nav-item-copy rail-nav-copy">
                   <strong>任务</strong>
-                  <span>当前资产库队列</span>
                 </span>
               </NavLink>
             </nav>
@@ -62,13 +49,16 @@ export function StandaloneShell() {
         </div>
 
         <div className="sidebar-footer-actions">
-          <NavLink to="/settings" className={({ isActive }) => `nav-item rail-nav-item sidebar-settings-link${isActive ? " active" : ""}`} title="设置">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => `nav-item rail-nav-item sidebar-settings-link${isActive ? " active" : ""}`}
+            title="设置"
+          >
             <span className="nav-item-icon rail-nav-icon">
               <Settings2 size={18} strokeWidth={1.85} />
             </span>
             <span className="nav-item-copy rail-nav-copy">
               <strong>设置</strong>
-              <span>主题与偏好</span>
             </span>
           </NavLink>
         </div>

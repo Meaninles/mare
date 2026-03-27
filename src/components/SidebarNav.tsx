@@ -1,17 +1,9 @@
-import {
-  Archive,
-  ArrowDownToLine,
-  ChevronsUpDown,
-  FolderTree,
-  LibraryBig,
-  RefreshCcw,
-  Server,
-  Settings2
-} from "lucide-react";
+import { Archive, ArrowDownToLine, ChevronLeft, FolderTree, RefreshCcw, Server, Settings2 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useLibraryContext } from "../context/LibraryContext";
 import type { NavigationItem } from "../types/navigation";
 import { MareLogo } from "./MareLogo";
+import { MareWordmark } from "./MareWordmark";
 
 export const primaryNavigationItems: NavigationItem[] = [
   { label: "资产", path: "/assets", icon: Archive },
@@ -22,17 +14,17 @@ export const primaryNavigationItems: NavigationItem[] = [
 ];
 
 const routeMeta: Record<string, { label: string; caption: string }> = {
-  "/assets": { label: "资产", caption: "文件与副本" },
-  "/collections": { label: "集合", caption: "逻辑分类" },
-  "/sync": { label: "同步", caption: "恢复与一致性" },
-  "/ingest": { label: "导入", caption: "来源与规则" },
-  "/storage": { label: "节点", caption: "连接的存储" },
-  "/settings": { label: "设置", caption: "主题与工具" },
-  "/welcome": { label: "资产库", caption: "选择入口" },
-  "/media-lab": { label: "媒体实验室", caption: "诊断" },
-  "/storage-test": { label: "存储测试", caption: "诊断" },
-  "/removable-test": { label: "移动设备测试", caption: "诊断" },
-  "/system-tasks": { label: "系统任务", caption: "跨库任务" }
+  "/assets": { label: "资产", caption: "" },
+  "/collections": { label: "集合", caption: "" },
+  "/sync": { label: "同步", caption: "" },
+  "/ingest": { label: "导入", caption: "" },
+  "/storage": { label: "节点", caption: "" },
+  "/settings": { label: "设置", caption: "" },
+  "/welcome": { label: "资产库", caption: "" },
+  "/media-lab": { label: "媒体实验室", caption: "" },
+  "/storage-test": { label: "存储测试", caption: "" },
+  "/removable-test": { label: "移动设备测试", caption: "" },
+  "/system-tasks": { label: "系统任务", caption: "" }
 };
 
 export function getRouteMeta(pathname: string) {
@@ -45,7 +37,7 @@ export function getRouteMeta(pathname: string) {
 
   return routeMeta[pathname] ?? {
     label: "Mare",
-    caption: "资产平台"
+    caption: ""
   };
 }
 
@@ -59,27 +51,22 @@ export function SidebarNav() {
         <div className="brand-panel rail-brand sidebar-brand">
           <MareLogo className="brand-mark rail-brand-mark" />
           <div className="rail-brand-copy sidebar-brand-copy">
-            <strong>Mare</strong>
-            <span>媒体资产台</span>
+            <MareWordmark />
           </div>
         </div>
 
-        <NavLink to="/welcome" className="sidebar-workspace-switch" title={currentLibrary?.name ?? "选择资产库"}>
-          <span className="sidebar-workspace-icon">
-            <LibraryBig size={15} strokeWidth={1.9} />
-          </span>
-          <span className="sidebar-workspace-copy">
-            <small>当前资产库</small>
-            <strong>{currentLibrary?.name ?? "未打开资产库"}</strong>
-          </span>
-          <ChevronsUpDown size={15} strokeWidth={1.9} />
-        </NavLink>
+        {currentLibrary ? (
+          <div className="sidebar-library-status" title={currentLibrary.name}>
+            <span>当前资产库</span>
+            <strong>{currentLibrary.name}</strong>
+          </div>
+        ) : null}
 
         <div className="sidebar-nav-group">
           <p className="sidebar-section-label">功能导航</p>
 
           <nav className="nav-list nav-rail sidebar-nav-list" aria-label="库内导航">
-            {primaryNavigationItems.map((item) => {
+            {[...primaryNavigationItems, { label: "返回资产库", path: "/welcome", icon: ChevronLeft }].map((item) => {
               const Icon = item.icon;
               const isActive =
                 location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
@@ -96,7 +83,6 @@ export function SidebarNav() {
                   </span>
                   <span className="nav-item-copy rail-nav-copy">
                     <strong>{item.label}</strong>
-                    <span>{routeMeta[item.path]?.caption ?? ""}</span>
                   </span>
                 </NavLink>
               );
@@ -112,7 +98,6 @@ export function SidebarNav() {
           </span>
           <span className="nav-item-copy rail-nav-copy">
             <strong>设置</strong>
-            <span>主题与偏好</span>
           </span>
         </NavLink>
       </div>

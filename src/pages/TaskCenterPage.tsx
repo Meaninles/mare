@@ -1,6 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCcw, TerminalSquare } from "lucide-react";
+import { PaginationControls } from "../components/PaginationControls";
 import { useCatalogRetryTask, useCatalogTasks } from "../hooks/useCatalog";
+import { usePagination } from "../hooks/usePagination";
 import { useSystemLogs } from "../hooks/useSystemLogs";
 import { formatCatalogDate } from "../lib/catalog-view";
 import {
@@ -37,9 +39,11 @@ export function TaskCenterPage() {
   const runningTasks = useMemo(() => tasks.filter((task) => matchesTaskFilter(task, "running")), [tasks]);
   const failedTasks = useMemo(() => tasks.filter((task) => matchesTaskFilter(task, "failed")), [tasks]);
   const completedTasks = useMemo(
-    () => tasks.filter((task) => task.status.trim().toLowerCase() === "success").slice(0, 24),
+    () => tasks.filter((task) => task.status.trim().toLowerCase() === "success"),
     [tasks]
   );
+  const filteredTasksPagination = usePagination(filteredTasks, 20);
+  const logsPagination = usePagination(logsQuery.data?.entries ?? [], 20);
   const usesCollapsedSections =
     taskFilter === "all" || taskFilter === "running" || taskFilter === "failed" || taskFilter === "completed";
 
@@ -83,23 +87,15 @@ export function TaskCenterPage() {
           </div>
 
           {tasksQuery.isLoading ? (
-            <div className="sync-empty-block">
-              <LoaderCircle size={20} className="spin" />
-              <div>
-                <strong>正在读取任务列表</strong>
-                <p>后台最近的任务记录正在从后端拉取。</p>
-              </div>
-            </div>
+            <EmptyBlock icon={<LoaderCircle size={20} className="spin" />} title="正在读取任务列表" copy="后台最近的任务记录正在从后端拉取。" />
           ) : null}
 
           {tasksQuery.isError ? (
-            <div className="sync-empty-block">
-              <AlertTriangle size={20} />
-              <div>
-                <strong>暂时无法加载任务</strong>
-                <p>{tasksQuery.error instanceof Error ? tasksQuery.error.message : "请稍后再试。"}</p>
-              </div>
-            </div>
+            <EmptyBlock
+              icon={<AlertTriangle size={20} />}
+              title="暂时无法加载任务"
+              copy={tasksQuery.error instanceof Error ? tasksQuery.error.message : "请稍后再试。"}
+            />
           ) : null}
 
           {!tasksQuery.isLoading && !tasksQuery.isError && usesCollapsedSections ? (
@@ -145,7 +141,7 @@ export function TaskCenterPage() {
                     eyebrow="已完成"
                     title="最近完成的任务"
                     emptyTitle="暂时还没有完成任务"
-                    emptyCopy="成功完成的任务会保留在这里，方便你回看刚刚已经处理好的项目。"
+                    emptyCopy="成功完成的任务会保留在这里，方便回看最近处理好的项目。"
                     collapsedCopy={`已完成 ${summary.completed} 个任务，点击展开查看最近完成的记录。`}
                     tasks={completedTasks}
                     open={showCompletedTasks}
@@ -198,7 +194,7 @@ export function TaskCenterPage() {
                   eyebrow="已完成"
                   title="最近完成的任务"
                   emptyTitle="暂时还没有完成任务"
-                  emptyCopy="成功完成的任务会保留在这里，方便你回看刚刚已经处理好的项目。"
+                  emptyCopy="成功完成的任务会保留在这里，方便回看最近处理好的项目。"
                   collapsedCopy={`已完成 ${summary.completed} 个任务，点击展开查看最近完成的记录。`}
                   tasks={completedTasks}
                   open={showCompletedTasks}
@@ -209,53 +205,50 @@ export function TaskCenterPage() {
           ) : null}
 
           {!tasksQuery.isLoading && !tasksQuery.isError && !usesCollapsedSections && filteredTasks.length === 0 ? (
-            <div className="sync-empty-block">
-              <CheckCircle2 size={20} />
-              <div>
-                <strong>这个筛选下没有任务</strong>
-                <p>切换筛选条件后，可以查看其他类型的后台活动。</p>
-              </div>
-            </div>
+            <EmptyBlock icon={<CheckCircle2 size={20} />} title="这个筛选下没有任务" copy="切换筛选条件后，可以查看其他类型的后台活动。" />
           ) : null}
 
           {!tasksQuery.isLoading && !tasksQuery.isError && !usesCollapsedSections && filteredTasks.length > 0 ? (
-            <div className="task-list">
-              {filteredTasks.map((task) => (
-                <article key={task.id} className="task-card sync-task-card">
-                  <div className="task-card-head">
-                    <div>
-                      <strong>{getTaskTitle(task.taskType)}</strong>
-                      <p>{task.id}</p>
+            <>
+              <div className="task-list">
+                {filteredTasksPagination.pagedItems.map((task) => (
+                  <article key={task.id} className="task-card sync-task-card">
+                    <div className="task-card-head">
+                      <div>
+                        <strong>{getTaskTitle(task.taskType)}</strong>
+                        <p>{task.id}</p>
+                      </div>
+                      <span className={`status-pill ${getTaskTone(task.status)}`}>{getTaskStatusLabel(task.status)}</span>
                     </div>
-                    <span className={`status-pill ${getTaskTone(task.status)}`}>{getTaskStatusLabel(task.status)}</span>
-                  </div>
 
-                  <div className="task-card-meta">
-                    <span>创建于 {formatCatalogDate(task.createdAt)}</span>
-                    {task.startedAt ? <span>开始于 {formatCatalogDate(task.startedAt)}</span> : null}
-                    {task.finishedAt ? <span>结束于 {formatCatalogDate(task.finishedAt)}</span> : null}
-                    <span>重试次数 {task.retryCount}</span>
-                  </div>
-
-                  {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
-                  {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
-
-                  {canRetryTask(task) ? (
-                    <div className="action-row">
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        disabled={retryMutation.isPending}
-                        onClick={() => void retryMutation.mutateAsync(task.id)}
-                      >
-                        <RefreshCcw size={14} />
-                        重试任务
-                      </button>
+                    <div className="task-card-meta">
+                      <span>创建于 {formatCatalogDate(task.createdAt)}</span>
+                      {task.startedAt ? <span>开始于 {formatCatalogDate(task.startedAt)}</span> : null}
+                      {task.finishedAt ? <span>结束于 {formatCatalogDate(task.finishedAt)}</span> : null}
+                      <span>重试次数 {task.retryCount}</span>
                     </div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
+
+                    {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
+                    {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
+
+                    {canRetryTask(task) ? (
+                      <div className="action-row">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          disabled={retryMutation.isPending}
+                          onClick={() => void retryMutation.mutateAsync(task.id)}
+                        >
+                          <RefreshCcw size={14} />
+                          重试任务
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+              <PaginationControls pagination={filteredTasksPagination} itemLabel="个任务" />
+            </>
           ) : null}
         </article>
 
@@ -286,23 +279,15 @@ export function TaskCenterPage() {
           </div>
 
           {logsQuery.isLoading ? (
-            <div className="sync-empty-block">
-              <LoaderCircle size={20} className="spin" />
-              <div>
-                <strong>正在读取日志</strong>
-                <p>最近的结构化日志正在从磁盘读取。</p>
-              </div>
-            </div>
+            <EmptyBlock icon={<LoaderCircle size={20} className="spin" />} title="正在读取日志" copy="最近的结构化日志正在从磁盘读取。" />
           ) : null}
 
           {logsQuery.isError ? (
-            <div className="sync-empty-block">
-              <AlertTriangle size={20} />
-              <div>
-                <strong>暂时无法读取日志</strong>
-                <p>{logsQuery.error instanceof Error ? logsQuery.error.message : "请稍后再试。"}</p>
-              </div>
-            </div>
+            <EmptyBlock
+              icon={<AlertTriangle size={20} />}
+              title="暂时无法读取日志"
+              copy={logsQuery.error instanceof Error ? logsQuery.error.message : "请稍后再试。"}
+            />
           ) : null}
 
           {!logsQuery.isLoading && !logsQuery.isError && logsQuery.data ? (
@@ -316,32 +301,29 @@ export function TaskCenterPage() {
               </div>
 
               {logsQuery.data.entries.length === 0 ? (
-                <div className="sync-empty-block">
-                  <CheckCircle2 size={20} />
-                  <div>
-                    <strong>这个级别下没有日志</strong>
-                    <p>可以放宽筛选条件，或者等待下一次后台事件。</p>
-                  </div>
-                </div>
+                <EmptyBlock icon={<CheckCircle2 size={20} />} title="这个级别下没有日志" copy="可以放宽筛选条件，或者等待下一次后台事件。" />
               ) : (
-                <div className="task-log-list">
-                  {logsQuery.data.entries.map((entry, index) => (
-                    <article key={`${entry.timestamp}-${index}`} className="task-log-card">
-                      <div className="task-log-head">
-                        <span className={`status-pill ${getLogTone(entry.level)}`}>{entry.level || "info"}</span>
-                        <strong>{entry.message || "日志事件"}</strong>
-                      </div>
+                <>
+                  <div className="task-log-list">
+                    {logsPagination.pagedItems.map((entry, index) => (
+                      <article key={`${entry.timestamp}-${index}`} className="task-log-card">
+                        <div className="task-log-head">
+                          <span className={`status-pill ${getLogTone(entry.level)}`}>{entry.level || "info"}</span>
+                          <strong>{entry.message || "日志事件"}</strong>
+                        </div>
 
-                      <div className="task-card-meta">
-                        <span>{formatCatalogDate(entry.timestamp)}</span>
-                      </div>
+                        <div className="task-card-meta">
+                          <span>{formatCatalogDate(entry.timestamp)}</span>
+                        </div>
 
-                      {entry.attributes && Object.keys(entry.attributes).length > 0 ? (
-                        <pre className="task-log-pre">{JSON.stringify(entry.attributes, null, 2)}</pre>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
+                        {entry.attributes && Object.keys(entry.attributes).length > 0 ? (
+                          <pre className="task-log-pre">{JSON.stringify(entry.attributes, null, 2)}</pre>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                  <PaginationControls pagination={logsPagination} itemLabel="条日志" />
+                </>
               )}
             </>
           ) : null}
@@ -372,6 +354,8 @@ function CollapsibleTaskSection({
   onToggle: () => void;
   renderActions?: (task: CatalogTask) => ReactNode;
 }) {
+  const tasksPagination = usePagination(tasks, 10);
+
   return (
     <section className="task-drawer-section">
       <div className="section-head task-section-collapsible-head">
@@ -386,37 +370,34 @@ function CollapsibleTaskSection({
       </div>
 
       {tasks.length === 0 ? (
-        <div className="sync-empty-block">
-          <CheckCircle2 size={20} />
-          <div>
-            <strong>{emptyTitle}</strong>
-            <p>{emptyCopy}</p>
-          </div>
-        </div>
+        <EmptyBlock icon={<CheckCircle2 size={20} />} title={emptyTitle} copy={emptyCopy} />
       ) : open ? (
-        <div className="task-list">
-          {tasks.map((task) => (
-            <article key={task.id} className="task-card sync-task-card">
-              <div className="task-card-head">
-                <div>
-                  <strong>{getTaskTitle(task.taskType)}</strong>
-                  <p>{task.id}</p>
+        <>
+          <div className="task-list">
+            {tasksPagination.pagedItems.map((task) => (
+              <article key={task.id} className="task-card sync-task-card">
+                <div className="task-card-head">
+                  <div>
+                    <strong>{getTaskTitle(task.taskType)}</strong>
+                    <p>{task.id}</p>
+                  </div>
+                  <span className={`status-pill ${getTaskTone(task.status)}`}>{getTaskStatusLabel(task.status)}</span>
                 </div>
-                <span className={`status-pill ${getTaskTone(task.status)}`}>{getTaskStatusLabel(task.status)}</span>
-              </div>
 
-              <div className="task-card-meta">
-                <span>创建于 {formatCatalogDate(task.createdAt)}</span>
-                {task.startedAt ? <span>开始于 {formatCatalogDate(task.startedAt)}</span> : null}
-                {task.finishedAt ? <span>结束于 {formatCatalogDate(task.finishedAt)}</span> : null}
-              </div>
+                <div className="task-card-meta">
+                  <span>创建于 {formatCatalogDate(task.createdAt)}</span>
+                  {task.startedAt ? <span>开始于 {formatCatalogDate(task.startedAt)}</span> : null}
+                  {task.finishedAt ? <span>结束于 {formatCatalogDate(task.finishedAt)}</span> : null}
+                </div>
 
-              {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
-              {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
-              {renderActions ? <div className="action-row">{renderActions(task)}</div> : null}
-            </article>
-          ))}
-        </div>
+                {getTaskDisplaySummary(task) ? <p className="muted-copy">{getTaskDisplaySummary(task)}</p> : null}
+                {task.errorMessage ? <p className="error-copy">{task.errorMessage}</p> : null}
+                {renderActions ? <div className="action-row">{renderActions(task)}</div> : null}
+              </article>
+            ))}
+          </div>
+          <PaginationControls pagination={tasksPagination} itemLabel="个任务" />
+        </>
       ) : (
         <div className="task-section-collapsed-note">
           <p>{collapsedCopy}</p>
@@ -440,6 +421,18 @@ function MetricCard({
       <p>{label}</p>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function EmptyBlock({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) {
+  return (
+    <div className="sync-empty-block">
+      {icon}
+      <div>
+        <strong>{title}</strong>
+        <p>{copy}</p>
+      </div>
+    </div>
   );
 }
 

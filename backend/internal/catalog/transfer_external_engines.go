@@ -149,7 +149,7 @@ func (service *Service) commitTransferItemToAList(
 	item *store.TransferTaskItem,
 	endpoint store.StorageEndpoint,
 ) (connectors.FileEntry, error) {
-	config, runtime, err := service.prepareAListBackedEndpoint(ctx, endpoint)
+	_, runtime, err := service.prepareAListBackedEndpoint(ctx, endpoint)
 	if err != nil {
 		return connectors.FileEntry{}, err
 	}
@@ -157,8 +157,25 @@ func (service *Service) commitTransferItemToAList(
 	targetPath := resolveEndpointAbsolutePath(endpoint, item.TargetPath)
 	targetDir := path.Dir(targetPath)
 	targetName := path.Base(targetPath)
+	engineLabel := "\u7f51\u7edc\u5b58\u50a8\u4e0a\u4f20"
 
 	if err := service.ensureAListDirectoryTree(ctx, runtime, targetDir, endpoint.RootPath); err != nil {
+		return connectors.FileEntry{}, err
+	}
+	if err := service.ensureAListRuntimeStagingStorage(ctx, runtime); err != nil {
+		return connectors.FileEntry{}, err
+	}
+
+	stagePath, err := service.resolveAListStagePath(item.StagingPath)
+	if err != nil {
+		return connectors.FileEntry{}, err
+	}
+	sourceDir := path.Dir(stagePath)
+	sourceName := path.Base(stagePath)
+	if sourceDir == "." || sourceDir == "/" || strings.TrimSpace(sourceName) == "" {
+		return connectors.FileEntry{}, fmt.Errorf("invalid alist staging path %q", stagePath)
+	}
+	if _, err := runtime.StatEntry(ctx, stagePath, "", true); err != nil {
 		return connectors.FileEntry{}, err
 	}
 
@@ -167,15 +184,15 @@ func (service *Service) commitTransferItemToAList(
 	item.UpdatedAt = time.Now().UTC()
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.EngineKind = transferEngineKindAList
-		metadata.EngineLabel = "??????"
+		metadata.EngineLabel = engineLabel
 		metadata.RefreshInterval = 1
 		if metadata.AList == nil {
 			metadata.AList = &transferItemAListMetadata{}
 		}
-		metadata.AList.TaskKind = "upload"
-		metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
+		metadata.AList.TaskKind = "copy"
+		metadata.AList.SourceDir = sourceDir
 		metadata.AList.TargetDir = targetDir
-		metadata.AList.Names = []string{targetName}
+		metadata.AList.Names = []string{sourceName}
 	})
 	if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 		return connectors.FileEntry{}, err
@@ -187,23 +204,12 @@ func (service *Service) commitTransferItemToAList(
 		existingTaskID = strings.TrimSpace(metadata.AList.TaskID)
 	}
 
-	taskInfo, needCreate, err := service.resolveAListUploadTask(ctx, runtime, existingTaskID)
+	taskInfo, needCreate, err := service.resolveAListCopyTask(ctx, runtime, existingTaskID)
 	if err != nil {
 		return connectors.FileEntry{}, err
 	}
 	if needCreate {
-		stageFile, err := os.Open(item.StagingPath)
-		if err != nil {
-			return connectors.FileEntry{}, err
-		}
-		defer stageFile.Close()
-
-		stageInfo, err := stageFile.Stat()
-		if err != nil {
-			return connectors.FileEntry{}, err
-		}
-
-		taskInfo, err = runtime.CreateUploadTask(ctx, targetPath, config.Password, true, stageFile, stageInfo.Size())
+		taskInfo, err = runtime.CreateCopyTask(ctx, sourceDir, targetDir, []string{sourceName}, true)
 		if err != nil {
 			return connectors.FileEntry{}, err
 		}
@@ -212,12 +218,12 @@ func (service *Service) commitTransferItemToAList(
 				metadata.AList = &transferItemAListMetadata{}
 			}
 			metadata.AList.TaskID = taskInfo.ID
-			metadata.AList.TaskKind = "upload"
+			metadata.AList.TaskKind = "copy"
 			metadata.AList.TaskStatus = service.normalizeAListTaskStatus(taskInfo)
 			metadata.AList.TaskState = taskInfo.State
-			metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
+			metadata.AList.SourceDir = sourceDir
 			metadata.AList.TargetDir = targetDir
-			metadata.AList.Names = []string{targetName}
+			metadata.AList.Names = []string{sourceName}
 		})
 		if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 			return connectors.FileEntry{}, err
@@ -231,7 +237,7 @@ func (service *Service) commitTransferItemToAList(
 			return connectors.FileEntry{}, err
 		}
 		if strings.TrimSpace(taskInfo.ID) == "" {
-			return connectors.FileEntry{}, fmt.Errorf("alist upload task id is empty")
+			return connectors.FileEntry{}, fmt.Errorf("alist copy task id is empty")
 		}
 
 		currentBytes := service.estimateAListCommittedBytes(item.TotalBytes, taskInfo)
@@ -242,19 +248,19 @@ func (service *Service) commitTransferItemToAList(
 		speed := estimateTransferSpeed(item.CommittedBytes-lastBytes, now.Sub(lastObservedAt))
 		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 			metadata.EngineKind = transferEngineKindAList
-			metadata.EngineLabel = "??????"
+			metadata.EngineLabel = engineLabel
 			metadata.CurrentSpeed = speed
 			metadata.RefreshInterval = 1
 			if metadata.AList == nil {
 				metadata.AList = &transferItemAListMetadata{}
 			}
 			metadata.AList.TaskID = taskInfo.ID
-			metadata.AList.TaskKind = "upload"
+			metadata.AList.TaskKind = "copy"
 			metadata.AList.TaskStatus = service.normalizeAListTaskStatus(taskInfo)
 			metadata.AList.TaskState = taskInfo.State
-			metadata.AList.SourceDir = filepath.Dir(item.StagingPath)
+			metadata.AList.SourceDir = sourceDir
 			metadata.AList.TargetDir = targetDir
-			metadata.AList.Names = []string{targetName}
+			metadata.AList.Names = []string{sourceName}
 		})
 		if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
 			return connectors.FileEntry{}, err
@@ -264,6 +270,11 @@ func (service *Service) commitTransferItemToAList(
 
 		switch service.normalizeAListTaskStatus(taskInfo) {
 		case "complete":
+			if sourceName != targetName {
+				if err := service.renameAListCopyTarget(ctx, runtime, targetDir, sourceName, targetName); err != nil {
+					return connectors.FileEntry{}, err
+				}
+			}
 			connector, err := service.buildConnector(endpoint)
 			if err != nil {
 				return connectors.FileEntry{}, err
@@ -275,8 +286,10 @@ func (service *Service) commitTransferItemToAList(
 			updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 				metadata.CurrentSpeed = 0
 				if metadata.AList != nil {
+					metadata.AList.TaskKind = "copy"
 					metadata.AList.TaskStatus = "complete"
 					metadata.AList.TaskState = taskInfo.State
+					metadata.AList.Names = []string{targetName}
 				}
 			})
 			if err := service.persistTransferItemState(context.Background(), taskID, *item); err != nil {
@@ -288,9 +301,12 @@ func (service *Service) commitTransferItemToAList(
 			}
 			return entry, nil
 		case "canceled":
-			return connectors.FileEntry{}, context.Canceled
+			if err := ctx.Err(); err != nil {
+				return connectors.FileEntry{}, err
+			}
+			return connectors.FileEntry{}, fmt.Errorf("alist copy task was canceled unexpectedly")
 		case "failed":
-			return connectors.FileEntry{}, fmt.Errorf("alist upload failed: %s", defaultString(strings.TrimSpace(taskInfo.Error), strings.TrimSpace(taskInfo.Status)))
+			return connectors.FileEntry{}, fmt.Errorf("alist copy failed: %s", defaultString(strings.TrimSpace(taskInfo.Error), strings.TrimSpace(taskInfo.Status)))
 		}
 
 		select {
@@ -299,7 +315,7 @@ func (service *Service) commitTransferItemToAList(
 		case <-time.After(transferExternalPollInterval):
 		}
 
-		taskInfo, err = runtime.GetUploadTask(ctx, taskInfo.ID)
+		taskInfo, err = runtime.GetCopyTask(ctx, taskInfo.ID)
 		if err != nil {
 			return connectors.FileEntry{}, err
 		}

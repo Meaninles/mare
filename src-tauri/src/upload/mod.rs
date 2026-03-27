@@ -1,6 +1,8 @@
 #[allow(dead_code)]
 mod domain;
 #[allow(dead_code)]
+mod p115_provider;
+#[allow(dead_code)]
 mod store;
 
 use crate::app_state::ModuleStatus;
@@ -14,6 +16,8 @@ pub use domain::{
     UploadPartResponse, UploadPartStatus, UploadProvider, UploadProviderKind, UploadRetryPolicy,
     UploadStateTransitionError,
 };
+#[allow(unused_imports)]
+pub use p115_provider::{P115UploadProvider, P115UploadProviderConfig};
 #[allow(unused_imports)]
 pub use store::{
     NewUploadJob, NewUploadSession, UploadAttemptRecord, UploadAttemptStatus, UploadErrorSnapshot,

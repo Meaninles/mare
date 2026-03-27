@@ -16,7 +16,9 @@ import {
   X
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { PaginationControls } from "../components/PaginationControls";
 import { useLibraryContext } from "../context/LibraryContext";
+import { usePagination } from "../hooks/usePagination";
 import { formatCatalogDate } from "../lib/catalog-view";
 import { listLibraries, setLibraryPinned } from "../services/desktop";
 import type { RegisteredLibrary } from "../types/libraries";
@@ -89,6 +91,7 @@ export function WelcomePage() {
     () => libraries.find((library) => library.id === selectedLibraryId) ?? null,
     [libraries, selectedLibraryId]
   );
+  const librariesPagination = usePagination(libraries, 20);
 
   const sessionErrorMessage = sessionQuery.error instanceof Error ? sessionQuery.error.message : null;
   const librariesErrorMessage = librariesQuery.error instanceof Error ? librariesQuery.error.message : null;
@@ -358,7 +361,7 @@ export function WelcomePage() {
           </div>
         ) : (
           <div className="library-browser-list">
-            {libraries.map((library) => {
+            {librariesPagination.pagedItems.map((library) => {
               const isCurrent = library.id === currentLibrary?.id;
               const canEnter = isCurrent && isLibraryOpen;
 
@@ -368,10 +371,6 @@ export function WelcomePage() {
                   className={`library-browser-row${canEnter ? " is-current" : ""}`}
                 >
                   <div className="library-browser-main">
-                    <span className="library-browser-icon">
-                      <LibraryBig size={18} />
-                    </span>
-
                     <div className="library-browser-copy">
                       <div className="library-browser-title">
                         <div className="library-browser-title-main">
@@ -440,6 +439,8 @@ export function WelcomePage() {
             })}
           </div>
         )}
+
+        <PaginationControls pagination={librariesPagination} itemLabel="个资产库" />
       </article>
 
       {dialogMode ? (

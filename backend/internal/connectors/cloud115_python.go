@@ -47,6 +47,10 @@ type cloud115BridgeRequest struct {
 	Limit              int    `json:"limit,omitempty"`
 	SourceFile         string `json:"sourceFile,omitempty"`
 	DownloadFile       string `json:"downloadFile,omitempty"`
+	ResumeStatePath    string `json:"resumeStatePath,omitempty"`
+	PartSize           int    `json:"partSize,omitempty"`
+	MaxParts           int    `json:"maxParts,omitempty"`
+	ParentID           int    `json:"parentId,omitempty"`
 	QRUID              string `json:"qrUid,omitempty"`
 	QRTime             int64  `json:"qrTime,omitempty"`
 	QRSign             string `json:"qrSign,omitempty"`
@@ -65,14 +69,54 @@ type cloud115BridgeResponse struct {
 	Entries       []FileEntry            `json:"entries,omitempty"`
 	DownloadFile  string                 `json:"downloadFile,omitempty"`
 	QRCodeSession *Cloud115QRCodeSession `json:"qrCodeSession,omitempty"`
+	UploadSession *Cloud115UploadSession `json:"uploadSession,omitempty"`
 	Error         cloud115BridgeError    `json:"error,omitempty"`
+}
+
+type Cloud115UploadPart struct {
+	PartNumber int    `json:"partNumber"`
+	Size       int64  `json:"size"`
+	ETag       string `json:"etag,omitempty"`
+}
+
+type Cloud115UploadProgress struct {
+	FileSize      int64 `json:"fileSize"`
+	PartSize      int64 `json:"partSize"`
+	UploadedBytes int64 `json:"uploadedBytes"`
+	UploadedParts int64 `json:"uploadedParts"`
+	TotalParts    int64 `json:"totalParts"`
+	Completed     bool  `json:"completed"`
+}
+
+type Cloud115UploadSession struct {
+	UploadID         string                  `json:"uploadId"`
+	DestinationPath  string                  `json:"destinationPath,omitempty"`
+	StatePath        string                  `json:"statePath,omitempty"`
+	SessionCreated   bool                    `json:"sessionCreated,omitempty"`
+	SessionExisted   bool                    `json:"sessionExisted,omitempty"`
+	Completed        bool                    `json:"completed,omitempty"`
+	StateDeleted     bool                    `json:"stateDeleted,omitempty"`
+	Parts            []Cloud115UploadPart    `json:"parts,omitempty"`
+	UploadedInCall   []Cloud115UploadPart    `json:"uploadedInCall,omitempty"`
+	Progress         *Cloud115UploadProgress `json:"progress,omitempty"`
+	ProviderResponse map[string]any          `json:"providerResponse,omitempty"`
+}
+
+type Cloud115UploadSessionRequest struct {
+	RootID          string
+	LocalPath       string
+	RemotePath      string
+	ResumeStatePath string
+	PartSize        int
+	MaxParts        int
+	ParentID        int
 }
 
 func NewCloud115PythonClient(credential string, appType string) *Cloud115PythonClient {
 	return &Cloud115PythonClient{
 		credential: credential,
 		appType:    normalizeCloud115AppType(appType),
-		pythonCmd:  defaultString(strings.TrimSpace(os.Getenv("MAM_PYTHON_CMD")), "py"),
+		pythonCmd:  resolveCloud115PythonCommand(),
 		scriptPath: resolveCloud115BridgeScript(),
 		pythonPath: resolveCloud115PythonPath(),
 	}
@@ -320,6 +364,119 @@ func (client *Cloud115PythonClient) MakeDirectory(ctx context.Context, rootID st
 	return *response.Entry, nil
 }
 
+func (client *Cloud115PythonClient) OpenUploadSession(
+	ctx context.Context,
+	request Cloud115UploadSessionRequest,
+) (*Cloud115UploadSession, error) {
+	response, err := client.call(ctx, cloud115BridgeRequest{
+		Operation:       "upload_session_open",
+		RootID:          strings.TrimSpace(request.RootID),
+		Cookies:         client.credential,
+		AppType:         client.appType,
+		SourceFile:      strings.TrimSpace(request.LocalPath),
+		DestinationPath: strings.TrimSpace(request.RemotePath),
+		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		PartSize:        request.PartSize,
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if response.UploadSession == nil {
+		return nil, newConnectorError(EndpointTypeNetwork, "upload_session_open", ErrorCodeUnavailable, "115 bridge returned no upload session", true, nil)
+	}
+	return response.UploadSession, nil
+}
+
+func (client *Cloud115PythonClient) ListUploadSessionParts(
+	ctx context.Context,
+	request Cloud115UploadSessionRequest,
+) (*Cloud115UploadSession, error) {
+	response, err := client.call(ctx, cloud115BridgeRequest{
+		Operation:       "upload_session_list_parts",
+		Cookies:         client.credential,
+		AppType:         client.appType,
+		SourceFile:      strings.TrimSpace(request.LocalPath),
+		DestinationPath: strings.TrimSpace(request.RemotePath),
+		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		ParentID:        request.ParentID,
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if response.UploadSession == nil {
+		return nil, newConnectorError(EndpointTypeNetwork, "upload_session_list_parts", ErrorCodeUnavailable, "115 bridge returned no upload session", true, nil)
+	}
+	return response.UploadSession, nil
+}
+
+func (client *Cloud115PythonClient) UploadSessionParts(
+	ctx context.Context,
+	request Cloud115UploadSessionRequest,
+) (*Cloud115UploadSession, error) {
+	response, err := client.call(ctx, cloud115BridgeRequest{
+		Operation:       "upload_session_upload_parts",
+		Cookies:         client.credential,
+		AppType:         client.appType,
+		SourceFile:      strings.TrimSpace(request.LocalPath),
+		DestinationPath: strings.TrimSpace(request.RemotePath),
+		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		PartSize:        request.PartSize,
+		MaxParts:        request.MaxParts,
+		ParentID:        request.ParentID,
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if response.UploadSession == nil {
+		return nil, newConnectorError(EndpointTypeNetwork, "upload_session_upload_parts", ErrorCodeUnavailable, "115 bridge returned no upload session", true, nil)
+	}
+	return response.UploadSession, nil
+}
+
+func (client *Cloud115PythonClient) CompleteUploadSession(
+	ctx context.Context,
+	request Cloud115UploadSessionRequest,
+) (*Cloud115UploadSession, error) {
+	response, err := client.call(ctx, cloud115BridgeRequest{
+		Operation:       "upload_session_complete",
+		RootID:          strings.TrimSpace(request.RootID),
+		Cookies:         client.credential,
+		AppType:         client.appType,
+		SourceFile:      strings.TrimSpace(request.LocalPath),
+		DestinationPath: strings.TrimSpace(request.RemotePath),
+		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		ParentID:        request.ParentID,
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if response.UploadSession == nil {
+		return nil, newConnectorError(EndpointTypeNetwork, "upload_session_complete", ErrorCodeUnavailable, "115 bridge returned no upload session", true, nil)
+	}
+	return response.UploadSession, nil
+}
+
+func (client *Cloud115PythonClient) AbortUploadSession(
+	ctx context.Context,
+	request Cloud115UploadSessionRequest,
+) (*Cloud115UploadSession, error) {
+	response, err := client.call(ctx, cloud115BridgeRequest{
+		Operation:       "upload_session_abort",
+		Cookies:         client.credential,
+		AppType:         client.appType,
+		SourceFile:      strings.TrimSpace(request.LocalPath),
+		DestinationPath: strings.TrimSpace(request.RemotePath),
+		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if response.UploadSession == nil {
+		return nil, newConnectorError(EndpointTypeNetwork, "upload_session_abort", ErrorCodeUnavailable, "115 bridge returned no upload session", true, nil)
+	}
+	return response.UploadSession, nil
+}
+
 func (client *Cloud115PythonClient) call(ctx context.Context, request cloud115BridgeRequest, requireCredential bool) (cloud115BridgeResponse, error) {
 	if requireCredential && strings.TrimSpace(client.credential) == "" {
 		return cloud115BridgeResponse{}, newConnectorError(EndpointTypeNetwork, request.Operation, ErrorCodeAuthentication, "115 session credential is required", false, nil)
@@ -506,4 +663,16 @@ func classifyCloud115BridgeError(operation string, message string, underlying er
 func ParseCloud115QRTokenTime(value string) int64 {
 	parsed, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	return parsed
+}
+
+func resolveCloud115PythonCommand() string {
+	if value := strings.TrimSpace(os.Getenv("MAM_PYTHON_CMD")); value != "" {
+		return value
+	}
+	for _, candidate := range []string{"python", "py"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "python"
 }

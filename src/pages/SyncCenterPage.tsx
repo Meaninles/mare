@@ -15,6 +15,7 @@ import {
   Workflow
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { PaginationControls } from "../components/PaginationControls";
 import {
   useCatalogSyncOverview,
   useDeleteTransferTasks,
@@ -24,6 +25,7 @@ import {
   useTransferTaskDetail,
   useTransferTasks
 } from "../hooks/useCatalog";
+import { usePagination } from "../hooks/usePagination";
 import { formatCatalogDate, formatFileSize, getMediaTypeLabel } from "../lib/catalog-view";
 import type { CatalogSyncAsset, CatalogTransferTaskItemRecord, CatalogTransferTaskRecord } from "../types/catalog";
 
@@ -98,6 +100,9 @@ export function SyncCenterPage() {
       return haystack.includes(query);
     });
   }, [directionFilter, searchValue, statusFilter, tasks]);
+  const tasksPagination = usePagination(filteredTasks, 20);
+  const recoverablePagination = usePagination(recoverableAssets, 10);
+  const conflictPagination = usePagination(conflictAssets, 10);
 
   const focusedTask = useMemo(
     () => filteredTasks.find((task) => task.id === focusedTaskId) ?? tasks.find((task) => task.id === focusedTaskId) ?? null,
@@ -110,7 +115,7 @@ export function SyncCenterPage() {
   const taskDetailQuery = useTransferTaskDetail(focusedTaskId);
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const selectedTasks = useMemo(() => tasks.filter((task) => selectedTaskIdSet.has(task.id)), [selectedTaskIdSet, tasks]);
-  const visibleTaskIds = useMemo(() => filteredTasks.map((task) => task.id), [filteredTasks]);
+  const visibleTaskIds = useMemo(() => tasksPagination.pagedItems.map((task) => task.id), [tasksPagination.pagedItems]);
   const allVisibleSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((taskId) => selectedTaskIdSet.has(taskId));
   const hasBusyAction =
     pauseMutation.isPending || resumeMutation.isPending || deleteMutation.isPending || prioritizeMutation.isPending;
@@ -403,7 +408,7 @@ export function SyncCenterPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTasks.map((task) => {
+                {tasksPagination.pagedItems.map((task) => {
                   const isSelected = selectedTaskIdSet.has(task.id);
                   const isFocused = focusedTaskId === task.id;
                   return (
@@ -524,6 +529,8 @@ export function SyncCenterPage() {
           </div>
         ) : null}
 
+        <PaginationControls pagination={tasksPagination} itemLabel="个任务" />
+
         {contextMenu && contextMenuTask && canPrioritize(contextMenuTask.status) ? (
           <div
             className="settings-note-card"
@@ -582,11 +589,12 @@ export function SyncCenterPage() {
               <EmptyBlock icon={<CheckCircle2 size={18} />} title="当前没有待补资产" copy="同步缺失副本时，这里会列出可恢复的资产。" />
             ) : (
               <div className="sync-task-item-list">
-                {recoverableAssets.slice(0, 6).map((asset) => (
+                {recoverablePagination.pagedItems.map((asset) => (
                   <SyncAssetCard key={asset.id} asset={asset} kind="recoverable" />
                 ))}
               </div>
             )}
+            <PaginationControls pagination={recoverablePagination} itemLabel="个资产" />
           </div>
 
           <div className="sync-overview-section">
@@ -600,11 +608,12 @@ export function SyncCenterPage() {
               <EmptyBlock icon={<ShieldAlert size={18} />} title="当前没有冲突资产" copy="当多个副本出现版本冲突时，这里会提醒人工处理。" />
             ) : (
               <div className="sync-task-item-list">
-                {conflictAssets.slice(0, 6).map((asset) => (
+                {conflictPagination.pagedItems.map((asset) => (
                   <SyncAssetCard key={asset.id} asset={asset} kind="conflict" />
                 ))}
               </div>
             )}
+            <PaginationControls pagination={conflictPagination} itemLabel="个资产" />
           </div>
         </article>
       </div>
@@ -623,6 +632,8 @@ function TransferTaskDetailPanel({
   isLoading: boolean;
   error?: string;
 }) {
+  const itemsPagination = usePagination(items, 10);
+
   if (!task) {
     return <EmptyBlock icon={<Workflow size={20} />} title="请选择一个任务" copy="右侧会显示文件级进度、来源目标、错误与断点恢复状态。" />;
   }
@@ -670,7 +681,7 @@ function TransferTaskDetailPanel({
         <EmptyBlock icon={<CheckCircle2 size={18} />} title="当前没有文件项" copy="如果这是刚入队的任务，稍后会显示到文件级的传输项。" />
       ) : (
         <div className="sync-task-item-list">
-          {items.map((item) => (
+          {itemsPagination.pagedItems.map((item) => (
             <article key={item.id} className="sync-task-item-row">
               <div className="sync-task-item-copy">
                 <div className="replica-chip-row">
@@ -710,6 +721,7 @@ function TransferTaskDetailPanel({
               </div>
             </article>
           ))}
+          <PaginationControls pagination={itemsPagination} itemLabel="个文件项" />
         </div>
       )}
     </div>

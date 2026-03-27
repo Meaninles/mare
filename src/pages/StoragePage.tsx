@@ -13,6 +13,7 @@ import {
   X
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { PaginationControls } from "../components/PaginationControls";
 import {
   deleteCatalogEndpoint,
   getDefaultCatalogBackendUrl,
@@ -21,6 +22,7 @@ import {
   saveCatalogEndpoint,
   updateCatalogEndpoint
 } from "../services/catalog";
+import { usePagination } from "../hooks/usePagination";
 import {
   listRemovableDevices,
   pollCloud115QRCodeLogin,
@@ -211,6 +213,8 @@ export function StoragePage() {
     () => devices.find((device) => device.mountPoint === form.selectedMountPoint) ?? null,
     [devices, form.selectedMountPoint]
   );
+  const devicesPagination = usePagination(devices, 20);
+  const endpointsPagination = usePagination(endpoints, 20);
 
   const availableEndpointCount = endpoints.filter((endpoint) => endpoint.availabilityStatus === "AVAILABLE").length;
   const managedEndpointCount = endpoints.filter((endpoint) => endpoint.roleMode === "MANAGED").length;
@@ -472,17 +476,19 @@ export function StoragePage() {
           <h3>端点</h3>
           <p>现在的网络存储端点统一走一个入口配置。当前只开放 115 网盘，后续会在这个类型下扩展更多网盘子类型。</p>
         </div>
-
-        <div className="hero-metrics">
-          <MetricCard label="全部端点" value={endpoints.length} tone="neutral" />
-          <MetricCard label="可用" value={availableEndpointCount} tone="success" />
-          <MetricCard label="纳管中" value={managedEndpointCount} tone="warning" />
-          <MetricCard label="可移动设备" value={devices.length} tone="neutral" />
-        </div>
       </article>
 
       {notice ? <p className="inline-note">{notice}</p> : null}
       {error ? <p className="error-copy">{error}</p> : null}
+
+      <article className="detail-card compact-page-header storage-stats-bar">
+        <div className="replica-chip-row compact-page-header-metrics">
+          <span className="replica-chip neutral">全部端点 {endpoints.length}</span>
+          <span className="replica-chip success">可用 {availableEndpointCount}</span>
+          <span className="replica-chip warning">纳管中 {managedEndpointCount}</span>
+          <span className="replica-chip neutral">可移动设备 {devices.length}</span>
+        </div>
+      </article>
 
       <div className="page-grid storage-layout">
         <article className="detail-card storage-editor-card">
@@ -748,7 +754,7 @@ export function StoragePage() {
             </div>
           ) : (
             <div className="device-card-list">
-              {devices.map((device) => (
+              {devicesPagination.pagedItems.map((device) => (
                 <article
                   key={device.mountPoint}
                   className={`device-card static${form.selectedMountPoint === device.mountPoint ? " active" : ""}`}
@@ -766,6 +772,8 @@ export function StoragePage() {
               ))}
             </div>
           )}
+
+          <PaginationControls pagination={devicesPagination} itemLabel="台设备" />
         </article>
       </div>
 
@@ -800,7 +808,7 @@ export function StoragePage() {
           </div>
         ) : (
           <div className="endpoint-grid">
-            {endpoints.map((endpoint) => (
+            {endpointsPagination.pagedItems.map((endpoint) => (
               <article key={endpoint.id} className="endpoint-panel">
                 <div className="endpoint-panel-head">
                   <div>
@@ -862,6 +870,8 @@ export function StoragePage() {
             ))}
           </div>
         )}
+
+        <PaginationControls pagination={endpointsPagination} itemLabel="个端点" />
       </article>
 
       {latestSummary ? (
@@ -891,23 +901,6 @@ export function StoragePage() {
         </article>
       ) : null}
     </section>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  tone
-}: {
-  label: string;
-  value: number;
-  tone: "success" | "warning" | "neutral";
-}) {
-  return (
-    <article className={`metric-card tone-${tone}`}>
-      <p>{label}</p>
-      <strong>{value}</strong>
-    </article>
   );
 }
 

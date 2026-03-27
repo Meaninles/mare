@@ -17,6 +17,7 @@ import {
   WandSparkles
 } from "lucide-react";
 import { AssetDetailPage } from "./AssetDetailPage";
+import { PaginationControls } from "../components/PaginationControls";
 import type { AppShellOutletContext } from "../layouts/AppShell";
 import {
   useCatalogAssets,
@@ -24,6 +25,7 @@ import {
   useCatalogDeleteReplica,
   useCatalogEndpoints
 } from "../hooks/useCatalog";
+import { usePagination } from "../hooks/usePagination";
 import {
   formatCatalogDate,
   formatDurationSeconds,
@@ -94,6 +96,10 @@ type FolderIndex = {
   summaries: Map<string, FolderSummary>;
   children: Map<string, FolderSummary[]>;
 };
+
+type ExplorerEntry =
+  | { type: "folder"; folder: FolderSummary }
+  | { type: "asset"; item: DecoratedAsset };
 
 type MutableFolderNode = {
   path: string;
@@ -199,11 +205,26 @@ function LibraryCatalogView() {
 
     return [...scopedAssets].sort((left, right) => compareAssets(left, right, sortOrder));
   }, [currentDirectory, filteredAssets, isSearchMode, sortOrder]);
+  const explorerEntries = useMemo<ExplorerEntry[]>(
+    () => [
+      ...visibleFolders.map((folder) => ({ type: "folder" as const, folder })),
+      ...visibleAssets.map((item) => ({ type: "asset" as const, item }))
+    ],
+    [visibleAssets, visibleFolders]
+  );
+  const explorerPagination = usePagination(explorerEntries, 20);
+  const pagedExplorerEntries = explorerPagination.pagedItems;
   const selectedAssets = useMemo(() => {
     const selectedSet = new Set(selectedAssetIds);
     return decoratedAssets.filter((item) => selectedSet.has(item.asset.id));
   }, [decoratedAssets, selectedAssetIds]);
-  const visibleAssetIds = useMemo(() => visibleAssets.map((item) => item.asset.id), [visibleAssets]);
+  const visibleAssetIds = useMemo(
+    () =>
+      pagedExplorerEntries
+        .filter((entry): entry is Extract<ExplorerEntry, { type: "asset" }> => entry.type === "asset")
+        .map((entry) => entry.item.asset.id),
+    [pagedExplorerEntries]
+  );
   const selectedVisibleCount = useMemo(() => {
     const selectedSet = new Set(selectedAssetIds);
     return visibleAssetIds.filter((assetId) => selectedSet.has(assetId)).length;
@@ -606,22 +627,24 @@ function LibraryCatalogView() {
                 </tr>
               </thead>
               <tbody>
-                {visibleFolders.map((folder) => (
-                  <ExplorerFolderManagerRow key={folder.path} folder={folder} onOpenDirectory={openDirectory} />
-                ))}
-
-                {visibleAssets.map((item) => (
-                  <ExplorerAssetManagerRow
-                    key={item.asset.id}
-                    item={item}
-                    detailSearch={location.search}
-                    selected={selectedAssetIds.includes(item.asset.id)}
-                    onToggleSelect={toggleAssetSelection}
-                  />
-                ))}
+                {pagedExplorerEntries.map((entry) =>
+                  entry.type === "folder" ? (
+                    <ExplorerFolderManagerRow key={entry.folder.path} folder={entry.folder} onOpenDirectory={openDirectory} />
+                  ) : (
+                    <ExplorerAssetManagerRow
+                      key={entry.item.asset.id}
+                      item={entry.item}
+                      detailSearch={location.search}
+                      selected={selectedAssetIds.includes(entry.item.asset.id)}
+                      onToggleSelect={toggleAssetSelection}
+                    />
+                  )
+                )}
               </tbody>
             </table>
           </div>
+
+          <PaginationControls pagination={explorerPagination} itemLabel="项" />
         </article>
       ) : null}
     </section>
