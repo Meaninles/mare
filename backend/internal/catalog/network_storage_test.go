@@ -75,6 +75,27 @@ func TestNormalizeConnectionConfigForNetworkStorageExtractsCredentialAndBuildsIn
 	}
 }
 
+func TestNormalizeConnectionConfigAcceptsLegacyNetworkStorageEndpointType(t *testing.T) {
+	normalized, extracted, err := normalizeConnectionConfig(
+		"NETWORK_STORAGE",
+		json.RawMessage(`{"provider":"115","rootFolderId":"0","credential":"token-123"}`),
+	)
+	if err != nil {
+		t.Fatalf("normalize legacy network storage config: %v", err)
+	}
+	if extracted == nil || extracted.Secret != "token-123" {
+		t.Fatalf("expected extracted credential from legacy endpoint type, got %+v", extracted)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(normalized, &payload); err != nil {
+		t.Fatalf("decode normalized config: %v", err)
+	}
+	if payload["provider"] != "115" {
+		t.Fatalf("expected provider 115, got %#v", payload["provider"])
+	}
+}
+
 func TestBuildNetworkStorageStorageSpecEnablesLocalProxyDownload(t *testing.T) {
 	spec, err := buildNetworkStorageStorageSpec(networkStorageEndpointConfig{
 		Provider:     networkStorageProvider115,

@@ -37,6 +37,7 @@ type scanExecutionStats struct {
 type Service struct {
 	store                 *store.Store
 	connectorFactory      func(endpoint store.StorageEndpoint) (connectors.Connector, error)
+	cloud115UploadFactory cloud115UploadClientFactory
 	removableEnumerator   connectors.DeviceEnumerator
 	mediaConfig           MediaConfig
 	credentialVault       *credentials.Vault
@@ -87,6 +88,7 @@ func NewService(
 	return &Service{
 		store:                 dataStore,
 		connectorFactory:      factory,
+		cloud115UploadFactory: resolvedOptions.cloud115UploadFactory,
 		removableEnumerator:   connectors.NewWindowsUSBEnumerator(),
 		mediaConfig:           normalizeMediaConfig(resolvedOptions.mediaConfig),
 		credentialVault:       credentialVault,
@@ -951,6 +953,7 @@ func normalizeEndpointType(value string) string {
 }
 
 func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.RawMessage, *endpointCredentialInput, error) {
+	endpointType = normalizeEndpointType(endpointType)
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return json.RawMessage(`{}`), nil, nil
 	}

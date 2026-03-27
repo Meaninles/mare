@@ -42,12 +42,19 @@ func transferItemExternalTaskID(item store.TransferTaskItem) string {
 		if metadata.Aria2 != nil && strings.TrimSpace(metadata.Aria2.GID) != "" {
 			return strings.TrimSpace(metadata.Aria2.GID)
 		}
+	case transferEngineKindCloud115:
+		if metadata.Cloud115 != nil && strings.TrimSpace(metadata.Cloud115.UploadID) != "" {
+			return strings.TrimSpace(metadata.Cloud115.UploadID)
+		}
 	}
 	if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskID) != "" {
 		return strings.TrimSpace(metadata.AList.TaskID)
 	}
 	if metadata.Aria2 != nil && strings.TrimSpace(metadata.Aria2.GID) != "" {
 		return strings.TrimSpace(metadata.Aria2.GID)
+	}
+	if metadata.Cloud115 != nil && strings.TrimSpace(metadata.Cloud115.UploadID) != "" {
+		return strings.TrimSpace(metadata.Cloud115.UploadID)
 	}
 	return ""
 }
@@ -63,12 +70,19 @@ func transferItemExternalStatus(item store.TransferTaskItem) string {
 		if metadata.Aria2 != nil && strings.TrimSpace(metadata.Aria2.Status) != "" {
 			return strings.TrimSpace(metadata.Aria2.Status)
 		}
+	case transferEngineKindCloud115:
+		if metadata.Cloud115 != nil && strings.TrimSpace(metadata.Cloud115.Status) != "" {
+			return strings.TrimSpace(metadata.Cloud115.Status)
+		}
 	}
 	if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskStatus) != "" {
 		return strings.TrimSpace(metadata.AList.TaskStatus)
 	}
 	if metadata.Aria2 != nil && strings.TrimSpace(metadata.Aria2.Status) != "" {
 		return strings.TrimSpace(metadata.Aria2.Status)
+	}
+	if metadata.Cloud115 != nil && strings.TrimSpace(metadata.Cloud115.Status) != "" {
+		return strings.TrimSpace(metadata.Cloud115.Status)
 	}
 	return ""
 }

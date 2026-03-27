@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -352,6 +351,15 @@ func (service *Service) pauseExternalTransferItem(ctx context.Context, item *sto
 		})
 	}
 
+	if metadata.Cloud115 != nil {
+		updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
+			metadata.CurrentSpeed = 0
+			if metadata.Cloud115 != nil {
+				metadata.Cloud115.Status = "paused"
+			}
+		})
+	}
+
 	return nil
 }
 
@@ -373,6 +381,11 @@ func (service *Service) deleteExternalTransferItem(ctx context.Context, item *st
 			return err
 		}
 	}
+	if metadata.Cloud115 != nil {
+		if err := service.cloud115AbortUploadSession(ctx, *item); err != nil {
+			return err
+		}
+	}
 	service.cleanupAListTargetResidue(ctx, *item)
 
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
@@ -383,6 +396,9 @@ func (service *Service) deleteExternalTransferItem(ctx context.Context, item *st
 		if metadata.AList != nil {
 			metadata.AList.TaskStatus = "canceled"
 			metadata.AList.TaskState = 7
+		}
+		if metadata.Cloud115 != nil {
+			metadata.Cloud115.Status = "aborted"
 		}
 	})
 	return nil
@@ -427,6 +443,9 @@ func (service *Service) reconcileInterruptedTransferItem(
 		if err := service.reconcileInterruptedAria2Transfer(ctx, item); err != nil {
 			return err
 		}
+	}
+	if err := service.reconcileInterruptedCloud115Transfer(ctx, item); err != nil {
+		return err
 	}
 	if alistAvailable {
 		if err := service.reconcileInterruptedAListTransfer(ctx, item); err != nil {

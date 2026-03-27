@@ -5,6 +5,7 @@ import json
 import os
 import posixpath
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, TYPE_CHECKING
 
@@ -338,7 +339,36 @@ def build_upload_headers(client: P115Client) -> dict[str, str]:
         if value is None:
             continue
         headers[str(key)] = str(value)
+    cookie_header = extract_client_cookie_header(client)
+    if cookie_header and "cookie" not in {str(key).lower() for key in headers}:
+        headers["Cookie"] = cookie_header
     return headers
+
+
+def extract_client_cookie_header(client: P115Client) -> str:
+    cookies = getattr(client, "cookies", None)
+    if cookies is None:
+        return ""
+    if isinstance(cookies, str):
+        return cookies.strip().rstrip(";")
+
+    output = getattr(cookies, "output", None)
+    if callable(output):
+        try:
+            rendered = output(header="", sep=";").strip()
+        except Exception:
+            rendered = ""
+        if rendered:
+            return rendered.lstrip(";").strip()
+
+    try:
+        pairs = []
+        for key, value in cookies.items():
+            morsel_value = getattr(value, "value", value)
+            pairs.append(f"{key}={morsel_value}")
+        return "; ".join(pair for pair in pairs if pair.strip())
+    except Exception:
+        return ""
 
 
 def upload_state_path(source_file: str, resume_state_path: str = "") -> str:
@@ -347,20 +377,110 @@ def upload_state_path(source_file: str, resume_state_path: str = "") -> str:
     return f"{source_file}{UPLOAD_SESSION_SUFFIX}"
 
 
-def load_upload_state(source_file: str, destination_path: str, parent_id: int, file_name: str, resume_state_path: str = "") -> dict | None:
-    state_path = upload_state_path(source_file, resume_state_path)
-    if not os.path.exists(state_path):
-        return None
-    try:
-        with open(state_path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
-        try:
-            os.remove(state_path)
-        except OSError:
-            pass
-        return None
+def upload_state_backup_path(state_path: str) -> str:
+    return f"{state_path}.bak"
 
+
+def source_file_identity(source_file: str) -> tuple[int, int]:
+    stat = os.stat(source_file)
+    return int(stat.st_size), int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+
+
+def atomic_write_json(path: str, payload: dict):
+    path = os.path.abspath(path)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+
+    handle = None
+    temp_path = ""
+    try:
+        fd, temp_path = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        json.dump(payload, handle, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        handle = None
+
+        backup_path = upload_state_backup_path(path)
+        if os.path.exists(path):
+            try:
+                os.replace(path, backup_path)
+            except OSError:
+                pass
+        os.replace(temp_path, path)
+    finally:
+        if handle is not None:
+            handle.close()
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+def build_upload_state_payload(
+    source_file: str,
+    destination_path: str,
+    parent_id: int,
+    file_name: str,
+    upload_url: str,
+    callback: dict,
+    upload_id: str,
+    part_size: int,
+) -> dict:
+    file_size, file_mtime_ns = source_file_identity(source_file)
+    return {
+        "version": 2,
+        "destinationPath": destination_path,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "sourceFileSize": file_size,
+        "sourceFileMTimeNs": file_mtime_ns,
+        "url": upload_url,
+        "callback": callback,
+        "uploadId": upload_id,
+        "partSize": int(part_size),
+        "savedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def parse_bootstrap_upload_state(
+    source_file: str,
+    destination_path: str,
+    parent_id: int,
+    file_name: str,
+    bootstrap_state: dict | None,
+) -> dict | None:
+    if not isinstance(bootstrap_state, dict):
+        return None
+    upload_url = str(bootstrap_state.get("url") or "").strip()
+    upload_id = str(bootstrap_state.get("uploadId") or "").strip()
+    callback = bootstrap_state.get("callback")
+    if not upload_url or not upload_id or not isinstance(callback, dict):
+        return None
+    part_size = int(bootstrap_state.get("partSize") or DEFAULT_UPLOAD_PART_SIZE)
+    if part_size <= 0:
+        part_size = DEFAULT_UPLOAD_PART_SIZE
+    return build_upload_state_payload(
+        source_file,
+        destination_path,
+        parent_id,
+        file_name,
+        upload_url=upload_url,
+        callback=callback,
+        upload_id=upload_id,
+        part_size=part_size,
+    )
+
+
+def normalize_upload_state_payload(
+    payload: dict,
+    source_file: str,
+    destination_path: str,
+    parent_id: int,
+    file_name: str,
+) -> dict | None:
     if not isinstance(payload, dict):
         return None
 
@@ -376,6 +496,81 @@ def load_upload_state(source_file: str, destination_path: str, parent_id: int, f
         return None
     if not str(payload.get("uploadId") or "").strip():
         return None
+
+    expected_size = int(payload.get("sourceFileSize") or 0)
+    expected_mtime_ns = int(payload.get("sourceFileMTimeNs") or 0)
+    actual_size, actual_mtime_ns = source_file_identity(source_file)
+    if expected_size > 0 and actual_size != expected_size:
+        return None
+    if expected_mtime_ns > 0 and actual_mtime_ns != expected_mtime_ns:
+        return None
+
+    normalized = dict(payload)
+    normalized["destinationPath"] = destination_path
+    normalized["parentId"] = int(payload.get("parentId") or parent_id)
+    normalized["fileName"] = file_name
+    normalized["sourceFileSize"] = actual_size
+    normalized["sourceFileMTimeNs"] = actual_mtime_ns
+    normalized["partSize"] = int(payload.get("partSize") or DEFAULT_UPLOAD_PART_SIZE)
+    return normalized
+
+
+def load_upload_state_with_recovery(
+    source_file: str,
+    destination_path: str,
+    parent_id: int,
+    file_name: str,
+    resume_state_path: str = "",
+    bootstrap_state: dict | None = None,
+) -> tuple[dict | None, dict]:
+    state_path = upload_state_path(source_file, resume_state_path)
+    backup_path = upload_state_backup_path(state_path)
+    recovery = {
+        "statePath": state_path,
+        "backupPath": backup_path,
+        "stateRecovered": False,
+        "stateCorrupted": False,
+        "stateSource": "",
+    }
+
+    for candidate_path, source in ((state_path, "primary"), (backup_path, "backup")):
+        if not os.path.exists(candidate_path):
+            continue
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            recovery["stateCorrupted"] = True
+            continue
+
+        normalized = normalize_upload_state_payload(payload, source_file, destination_path, parent_id, file_name)
+        if normalized is None:
+            recovery["stateCorrupted"] = True
+            continue
+        recovery["stateSource"] = source
+        if candidate_path != state_path:
+            atomic_write_json(state_path, normalized)
+            recovery["stateRecovered"] = True
+        return normalized, recovery
+
+    bootstrap_payload = parse_bootstrap_upload_state(source_file, destination_path, parent_id, file_name, bootstrap_state)
+    if bootstrap_payload is not None:
+        atomic_write_json(state_path, bootstrap_payload)
+        recovery["stateRecovered"] = True
+        recovery["stateSource"] = "bootstrap"
+        return bootstrap_payload, recovery
+
+    return None, recovery
+
+
+def load_upload_state(source_file: str, destination_path: str, parent_id: int, file_name: str, resume_state_path: str = "") -> dict | None:
+    payload, _ = load_upload_state_with_recovery(
+        source_file,
+        destination_path,
+        parent_id,
+        file_name,
+        resume_state_path,
+    )
     return payload
 
 
@@ -389,27 +584,28 @@ def save_upload_state(
     resume_state_path: str = "",
 ):
     state_path = upload_state_path(source_file, resume_state_path)
-    state_dir = os.path.dirname(state_path)
-    if state_dir:
-        os.makedirs(state_dir, exist_ok=True)
-    payload = {
-        "destinationPath": destination_path,
-        "parentId": parent_id,
-        "fileName": file_name,
-        "url": uploader.url,
-        "callback": uploader.callback,
-        "uploadId": uploader.upload_id,
-        "partSize": int(part_size),
-    }
-    with open(state_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False)
+    payload = build_upload_state_payload(
+        source_file,
+        destination_path,
+        parent_id,
+        file_name,
+        upload_url=uploader.url,
+        callback=uploader.callback,
+        upload_id=uploader.upload_id,
+        part_size=part_size,
+    )
+    atomic_write_json(state_path, payload)
 
 
 def clear_upload_state(source_file: str, resume_state_path: str = ""):
-    try:
-        os.remove(upload_state_path(source_file, resume_state_path))
-    except OSError:
-        pass
+    for candidate in (
+        upload_state_path(source_file, resume_state_path),
+        upload_state_backup_path(upload_state_path(source_file, resume_state_path)),
+    ):
+        try:
+            os.remove(candidate)
+        except OSError:
+            pass
 
 
 def normalize_uploaded_parts(parts: list[dict]) -> list[dict]:
@@ -463,12 +659,19 @@ def open_upload_session(client: P115Client, root_id: int, request: dict) -> dict
     file_name = posixpath.basename(destination_path)
     ensure_dir(client, root_id, parent_path)
     parent_id = resolve_dir_id(client, root_id, parent_path)
-    session = load_upload_state(
+    bootstrap_state = {
+        "url": request.get("uploadUrl"),
+        "callback": request.get("callback"),
+        "uploadId": request.get("uploadId"),
+        "partSize": request.get("partSize"),
+    }
+    session, recovery = load_upload_state_with_recovery(
         source_file,
         destination_path,
         parent_id,
         file_name,
         resume_state_path,
+        bootstrap_state=bootstrap_state,
     )
 
     created = False
@@ -477,12 +680,21 @@ def open_upload_session(client: P115Client, root_id: int, request: dict) -> dict
         uploader = multipart_upload_cls(session["url"], source_file, session["callback"], str(session["uploadId"]))
         part_size = int(session.get("partSize") or requested_part_size)
     else:
+        upload_headers = build_upload_headers(client)
+        upload_kwargs = {
+            "endpoint": DEFAULT_UPLOAD_ENDPOINT,
+            "headers": upload_headers,
+        }
+        user_id = getattr(client, "user_id", None)
+        user_key = getattr(client, "user_key", None)
+        if user_id and user_key:
+            upload_kwargs["user_id"] = user_id
+            upload_kwargs["user_key"] = user_key
         uploader = multipart_upload_cls.from_path(
             source_file,
             pid=parent_id,
             filename=file_name,
-            endpoint=DEFAULT_UPLOAD_ENDPOINT,
-            headers=build_upload_headers(client),
+            **upload_kwargs,
         )
         if isinstance(uploader, dict):
             ensure_state(uploader)
@@ -516,8 +728,16 @@ def open_upload_session(client: P115Client, root_id: int, request: dict) -> dict
         "sessionCreated": created,
         "sessionExisted": not created,
         "uploadId": uploader.upload_id,
+        "uploadUrl": uploader.url,
+        "callback": uploader.callback,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "partSize": int(part_size),
         "destinationPath": destination_path,
         "statePath": upload_state_path(source_file, resume_state_path),
+        "stateRecovered": bool(recovery.get("stateRecovered")),
+        "stateCorrupted": bool(recovery.get("stateCorrupted")),
+        "stateSource": str(recovery.get("stateSource") or ""),
         "parts": parts,
         "progress": progress,
         "completed": bool(progress["completed"]),
@@ -535,12 +755,19 @@ def list_upload_session_parts(client: P115Client, request: dict) -> dict:
     resume_state_path = str(request.get("resumeStatePath") or "").strip()
     parent_id = int(request.get("parentId") or 0)
     file_name = posixpath.basename(destination_path)
-    session = load_upload_state(
+    bootstrap_state = {
+        "url": request.get("uploadUrl"),
+        "callback": request.get("callback"),
+        "uploadId": request.get("uploadId"),
+        "partSize": request.get("partSize"),
+    }
+    session, recovery = load_upload_state_with_recovery(
         source_file,
         destination_path,
         parent_id,
         file_name,
         resume_state_path,
+        bootstrap_state=bootstrap_state,
     )
     if session is None:
         raise FileNotFoundError("upload session not found")
@@ -552,9 +779,17 @@ def list_upload_session_parts(client: P115Client, request: dict) -> dict:
     progress = summarize_upload_progress(source_file, part_size, parts)
     return {
         "uploadId": uploader.upload_id,
+        "uploadUrl": uploader.url,
+        "callback": uploader.callback,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "partSize": int(part_size),
         "parts": parts,
         "progress": progress,
         "statePath": upload_state_path(source_file, resume_state_path),
+        "stateRecovered": bool(recovery.get("stateRecovered")),
+        "stateCorrupted": bool(recovery.get("stateCorrupted")),
+        "stateSource": str(recovery.get("stateSource") or ""),
     }
 
 
@@ -569,12 +804,19 @@ def upload_upload_session_parts(client: P115Client, request: dict) -> dict:
     resume_state_path = str(request.get("resumeStatePath") or "").strip()
     parent_id = int(request.get("parentId") or 0)
     file_name = posixpath.basename(destination_path)
-    session = load_upload_state(
+    bootstrap_state = {
+        "url": request.get("uploadUrl"),
+        "callback": request.get("callback"),
+        "uploadId": request.get("uploadId"),
+        "partSize": request.get("partSize"),
+    }
+    session, recovery = load_upload_state_with_recovery(
         source_file,
         destination_path,
         parent_id,
         file_name,
         resume_state_path,
+        bootstrap_state=bootstrap_state,
     )
     if session is None:
         raise FileNotFoundError("upload session not found")
@@ -612,10 +854,18 @@ def upload_upload_session_parts(client: P115Client, request: dict) -> dict:
     progress = summarize_upload_progress(source_file, part_size, parts)
     return {
         "uploadId": uploader.upload_id,
+        "uploadUrl": uploader.url,
+        "callback": uploader.callback,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "partSize": int(part_size),
         "uploadedInCall": normalize_uploaded_parts(uploaded_now),
         "parts": parts,
         "progress": progress,
         "statePath": upload_state_path(source_file, resume_state_path),
+        "stateRecovered": bool(recovery.get("stateRecovered")),
+        "stateCorrupted": bool(recovery.get("stateCorrupted")),
+        "stateSource": str(recovery.get("stateSource") or ""),
     }
 
 
@@ -630,12 +880,19 @@ def complete_upload_session(client: P115Client, root_id: int, request: dict) -> 
     resume_state_path = str(request.get("resumeStatePath") or "").strip()
     parent_id = int(request.get("parentId") or 0)
     file_name = posixpath.basename(destination_path)
-    session = load_upload_state(
+    bootstrap_state = {
+        "url": request.get("uploadUrl"),
+        "callback": request.get("callback"),
+        "uploadId": request.get("uploadId"),
+        "partSize": request.get("partSize"),
+    }
+    session, recovery = load_upload_state_with_recovery(
         source_file,
         destination_path,
         parent_id,
         file_name,
         resume_state_path,
+        bootstrap_state=bootstrap_state,
     )
     if session is None:
         raise FileNotFoundError("upload session not found")
@@ -648,10 +905,18 @@ def complete_upload_session(client: P115Client, root_id: int, request: dict) -> 
     entry = resolve_entry(client, root_id, destination_path)
     return {
         "uploadId": uploader.upload_id,
+        "uploadUrl": uploader.url,
+        "callback": uploader.callback,
+        "parentId": parent_id,
+        "fileName": file_name,
+        "partSize": int(session.get("partSize") or DEFAULT_UPLOAD_PART_SIZE),
         "entry": entry,
         "providerResponse": response,
         "statePath": upload_state_path(source_file, resume_state_path),
         "completed": True,
+        "stateRecovered": bool(recovery.get("stateRecovered")),
+        "stateCorrupted": bool(recovery.get("stateCorrupted")),
+        "stateSource": str(recovery.get("stateSource") or ""),
     }
 
 

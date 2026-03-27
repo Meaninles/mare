@@ -1,6 +1,11 @@
 package catalog
 
-import "mam/backend/internal/credentials"
+import (
+	"context"
+
+	"mam/backend/internal/credentials"
+	"mam/backend/internal/store"
+)
 
 type ServiceOption interface {
 	apply(*serviceOptions)
@@ -12,6 +17,7 @@ type serviceOptions struct {
 	autoQueueDerivedMedia bool
 	autoQueueSearchJobs   bool
 	searchBridge          SearchAIBridge
+	cloud115UploadFactory cloud115UploadClientFactory
 }
 
 func (config MediaConfig) apply(options *serviceOptions) {
@@ -64,4 +70,18 @@ func (option searchBridgeOption) apply(options *serviceOptions) {
 
 func WithSearchBridge(bridge SearchAIBridge) ServiceOption {
 	return searchBridgeOption{bridge: bridge}
+}
+
+type cloud115UploadFactoryOption struct {
+	factory cloud115UploadClientFactory
+}
+
+func (option cloud115UploadFactoryOption) apply(options *serviceOptions) {
+	options.cloud115UploadFactory = option.factory
+}
+
+func WithCloud115UploadFactory(
+	factory func(context.Context, store.StorageEndpoint) (cloud115UploadClient, cloud115UploadTarget, error),
+) ServiceOption {
+	return cloud115UploadFactoryOption{factory: factory}
 }

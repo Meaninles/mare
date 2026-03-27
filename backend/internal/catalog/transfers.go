@@ -202,15 +202,16 @@ type transferTaskSummaryPayload struct {
 }
 
 type transferItemMetadata struct {
-	SourceModifiedAt string                     `json:"sourceModifiedAt,omitempty"`
-	SourceVersionID  string                     `json:"sourceVersionId,omitempty"`
-	SourceSize       int64                      `json:"sourceSize,omitempty"`
-	EngineKind       string                     `json:"engineKind,omitempty"`
-	EngineLabel      string                     `json:"engineLabel,omitempty"`
-	CurrentSpeed     int64                      `json:"currentSpeed,omitempty"`
-	RefreshInterval  int                        `json:"refreshIntervalSeconds,omitempty"`
-	Aria2            *transferItemAria2Metadata `json:"aria2,omitempty"`
-	AList            *transferItemAListMetadata `json:"alist,omitempty"`
+	SourceModifiedAt string                        `json:"sourceModifiedAt,omitempty"`
+	SourceVersionID  string                        `json:"sourceVersionId,omitempty"`
+	SourceSize       int64                         `json:"sourceSize,omitempty"`
+	EngineKind       string                        `json:"engineKind,omitempty"`
+	EngineLabel      string                        `json:"engineLabel,omitempty"`
+	CurrentSpeed     int64                         `json:"currentSpeed,omitempty"`
+	RefreshInterval  int                           `json:"refreshIntervalSeconds,omitempty"`
+	Aria2            *transferItemAria2Metadata    `json:"aria2,omitempty"`
+	AList            *transferItemAListMetadata    `json:"alist,omitempty"`
+	Cloud115         *transferItemCloud115Metadata `json:"cloud115,omitempty"`
 }
 
 type TransferPreferences struct {
@@ -1072,6 +1073,9 @@ func (service *Service) commitTransferItem(
 	}
 
 	if normalizeEndpointType(endpoint.EndpointType) == string(connectors.EndpointTypeNetwork) {
+		if shouldUseCloud115UploadSession(endpoint) {
+			return service.commitTransferItemToCloud115(ctx, taskID, item, endpoint)
+		}
 		return service.commitTransferItemToAList(ctx, taskID, item, endpoint)
 	}
 
@@ -1323,6 +1327,9 @@ func (service *Service) finalizeTransferItem(
 		}
 		if metadata.AList != nil && strings.TrimSpace(metadata.AList.TaskStatus) == "" {
 			metadata.AList.TaskStatus = "complete"
+		}
+		if metadata.Cloud115 != nil && strings.TrimSpace(metadata.Cloud115.Status) == "" {
+			metadata.Cloud115.Status = "complete"
 		}
 	})
 	now := time.Now().UTC()
@@ -1911,6 +1918,7 @@ func (service *Service) cleanupTransferStagingArtifacts(stagingPath string) {
 
 	_ = os.Remove(stagingPath)
 	_ = os.Remove(stagingPath + ".aria2")
+	_ = os.Remove(filepath.Join(filepath.Dir(stagingPath), cloud115TransferSessionFileName))
 	service.pruneEmptyTransferTaskDirs(filepath.Dir(stagingPath))
 }
 
@@ -2100,13 +2108,10 @@ func buildTransferTaskRecord(task store.Task, items []store.TransferTaskItem) Tr
 }
 
 func buildTransferTaskItemRecord(item store.TransferTaskItem) TransferTaskItemRecord {
-	progressPercent := clampInt(item.ProgressPercent, 0, 100)
+	progressPercent := estimateTransferDisplayProgressPercent(item)
 	totalBytes := item.TotalBytes
 	if totalBytes <= 0 {
 		totalBytes = parseTransferMetadataSize(item.MetadataJSON)
-	}
-	if progressPercent == 0 && totalBytes > 0 {
-		progressPercent = calcTransferItemProgress(totalBytes, item.StagedBytes, item.CommittedBytes, item.Phase)
 	}
 	metadata := readTransferItemMetadata(item)
 
@@ -2745,6 +2750,9 @@ func resetTransferItemForResume(item *store.TransferTaskItem) {
 
 	updateTransferItemMetadata(item, func(metadata *transferItemMetadata) {
 		metadata.CurrentSpeed = 0
+		if metadata.Cloud115 != nil && !requiresFreshCommitOnResume(*item) {
+			metadata.Cloud115.Status = "queued"
+		}
 		if requiresFreshCommitOnResume(*item) && metadata.AList != nil {
 			metadata.AList.TaskID = ""
 			metadata.AList.TaskStatus = ""
@@ -2776,7 +2784,7 @@ func syncTransferItemProgressFromArtifacts(item *store.TransferTaskItem) {
 func requiresFreshCommitOnResume(item store.TransferTaskItem) bool {
 	switch normalizeEndpointType(item.TargetEndpointType) {
 	case string(connectors.EndpointTypeNetwork):
-		return true
+		return !isCloud115ResumableTransfer(item)
 	default:
 		return false
 	}
@@ -2832,6 +2840,20 @@ func estimateTransferCompletedBytes(item store.TransferTaskItem) int64 {
 	if totalBytes <= 0 {
 		totalBytes = parseTransferMetadataSize(item.MetadataJSON)
 	}
+	if shouldDisplayCommittedTransferProgress(item) {
+		switch strings.ToLower(strings.TrimSpace(item.Status)) {
+		case taskStatusSuccess, transferItemStatusSkipped:
+			if totalBytes > 0 {
+				return totalBytes
+			}
+			return max(item.StagedBytes, item.CommittedBytes)
+		default:
+			if totalBytes > 0 {
+				return minInt64(max(item.CommittedBytes, 0), totalBytes)
+			}
+			return max(item.CommittedBytes, 0)
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(item.Status)) {
 	case taskStatusSuccess, transferItemStatusSkipped:
 		if totalBytes > 0 {
@@ -2847,6 +2869,41 @@ func estimateTransferCompletedBytes(item store.TransferTaskItem) int64 {
 		progressPercent = calcTransferItemProgress(totalBytes, item.StagedBytes, item.CommittedBytes, defaultString(strings.TrimSpace(item.Phase), restoreTransferPhase(item)))
 	}
 	return minInt64(int64(progressPercent)*totalBytes/100, totalBytes)
+}
+
+func estimateTransferDisplayProgressPercent(item store.TransferTaskItem) int {
+	if shouldDisplayCommittedTransferProgress(item) {
+		totalBytes := item.TotalBytes
+		if totalBytes <= 0 {
+			totalBytes = parseTransferMetadataSize(item.MetadataJSON)
+		}
+		switch strings.ToLower(strings.TrimSpace(item.Status)) {
+		case taskStatusSuccess, transferItemStatusSkipped:
+			return 100
+		}
+		if totalBytes <= 0 {
+			if item.CommittedBytes > 0 {
+				return 1
+			}
+			return 0
+		}
+		return clampInt(int((minInt64(max(item.CommittedBytes, 0), totalBytes)*100)/totalBytes), 0, 100)
+	}
+
+	progressPercent := clampInt(item.ProgressPercent, 0, 100)
+	totalBytes := item.TotalBytes
+	if totalBytes <= 0 {
+		totalBytes = parseTransferMetadataSize(item.MetadataJSON)
+	}
+	if progressPercent == 0 && totalBytes > 0 {
+		progressPercent = calcTransferItemProgress(totalBytes, item.StagedBytes, item.CommittedBytes, item.Phase)
+	}
+	return progressPercent
+}
+
+func shouldDisplayCommittedTransferProgress(item store.TransferTaskItem) bool {
+	return strings.EqualFold(strings.TrimSpace(item.Direction), transferDirectionUpload) &&
+		normalizeEndpointType(item.TargetEndpointType) == string(connectors.EndpointTypeNetwork)
 }
 
 func parseTransferMetadataModifiedAt(metadataJSON string) *time.Time {

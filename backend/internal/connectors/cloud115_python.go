@@ -33,27 +33,30 @@ type Cloud115QRCodeSession struct {
 }
 
 type cloud115BridgeRequest struct {
-	Operation          string `json:"operation"`
-	RootID             string `json:"rootId,omitempty"`
-	Cookies            string `json:"cookies,omitempty"`
-	AccessToken        string `json:"accessToken,omitempty"`
-	AppType            string `json:"appType,omitempty"`
-	Path               string `json:"path,omitempty"`
-	DestinationPath    string `json:"destinationPath,omitempty"`
-	NewName            string `json:"newName,omitempty"`
-	Recursive          bool   `json:"recursive,omitempty"`
-	IncludeDirectories bool   `json:"includeDirectories,omitempty"`
-	MediaOnly          bool   `json:"mediaOnly,omitempty"`
-	Limit              int    `json:"limit,omitempty"`
-	SourceFile         string `json:"sourceFile,omitempty"`
-	DownloadFile       string `json:"downloadFile,omitempty"`
-	ResumeStatePath    string `json:"resumeStatePath,omitempty"`
-	PartSize           int    `json:"partSize,omitempty"`
-	MaxParts           int    `json:"maxParts,omitempty"`
-	ParentID           int    `json:"parentId,omitempty"`
-	QRUID              string `json:"qrUid,omitempty"`
-	QRTime             int64  `json:"qrTime,omitempty"`
-	QRSign             string `json:"qrSign,omitempty"`
+	Operation          string          `json:"operation"`
+	RootID             string          `json:"rootId,omitempty"`
+	Cookies            string          `json:"cookies,omitempty"`
+	AccessToken        string          `json:"accessToken,omitempty"`
+	AppType            string          `json:"appType,omitempty"`
+	Path               string          `json:"path,omitempty"`
+	DestinationPath    string          `json:"destinationPath,omitempty"`
+	NewName            string          `json:"newName,omitempty"`
+	Recursive          bool            `json:"recursive,omitempty"`
+	IncludeDirectories bool            `json:"includeDirectories,omitempty"`
+	MediaOnly          bool            `json:"mediaOnly,omitempty"`
+	Limit              int             `json:"limit,omitempty"`
+	SourceFile         string          `json:"sourceFile,omitempty"`
+	DownloadFile       string          `json:"downloadFile,omitempty"`
+	ResumeStatePath    string          `json:"resumeStatePath,omitempty"`
+	PartSize           int             `json:"partSize,omitempty"`
+	MaxParts           int             `json:"maxParts,omitempty"`
+	ParentID           int             `json:"parentId,omitempty"`
+	UploadID           string          `json:"uploadId,omitempty"`
+	UploadURL          string          `json:"uploadUrl,omitempty"`
+	Callback           json.RawMessage `json:"callback,omitempty"`
+	QRUID              string          `json:"qrUid,omitempty"`
+	QRTime             int64           `json:"qrTime,omitempty"`
+	QRSign             string          `json:"qrSign,omitempty"`
 }
 
 type cloud115BridgeError struct {
@@ -90,12 +93,21 @@ type Cloud115UploadProgress struct {
 
 type Cloud115UploadSession struct {
 	UploadID         string                  `json:"uploadId"`
+	UploadURL        string                  `json:"uploadUrl,omitempty"`
+	Callback         json.RawMessage         `json:"callback,omitempty"`
+	ParentID         int                     `json:"parentId,omitempty"`
+	FileName         string                  `json:"fileName,omitempty"`
+	PartSize         int64                   `json:"partSize,omitempty"`
 	DestinationPath  string                  `json:"destinationPath,omitempty"`
 	StatePath        string                  `json:"statePath,omitempty"`
 	SessionCreated   bool                    `json:"sessionCreated,omitempty"`
 	SessionExisted   bool                    `json:"sessionExisted,omitempty"`
 	Completed        bool                    `json:"completed,omitempty"`
 	StateDeleted     bool                    `json:"stateDeleted,omitempty"`
+	StateRecovered   bool                    `json:"stateRecovered,omitempty"`
+	StateCorrupted   bool                    `json:"stateCorrupted,omitempty"`
+	StateSource      string                  `json:"stateSource,omitempty"`
+	Entry            *FileEntry              `json:"entry,omitempty"`
 	Parts            []Cloud115UploadPart    `json:"parts,omitempty"`
 	UploadedInCall   []Cloud115UploadPart    `json:"uploadedInCall,omitempty"`
 	Progress         *Cloud115UploadProgress `json:"progress,omitempty"`
@@ -110,6 +122,9 @@ type Cloud115UploadSessionRequest struct {
 	PartSize        int
 	MaxParts        int
 	ParentID        int
+	UploadID        string
+	UploadURL       string
+	Callback        json.RawMessage
 }
 
 func NewCloud115PythonClient(credential string, appType string) *Cloud115PythonClient {
@@ -377,6 +392,10 @@ func (client *Cloud115PythonClient) OpenUploadSession(
 		DestinationPath: strings.TrimSpace(request.RemotePath),
 		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
 		PartSize:        request.PartSize,
+		ParentID:        request.ParentID,
+		UploadID:        strings.TrimSpace(request.UploadID),
+		UploadURL:       strings.TrimSpace(request.UploadURL),
+		Callback:        request.Callback,
 	}, true)
 	if err != nil {
 		return nil, err
@@ -398,7 +417,11 @@ func (client *Cloud115PythonClient) ListUploadSessionParts(
 		SourceFile:      strings.TrimSpace(request.LocalPath),
 		DestinationPath: strings.TrimSpace(request.RemotePath),
 		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		PartSize:        request.PartSize,
 		ParentID:        request.ParentID,
+		UploadID:        strings.TrimSpace(request.UploadID),
+		UploadURL:       strings.TrimSpace(request.UploadURL),
+		Callback:        request.Callback,
 	}, true)
 	if err != nil {
 		return nil, err
@@ -423,6 +446,9 @@ func (client *Cloud115PythonClient) UploadSessionParts(
 		PartSize:        request.PartSize,
 		MaxParts:        request.MaxParts,
 		ParentID:        request.ParentID,
+		UploadID:        strings.TrimSpace(request.UploadID),
+		UploadURL:       strings.TrimSpace(request.UploadURL),
+		Callback:        request.Callback,
 	}, true)
 	if err != nil {
 		return nil, err
@@ -445,7 +471,11 @@ func (client *Cloud115PythonClient) CompleteUploadSession(
 		SourceFile:      strings.TrimSpace(request.LocalPath),
 		DestinationPath: strings.TrimSpace(request.RemotePath),
 		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		PartSize:        request.PartSize,
 		ParentID:        request.ParentID,
+		UploadID:        strings.TrimSpace(request.UploadID),
+		UploadURL:       strings.TrimSpace(request.UploadURL),
+		Callback:        request.Callback,
 	}, true)
 	if err != nil {
 		return nil, err
@@ -467,6 +497,11 @@ func (client *Cloud115PythonClient) AbortUploadSession(
 		SourceFile:      strings.TrimSpace(request.LocalPath),
 		DestinationPath: strings.TrimSpace(request.RemotePath),
 		ResumeStatePath: strings.TrimSpace(request.ResumeStatePath),
+		PartSize:        request.PartSize,
+		ParentID:        request.ParentID,
+		UploadID:        strings.TrimSpace(request.UploadID),
+		UploadURL:       strings.TrimSpace(request.UploadURL),
+		Callback:        request.Callback,
 	}, true)
 	if err != nil {
 		return nil, err

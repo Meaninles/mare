@@ -143,6 +143,54 @@ func TestResumeTransferTasksRequeuesFailedNetworkStorageItem(t *testing.T) {
 	}
 }
 
+func TestBuildTransferTaskRecordsUseCommittedBytesForNetworkUploads(t *testing.T) {
+	now := time.Now().UTC().Round(time.Second)
+	task := store.Task{
+		ID:        "task-network-upload-display",
+		TaskType:  taskTypeRestoreAsset,
+		Status:    taskStatusFailed,
+		Payload:   mustJSONText(t, map[string]any{"assetId": "asset-1"}),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	item := newTransferTaskItem(0)
+	item.TaskID = task.ID
+	item.Direction = transferDirectionUpload
+	item.DisplayName = "clip.bin"
+	item.TargetEndpointType = string(connectors.EndpointTypeNetwork)
+	item.Status = taskStatusFailed
+	item.Phase = transferPhaseFailed
+	item.TotalBytes = 200
+	item.StagedBytes = 200
+	item.CommittedBytes = 0
+	item.ProgressPercent = 70
+	item.CreatedAt = now
+	item.UpdatedAt = now
+
+	record := buildTransferTaskRecord(task, []store.TransferTaskItem{item})
+	if record.ProgressPercent != 0 {
+		t.Fatalf("expected task progress to reflect committed upload bytes, got %d", record.ProgressPercent)
+	}
+	if record.CompletedBytes != 0 {
+		t.Fatalf("expected task completed bytes 0 before remote upload starts, got %d", record.CompletedBytes)
+	}
+	if record.FileTransferred != 0 {
+		t.Fatalf("expected task file transferred bytes 0 before remote upload starts, got %d", record.FileTransferred)
+	}
+
+	itemRecord := buildTransferTaskItemRecord(item)
+	if itemRecord.ProgressPercent != 0 {
+		t.Fatalf("expected item progress to reflect committed upload bytes, got %d", itemRecord.ProgressPercent)
+	}
+	if itemRecord.TransferredBytes != 0 {
+		t.Fatalf("expected item transferred bytes 0 before remote upload starts, got %d", itemRecord.TransferredBytes)
+	}
+	if itemRecord.StagedBytes != 200 {
+		t.Fatalf("expected staged bytes to remain visible, got %d", itemRecord.StagedBytes)
+	}
+}
+
 func TestListTransferTasksSortsQueueForDisplay(t *testing.T) {
 	ctx := context.Background()
 	dataStore := newTestStore(t)
