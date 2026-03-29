@@ -49,6 +49,10 @@ export function ImportCenterPage() {
       (endpoint) => endpoint.roleMode.toUpperCase() === "MANAGED" && endpoint.availabilityStatus.toUpperCase() !== "DISABLED"
     );
   }, [endpointsQuery.data]);
+  const cd2ManagedEndpointCount = useMemo(
+    () => activeManagedEndpoints.filter((endpoint) => endpoint.endpointType.trim().toUpperCase() === "CD2").length,
+    [activeManagedEndpoints]
+  );
 
   const selectedIdentity = searchParams.get("device") ?? "";
   const selectedDevice =
@@ -192,7 +196,7 @@ export function ImportCenterPage() {
         </div>
         <div className="hero-metrics">
           <MetricCard label="已连接设备" value={devices.length} tone="neutral" />
-          <MetricCard label="管理端点" value={activeManagedEndpoints.length} tone="success" />
+          <MetricCard label="CD2 端点" value={cd2ManagedEndpointCount} tone="success" />
           <MetricCard label="已勾选条目" value={selectedEntries.length} tone="warning" />
         </div>
       </article>
@@ -267,11 +271,11 @@ export function ImportCenterPage() {
           <div className="section-head">
             <div>
               <p className="eyebrow">目标端点</p>
-              <h4>目标</h4>
+              <h4>正式入库目标</h4>
             </div>
           </div>
           {activeManagedEndpoints.length === 0 ? (
-            <EmptyBlock icon={<Route size={20} />} title="当前没有可用目标端点" copy="请先在存储管理中接入本地、QNAP、115 或可移动存储端点。" />
+            <EmptyBlock icon={<Route size={20} />} title="当前没有可用目标端点" copy="请先在存储管理中通过 CD2 接入云账号，并把需要的云盘目录保存为正式扫描端点。" />
           ) : (
             <div className="endpoint-grid compact-grid">
               {endpointsPagination.pagedItems.map((endpoint) => (
@@ -288,6 +292,15 @@ export function ImportCenterPage() {
               ))}
             </div>
           )}
+          {cd2ManagedEndpointCount > 0 ? (
+            <div className="settings-note-card">
+              <Settings2 size={18} />
+              <div>
+                <strong>当前已有 {cd2ManagedEndpointCount} 个 CD2 目录端点可作为正式入库目标。</strong>
+                <p>导入完成后，这些目标会继续复用 CD2 的文件管理和传输能力。</p>
+              </div>
+            </div>
+          ) : null}
           <Link to="/storage" className="ghost-button inline-button">
             打开存储管理
           </Link>

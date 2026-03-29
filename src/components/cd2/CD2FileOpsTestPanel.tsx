@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   useCD2DownloadURL,
+  useDownloadCD2File,
   useCD2FileDetail,
   useCopyCD2Files,
   useCreateCD2Folder,
@@ -42,6 +43,7 @@ export function CD2FileOpsTestPanel({ accounts }: Props) {
   const statMutation = useStatCD2File();
   const detailMutation = useCD2FileDetail();
   const downloadMutation = useCD2DownloadURL();
+  const downloadFileMutation = useDownloadCD2File();
   const createFolderMutation = useCreateCD2Folder();
   const renameMutation = useRenameCD2File();
   const moveMutation = useMoveCD2Files();
@@ -184,6 +186,28 @@ export function CD2FileOpsTestPanel({ accounts }: Props) {
       setNotice("下载链接已获取。");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "获取下载链接失败。");
+    }
+  }
+
+  async function handleDownloadToLocal(path = selectedPath, fileName = selectedEntry?.name) {
+    if (!path.trim()) {
+      setError("请先选择一个文件。");
+      return;
+    }
+    if (selectedEntry?.isDirectory) {
+      setError("当前只支持下载文件，不支持直接下载目录。");
+      return;
+    }
+    setNotice(null);
+    setError(null);
+    try {
+      await downloadFileMutation.mutateAsync({
+        path,
+        fileName
+      });
+      setNotice(`已开始下载到本地：${fileName ?? path}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "下载文件失败。");
     }
   }
 
@@ -478,9 +502,20 @@ export function CD2FileOpsTestPanel({ accounts }: Props) {
                             进入目录
                           </button>
                         ) : (
-                          <button type="button" className="ghost-button" onClick={() => void handleDownloadURL(entry.fullPathName)}>
-                            下载链接
-                          </button>
+                          <>
+                            <button type="button" className="ghost-button" onClick={() => void handleDownloadURL(entry.fullPathName)}>
+                              下载链接
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => void handleDownloadToLocal(entry.fullPathName, entry.name)}
+                              disabled={downloadFileMutation.isPending}
+                            >
+                              {downloadFileMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}
+                              下载到本地
+                            </button>
+                          </>
                         )}
                       </div>
                     </article>
@@ -566,6 +601,16 @@ export function CD2FileOpsTestPanel({ accounts }: Props) {
                 <button type="button" className="ghost-button" onClick={() => void handleDownloadURL()} disabled={downloadMutation.isPending}>
                   {downloadMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}
                   下载链接
+                </button>
+
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void handleDownloadToLocal()}
+                  disabled={downloadFileMutation.isPending || !selectedEntry || selectedEntry.isDirectory}
+                >
+                  {downloadFileMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}
+                  下载到本地
                 </button>
               </div>
 

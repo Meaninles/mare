@@ -25,8 +25,11 @@ func (service *Service) buildConnector(endpoint store.StorageEndpoint) (connecto
 	if err != nil {
 		return nil, err
 	}
-	if normalizeEndpointType(hydrated.EndpointType) == string(connectors.EndpointTypeNetwork) {
+	switch normalizeEndpointType(hydrated.EndpointType) {
+	case string(connectors.EndpointTypeNetwork):
 		return service.buildNetworkStorageConnector(context.Background(), hydrated)
+	case string(connectors.EndpointTypeCD2):
+		return service.buildCD2Connector(hydrated)
 	}
 	return service.connectorFactory(hydrated)
 }

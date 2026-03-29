@@ -29,6 +29,9 @@ type fakeFileServiceServer struct {
 	openUploads   map[uint64]*fakeOpenUpload
 	nextUploadID  uint64
 	remoteUploads map[string]*fakeRemoteUpload
+	remoteEvents  chan *cd2pb.RemoteUploadChannelReply
+	holdFinish    bool
+	finishSignal  chan struct{}
 }
 
 type fakeOpenUpload struct {
@@ -41,7 +44,6 @@ type fakeRemoteUpload struct {
 	filePath string
 	fileSize uint64
 	buffer   bytes.Buffer
-	events   chan *cd2pb.RemoteUploadChannelReply
 }
 
 func (server *fakeFileServiceServer) GetSystemInfo(context.Context, *emptypb.Empty) (*cd2pb.CloudDriveSystemInfo, error) {
@@ -225,17 +227,16 @@ func (server *fakeFileServiceServer) StartRemoteUpload(_ context.Context, reques
 	upload := &fakeRemoteUpload{
 		filePath: normalizePath(request.GetFilePath()),
 		fileSize: request.GetFileSize(),
-		events:   make(chan *cd2pb.RemoteUploadChannelReply, 4),
 	}
 	server.remoteUploads[uploadID] = upload
 
-	upload.events <- &cd2pb.RemoteUploadChannelReply{
+	server.remoteEvents <- &cd2pb.RemoteUploadChannelReply{
 		UploadId: uploadID,
 		Request: &cd2pb.RemoteUploadChannelReply_StatusChanged{
 			StatusChanged: &cd2pb.RemoteUploadStatusChanged{Status: cd2pb.UploadFileInfo_Transfer},
 		},
 	}
-	upload.events <- &cd2pb.RemoteUploadChannelReply{
+	server.remoteEvents <- &cd2pb.RemoteUploadChannelReply{
 		UploadId: uploadID,
 		Request: &cd2pb.RemoteUploadChannelReply_ReadData{
 			ReadData: &cd2pb.RemoteReadDataRequest{
@@ -250,34 +251,15 @@ func (server *fakeFileServiceServer) StartRemoteUpload(_ context.Context, reques
 
 func (server *fakeFileServiceServer) RemoteUploadChannel(_ *cd2pb.RemoteUploadChannelRequest, stream grpc.ServerStreamingServer[cd2pb.RemoteUploadChannelReply]) error {
 	for {
-		server.mu.Lock()
-		var upload *fakeRemoteUpload
-		for _, candidate := range server.remoteUploads {
-			upload = candidate
-			break
-		}
-		server.mu.Unlock()
-
-		if upload == nil {
-			select {
-			case <-stream.Context().Done():
-				return stream.Context().Err()
-			case <-time.After(10 * time.Millisecond):
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case event, ok := <-server.remoteEvents:
+			if !ok {
+				return nil
 			}
-			continue
-		}
-
-		for {
-			select {
-			case <-stream.Context().Done():
-				return stream.Context().Err()
-			case event, ok := <-upload.events:
-				if !ok {
-					return nil
-				}
-				if err := stream.Send(event); err != nil {
-					return err
-				}
+			if err := stream.Send(event); err != nil {
+				return err
 			}
 		}
 	}
@@ -300,13 +282,22 @@ func (server *fakeFileServiceServer) RemoteReadData(_ context.Context, request *
 
 	if request.GetIsLastChunk() {
 		server.files[upload.filePath] = newSizedProtoFile(upload.filePath, false, int64(upload.buffer.Len()))
-		upload.events <- &cd2pb.RemoteUploadChannelReply{
-			UploadId: request.GetUploadId(),
-			Request: &cd2pb.RemoteUploadChannelReply_StatusChanged{
-				StatusChanged: &cd2pb.RemoteUploadStatusChanged{Status: cd2pb.UploadFileInfo_Finish},
-			},
+		sendFinish := func() {
+			server.remoteEvents <- &cd2pb.RemoteUploadChannelReply{
+				UploadId: request.GetUploadId(),
+				Request: &cd2pb.RemoteUploadChannelReply_StatusChanged{
+					StatusChanged: &cd2pb.RemoteUploadStatusChanged{Status: cd2pb.UploadFileInfo_Finish},
+				},
+			}
 		}
-		close(upload.events)
+		if server.holdFinish {
+			go func() {
+				<-server.finishSignal
+				sendFinish()
+			}()
+		} else {
+			sendFinish()
+		}
 		delete(server.remoteUploads, request.GetUploadId())
 	}
 
@@ -326,7 +317,7 @@ func (server *fakeFileServiceServer) RemoteUploadControl(_ context.Context, requ
 	defer server.mu.Unlock()
 
 	if upload, ok := server.remoteUploads[request.GetUploadId()]; ok {
-		close(upload.events)
+		_ = upload
 		delete(server.remoteUploads, request.GetUploadId())
 	}
 	return &emptypb.Empty{}, nil
@@ -530,7 +521,42 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+func TestUploadWaitsForFinishStatus(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup, fake := newFileServiceWithServer(t, true)
+	defer cleanup()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Upload(context.Background(), "/115open/media", "wait-finish.txt", strings.NewReader("hello-cd2"))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("upload returned before finish status: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(fake.finishSignal)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("upload failed after finish status: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upload did not finish after finish status")
+	}
+}
+
 func newFileService(t *testing.T) (*Service, func()) {
+	service, cleanup, _ := newFileServiceWithServer(t, false)
+	return service, cleanup
+}
+
+func newFileServiceWithServer(t *testing.T, holdFinish bool) (*Service, func(), *fakeFileServiceServer) {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
@@ -543,6 +569,9 @@ func newFileService(t *testing.T) (*Service, func()) {
 		},
 		openUploads:   map[uint64]*fakeOpenUpload{},
 		remoteUploads: map[string]*fakeRemoteUpload{},
+		remoteEvents:  make(chan *cd2pb.RemoteUploadChannelReply, 32),
+		holdFinish:    holdFinish,
+		finishSignal:  make(chan struct{}),
 	}
 	cd2pb.RegisterCloudDriveFileSrvServer(server, fake)
 	go func() {
@@ -561,12 +590,14 @@ func newFileService(t *testing.T) (*Service, func()) {
 		},
 	})
 
+	service := NewService(manager)
 	cleanup := func() {
+		_ = service.Close()
 		_ = manager.Close()
 		server.Stop()
 		_ = listener.Close()
 	}
-	return NewService(manager), cleanup
+	return service, cleanup, fake
 }
 
 func newProtoFile(path string, isDirectory bool) *cd2pb.CloudDriveFile {

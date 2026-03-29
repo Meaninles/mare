@@ -5,6 +5,7 @@ import {
   copyCD2Files,
   createCD2Folder,
   deleteCD2Files,
+  downloadCD2File,
   getCD2DownloadURL,
   get115QRCodeSession,
   getCD2AuthProfile,
@@ -372,6 +373,15 @@ export function useUploadCD2Files() {
         throw new Error(response.error ?? "上传失败。");
       }
       return response;
+    }
+  });
+}
+
+export function useDownloadCD2File() {
+  return useMutation({
+    mutationFn: async (payload: { path: string; fileName?: string }) => {
+      await downloadCD2File(backendUrl, payload.path, payload.fileName);
+      return payload;
     }
   });
 }

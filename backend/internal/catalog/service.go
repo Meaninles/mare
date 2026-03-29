@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	cd2fs "mam/backend/internal/cd2/fs"
 	"mam/backend/internal/connectors"
 	"mam/backend/internal/credentials"
 	sidecaralist "mam/backend/internal/sidecars/alist"
@@ -41,6 +42,7 @@ type Service struct {
 	removableEnumerator   connectors.DeviceEnumerator
 	mediaConfig           MediaConfig
 	credentialVault       *credentials.Vault
+	cd2fsService          *cd2fs.Service
 	autoQueueDerivedMedia bool
 	autoQueueSearchJobs   bool
 	searchBridge          SearchAIBridge
@@ -92,6 +94,7 @@ func NewService(
 		removableEnumerator:   connectors.NewWindowsUSBEnumerator(),
 		mediaConfig:           normalizeMediaConfig(resolvedOptions.mediaConfig),
 		credentialVault:       credentialVault,
+		cd2fsService:          resolvedOptions.cd2fsService,
 		autoQueueDerivedMedia: resolvedOptions.autoQueueDerivedMedia,
 		autoQueueSearchJobs:   resolvedOptions.autoQueueSearchJobs,
 		searchBridge:          defaultSearchBridge(resolvedOptions.searchBridge),
@@ -225,7 +228,8 @@ func resolveRequestedEndpointType(value string, connectionConfig json.RawMessage
 			case string(connectors.EndpointTypeLocal),
 				string(connectors.EndpointTypeQNAP),
 				string(connectors.EndpointTypeNetwork),
-				string(connectors.EndpointTypeRemovable):
+				string(connectors.EndpointTypeRemovable),
+				string(connectors.EndpointTypeCD2):
 				return normalized, nil
 			default:
 				return "", nil
@@ -243,6 +247,8 @@ func resolveRequestedEndpointType(value string, connectionConfig json.RawMessage
 	}
 
 	switch {
+	case hasAnyMapKey(payload, "cloudName", "cloud_name", "cloudUserName", "cloud_user_name", "cd2RootPath", "cd2_root_path"):
+		return string(connectors.EndpointTypeCD2), nil
 	case hasAnyMapKey(payload, "provider", "storageKey", "loginMethod", "rootFolderId", "root_folder_id", "pageSize", "appType"):
 		return string(connectors.EndpointTypeNetwork), nil
 	case hasAnyMapKey(payload, "device"):
@@ -920,6 +926,8 @@ func defaultConnectorFactory(endpoint store.StorageEndpoint) (connectors.Connect
 		})
 	case string(connectors.EndpointTypeNetwork):
 		return nil, fmt.Errorf("network storage endpoints are built by the catalog service")
+	case string(connectors.EndpointTypeCD2):
+		return nil, fmt.Errorf("cd2 endpoints are built by the catalog service")
 	case string(connectors.EndpointTypeRemovable):
 		var config struct {
 			Device connectors.DeviceInfo `json:"device"`
@@ -947,6 +955,8 @@ func normalizeEndpointType(value string) string {
 		return string(connectors.EndpointTypeNetwork)
 	case "REMOVABLE", "REMOVABLE_DRIVE":
 		return string(connectors.EndpointTypeRemovable)
+	case "CD2", "CLOUDDRIVE2":
+		return string(connectors.EndpointTypeCD2)
 	default:
 		return ""
 	}
@@ -971,6 +981,13 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 		}
 		payload = normalizedPayload
 	}
+	if endpointType == string(connectors.EndpointTypeCD2) {
+		normalizedPayload, err := normalizeCD2ConnectionConfig(payload)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload = normalizedPayload
+	}
 
 	normalized, err := json.Marshal(payload)
 	if err != nil {
@@ -978,7 +995,7 @@ func normalizeConnectionConfig(endpointType string, raw json.RawMessage) (json.R
 	}
 
 	switch endpointType {
-	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeNetwork), string(connectors.EndpointTypeRemovable):
+	case string(connectors.EndpointTypeLocal), string(connectors.EndpointTypeQNAP), string(connectors.EndpointTypeNetwork), string(connectors.EndpointTypeRemovable), string(connectors.EndpointTypeCD2):
 		return normalized, extractedCredential, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
@@ -1033,6 +1050,15 @@ func resolveRootPath(endpointType, explicitRoot string, connectionConfig json.Ra
 			return "", errors.New("removable device mount point is required")
 		}
 		return strings.TrimSpace(config.Device.MountPoint), nil
+	case string(connectors.EndpointTypeCD2):
+		config, err := parseCD2EndpointConfig(connectionConfig)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(config.RootPath) == "" {
+			return "", errors.New("cd2 root path is required")
+		}
+		return normalizeCD2CatalogPath(config.RootPath), nil
 	default:
 		return "", errors.New("unsupported endpoint type")
 	}

@@ -10,9 +10,13 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	cd2client "mam/backend/internal/cd2/client"
@@ -127,7 +131,13 @@ type UploadResult struct {
 }
 
 type Service struct {
-	client *cd2client.Manager
+	client               *cd2client.Manager
+	remoteUploadDeviceID string
+	remoteUploadMu       sync.Mutex
+	remoteUploadStarted  bool
+	remoteUploadCancel   context.CancelFunc
+	remoteUploadSessions map[string]*remoteUploadSession
+	remoteUploadPending  map[string][]*cd2pb.RemoteUploadChannelReply
 }
 
 type uploadSource struct {
@@ -136,9 +146,23 @@ type uploadSource struct {
 	close    func() error
 }
 
-type remoteUploadRecvResult struct {
-	reply *cd2pb.RemoteUploadChannelReply
-	err   error
+type remoteUploadSession struct {
+	uploadID string
+	filePath string
+	source   *uploadSource
+	size     uint64
+	ctx      context.Context
+	cancel   context.CancelFunc
+	resultCh chan remoteUploadResult
+	result   sync.Once
+	mu       sync.Mutex
+	reads    map[string]struct{}
+	hashes   map[string]struct{}
+}
+
+type remoteUploadResult struct {
+	bytesWritten uint64
+	err          error
 }
 
 func (source *uploadSource) Close() error {
@@ -149,7 +173,38 @@ func (source *uploadSource) Close() error {
 }
 
 func NewService(client *cd2client.Manager) *Service {
-	return &Service{client: client}
+	return &Service{
+		client:               client,
+		remoteUploadDeviceID: loadOrCreateRemoteUploadDeviceID(),
+		remoteUploadSessions: map[string]*remoteUploadSession{},
+		remoteUploadPending:  map[string][]*cd2pb.RemoteUploadChannelReply{},
+	}
+}
+
+func (service *Service) Close() error {
+	if service == nil {
+		return nil
+	}
+
+	service.remoteUploadMu.Lock()
+	cancel := service.remoteUploadCancel
+	sessions := make([]*remoteUploadSession, 0, len(service.remoteUploadSessions))
+	for _, session := range service.remoteUploadSessions {
+		sessions = append(sessions, session)
+	}
+	service.remoteUploadStarted = false
+	service.remoteUploadCancel = nil
+	service.remoteUploadSessions = map[string]*remoteUploadSession{}
+	service.remoteUploadPending = map[string][]*cd2pb.RemoteUploadChannelReply{}
+	service.remoteUploadMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	for _, session := range sessions {
+		service.finishRemoteUploadSession(session, 0, errors.New("CD2 上传服务已关闭"))
+	}
+	return nil
 }
 
 func (service *Service) List(ctx context.Context, path string, forceRefresh bool) ([]FileEntry, string, error) {
@@ -461,6 +516,41 @@ func (service *Service) GetDownloadURL(ctx context.Context, request DownloadURLR
 	return downloadURLFromProto(result), nil
 }
 
+func (service *Service) OpenReadStream(ctx context.Context, filePath string) (io.ReadCloser, error) {
+	resolved, _, err := service.resolveDownloadRequest(ctx, DownloadURLRequest{
+		Path:      filePath,
+		GetDirect: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	requestCtx, cancel := service.client.WithRequestTimeout(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, resolved.url, nil)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range resolved.headers {
+		req.Header.Set(key, value)
+	}
+	if userAgent := strings.TrimSpace(resolved.userAgent); userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		defer response.Body.Close()
+		snippet, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return nil, fmt.Errorf("CD2 下载请求失败（HTTP %d）：%s", response.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	return response.Body, nil
+}
+
 func (service *Service) legacyUpload(ctx context.Context, parentPath string, fileName string, reader io.Reader) (UploadResult, error) {
 	client, _, err := service.authorizedClient(ctx)
 	if err != nil {
@@ -585,17 +675,55 @@ func (service *Service) Upload(ctx context.Context, parentPath string, fileName 
 	}
 	defer func() { _ = source.Close() }()
 
+	service.ensureRemoteUploadLoop()
+
 	fullPath := normalizePath(normalizedParent + "/" + normalizedFileName)
-	bytesWritten, err := service.remoteUpload(ctx, client, fullPath, source)
+	startCtx, startCancel := context.WithTimeout(ctx, 2*time.Minute)
+	started, err := client.StartRemoteUpload(startCtx, &cd2pb.StartRemoteUploadRequest{
+		FilePath:                 fullPath,
+		FileSize:                 source.size,
+		ClientCanCalculateHashes: false,
+	})
+	startCancel()
 	if err != nil {
 		return UploadResult{}, err
+	}
+	uploadID := strings.TrimSpace(started.GetUploadId())
+	if uploadID == "" {
+		return UploadResult{}, errors.New("cd2 did not return a remote upload id")
+	}
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	session := &remoteUploadSession{
+		uploadID: uploadID,
+		filePath: fullPath,
+		source:   source,
+		size:     source.size,
+		ctx:      sessionCtx,
+		cancel:   sessionCancel,
+		resultCh: make(chan remoteUploadResult, 1),
+		reads:    map[string]struct{}{},
+		hashes:   map[string]struct{}{},
+	}
+	service.registerRemoteUploadSession(session)
+
+	var uploadResult remoteUploadResult
+	select {
+	case uploadResult = <-session.resultCh:
+	case <-ctx.Done():
+		_ = service.cancelRemoteUpload(context.Background(), uploadID)
+		service.finishRemoteUploadSession(session, 0, ctx.Err())
+		uploadResult = <-session.resultCh
+	}
+	if uploadResult.err != nil {
+		return UploadResult{}, uploadResult.err
 	}
 
 	uploaded := UploadResult{
 		FileName:     normalizedFileName,
 		ParentPath:   normalizedParent,
 		FullPathName: fullPath,
-		BytesWritten: bytesWritten,
+		BytesWritten: uploadResult.bytesWritten,
 	}
 	entry, statErr := service.Stat(ctx, fullPath)
 	if statErr == nil {
@@ -604,149 +732,299 @@ func (service *Service) Upload(ctx context.Context, parentPath string, fileName 
 	return uploaded, nil
 }
 
-func (service *Service) remoteUpload(ctx context.Context, client cd2pb.CloudDriveFileSrvClient, filePath string, source *uploadSource) (uint64, error) {
-	if client == nil {
-		return 0, errors.New("cd2 upload client is not initialized")
-	}
-	if source == nil || source.readerAt == nil {
-		return 0, errors.New("upload source is not initialized")
-	}
+type resolvedDownloadRequest struct {
+	url       string
+	userAgent string
+	headers   map[string]string
+}
 
-	channelCtx, channelCancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer channelCancel()
-
-	channel, err := client.RemoteUploadChannel(channelCtx, &cd2pb.RemoteUploadChannelRequest{
-		DeviceId: remoteUploadDeviceID(),
-	})
+func (service *Service) resolveDownloadRequest(ctx context.Context, request DownloadURLRequest) (resolvedDownloadRequest, cd2client.State, error) {
+	_, state, err := service.authorizedClient(ctx)
 	if err != nil {
-		return 0, err
+		return resolvedDownloadRequest{}, cd2client.State{}, err
 	}
 
-	startCtx, startCancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer startCancel()
-
-	started, err := client.StartRemoteUpload(startCtx, &cd2pb.StartRemoteUploadRequest{
-		FilePath:                 filePath,
-		FileSize:                 source.size,
-		ClientCanCalculateHashes: false,
-	})
+	info, err := service.GetDownloadURL(ctx, request)
 	if err != nil {
-		return 0, err
+		return resolvedDownloadRequest{}, state, err
 	}
 
-	uploadID := strings.TrimSpace(started.GetUploadId())
-	if uploadID == "" {
-		return 0, errors.New("cd2 did not return a remote upload id")
+	resolvedURL, err := resolveDownloadURL(info, state)
+	if err != nil {
+		return resolvedDownloadRequest{}, state, err
 	}
 
-	replyCh := make(chan remoteUploadRecvResult, 1)
-	go func() {
-		for {
-			reply, recvErr := channel.Recv()
-			replyCh <- remoteUploadRecvResult{reply: reply, err: recvErr}
-			if recvErr != nil {
-				close(replyCh)
+	headers := make(map[string]string, len(info.AdditionalHeader))
+	for key, value := range info.AdditionalHeader {
+		headers[key] = value
+	}
+
+	return resolvedDownloadRequest{
+		url:       resolvedURL,
+		userAgent: info.UserAgent,
+		headers:   headers,
+	}, state, nil
+}
+
+func resolveDownloadURL(info DownloadURLInfo, state cd2client.State) (string, error) {
+	if directURL := strings.TrimSpace(info.DirectURL); directURL != "" {
+		return directURL, nil
+	}
+
+	downloadPath := strings.TrimSpace(info.DownloadURLPath)
+	if downloadPath == "" {
+		return "", errors.New("CD2 没有返回可用的下载地址")
+	}
+	if strings.HasPrefix(downloadPath, "http://") || strings.HasPrefix(downloadPath, "https://") {
+		return downloadPath, nil
+	}
+
+	scheme := "http"
+	if state.UseTLS {
+		scheme = "https"
+	}
+
+	base := url.URL{
+		Scheme: scheme,
+		Host:   strings.TrimSpace(state.Target),
+	}
+	if strings.HasPrefix(downloadPath, "/") {
+		base.Path = downloadPath
+		return base.String(), nil
+	}
+	base.Path = "/" + downloadPath
+	return base.String(), nil
+}
+
+func (service *Service) ensureRemoteUploadLoop() {
+	service.remoteUploadMu.Lock()
+	defer service.remoteUploadMu.Unlock()
+	if service.remoteUploadStarted {
+		return
+	}
+
+	loopCtx, loopCancel := context.WithCancel(context.Background())
+	service.remoteUploadStarted = true
+	service.remoteUploadCancel = loopCancel
+	go service.remoteUploadLoop(loopCtx)
+}
+
+func (service *Service) remoteUploadLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		client, _, err := service.authorizedClient(ctx)
+		if err != nil {
+			log.Printf("cd2 remote upload channel auth not ready: %v", err)
+			if !sleepWithContext(ctx, time.Second) {
 				return
 			}
-		}
-	}()
-
-	var bytesWritten uint64
-	awaitFileCommit := false
-	commitDeadline := time.Time{}
-	for {
-		var timeout <-chan time.Time
-		if awaitFileCommit {
-			timeout = time.After(500 * time.Millisecond)
+			continue
 		}
 
-		select {
-		case result, ok := <-replyCh:
-			if !ok {
-				if awaitFileCommit {
-					committed, err := service.remoteUploadFileCommitted(ctx, client, filePath, source.size)
-					if err == nil && committed {
-						return source.size, nil
-					}
-				}
-				return 0, errors.New("cd2 remote upload channel closed before upload finished")
+		log.Printf("cd2 remote upload channel connecting device_id=%s", service.remoteUploadDeviceID)
+		stream, err := client.RemoteUploadChannel(ctx, &cd2pb.RemoteUploadChannelRequest{
+			DeviceId: service.remoteUploadDeviceID,
+		})
+		if err != nil {
+			log.Printf("cd2 remote upload channel open failed: %v", err)
+			if !sleepWithContext(ctx, time.Second) {
+				return
 			}
-			if result.err != nil {
-				if errors.Is(result.err, io.EOF) && awaitFileCommit {
-					committed, err := service.remoteUploadFileCommitted(ctx, client, filePath, source.size)
-					if err == nil && committed {
-						return source.size, nil
-					}
-				}
-				if errors.Is(result.err, io.EOF) {
-					return 0, errors.New("cd2 remote upload channel closed before upload finished")
-				}
-				return 0, result.err
-			}
+			continue
+		}
+		log.Printf("cd2 remote upload channel connected device_id=%s", service.remoteUploadDeviceID)
 
-			reply := result.reply
-			if reply == nil || strings.TrimSpace(reply.GetUploadId()) != uploadID {
-				continue
+		for {
+			reply, recvErr := stream.Recv()
+			if recvErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("cd2 remote upload channel receive failed: %v", recvErr)
+				break
 			}
+			service.dispatchRemoteUploadReply(reply)
+		}
 
-			if readRequest := reply.GetReadData(); readRequest != nil {
-				sent, reachedFileEnd, err := service.remoteUploadRead(ctx, client, uploadID, source, readRequest)
-				if err != nil {
-					_ = cancelRemoteUpload(context.Background(), client, uploadID)
-					return 0, err
-				}
-				bytesWritten += sent
-				if reachedFileEnd {
-					awaitFileCommit = true
-					if commitDeadline.IsZero() {
-						commitDeadline = time.Now().Add(20 * time.Second)
-					}
-				}
-				continue
-			}
-
-			if hashRequest := reply.GetHashData(); hashRequest != nil {
-				if err := service.remoteUploadHash(ctx, client, uploadID, source, hashRequest); err != nil {
-					_ = cancelRemoteUpload(context.Background(), client, uploadID)
-					return 0, err
-				}
-				continue
-			}
-
-			if statusChange := reply.GetStatusChanged(); statusChange != nil {
-				switch statusChange.GetStatus() {
-				case cd2pb.UploadFileInfo_Finish, cd2pb.UploadFileInfo_Skipped:
-					return source.size, nil
-				case cd2pb.UploadFileInfo_Cancelled, cd2pb.UploadFileInfo_Error, cd2pb.UploadFileInfo_FatalError:
-					return 0, errors.New(defaultString(strings.TrimSpace(statusChange.GetErrorMessage()), "cd2 remote upload failed"))
-				}
-			}
-		case <-timeout:
-			committed, err := service.remoteUploadFileCommitted(ctx, client, filePath, source.size)
-			if err == nil && committed {
-				return source.size, nil
-			}
-			if !commitDeadline.IsZero() && time.Now().After(commitDeadline) {
-				return 0, errors.New("timed out waiting for cd2 to finalize uploaded file")
-			}
+		if !sleepWithContext(ctx, 500*time.Millisecond) {
+			return
 		}
 	}
 }
 
-func (service *Service) remoteUploadRead(ctx context.Context, client cd2pb.CloudDriveFileSrvClient, uploadID string, source *uploadSource, request *cd2pb.RemoteReadDataRequest) (uint64, bool, error) {
+func (service *Service) registerRemoteUploadSession(session *remoteUploadSession) {
+	if session == nil {
+		return
+	}
+
+	service.remoteUploadMu.Lock()
+	if service.remoteUploadSessions == nil {
+		service.remoteUploadSessions = map[string]*remoteUploadSession{}
+	}
+	if service.remoteUploadPending == nil {
+		service.remoteUploadPending = map[string][]*cd2pb.RemoteUploadChannelReply{}
+	}
+	service.remoteUploadSessions[session.uploadID] = session
+	pending := append([]*cd2pb.RemoteUploadChannelReply(nil), service.remoteUploadPending[session.uploadID]...)
+	delete(service.remoteUploadPending, session.uploadID)
+	service.remoteUploadMu.Unlock()
+
+	for _, reply := range pending {
+		service.handleRemoteUploadReply(session, reply)
+	}
+}
+
+func (service *Service) dispatchRemoteUploadReply(reply *cd2pb.RemoteUploadChannelReply) {
+	if reply == nil {
+		return
+	}
+
+	uploadID := strings.TrimSpace(reply.GetUploadId())
+	if uploadID == "" {
+		return
+	}
+
+	service.remoteUploadMu.Lock()
+	session := service.remoteUploadSessions[uploadID]
+	if session == nil {
+		if service.remoteUploadPending == nil {
+			service.remoteUploadPending = map[string][]*cd2pb.RemoteUploadChannelReply{}
+		}
+		service.remoteUploadPending[uploadID] = append(service.remoteUploadPending[uploadID], reply)
+		service.remoteUploadMu.Unlock()
+		return
+	}
+	service.remoteUploadMu.Unlock()
+
+	service.handleRemoteUploadReply(session, reply)
+}
+
+func (service *Service) handleRemoteUploadReply(session *remoteUploadSession, reply *cd2pb.RemoteUploadChannelReply) {
+	if session == nil || reply == nil {
+		return
+	}
+
+	if readRequest := reply.GetReadData(); readRequest != nil {
+		requestKey := fmt.Sprintf("%d:%d:%t", readRequest.GetOffset(), readRequest.GetLength(), readRequest.GetLazyRead())
+		if !session.markRead(requestKey) {
+			return
+		}
+		go func() {
+			defer session.unmarkRead(requestKey)
+			if err := service.remoteUploadRead(session.ctx, session.uploadID, session.source, readRequest); err != nil {
+				_ = service.cancelRemoteUpload(context.Background(), session.uploadID)
+				service.finishRemoteUploadSession(session, 0, err)
+			}
+		}()
+		return
+	}
+
+	if hashRequest := reply.GetHashData(); hashRequest != nil {
+		requestKey := fmt.Sprintf("%d:%d", hashRequest.GetHashType(), hashRequest.GetBlockSize())
+		if !session.markHash(requestKey) {
+			return
+		}
+		go func() {
+			defer session.unmarkHash(requestKey)
+			if err := service.remoteUploadHash(session.ctx, session.uploadID, session.source, hashRequest); err != nil {
+				_ = service.cancelRemoteUpload(context.Background(), session.uploadID)
+				service.finishRemoteUploadSession(session, 0, err)
+			}
+		}()
+		return
+	}
+
+	if statusChange := reply.GetStatusChanged(); statusChange != nil {
+		switch statusChange.GetStatus() {
+		case cd2pb.UploadFileInfo_Finish, cd2pb.UploadFileInfo_Skipped:
+			service.finishRemoteUploadSession(session, session.size, nil)
+		case cd2pb.UploadFileInfo_Cancelled, cd2pb.UploadFileInfo_Error, cd2pb.UploadFileInfo_FatalError:
+			service.finishRemoteUploadSession(session, 0, errors.New(defaultString(strings.TrimSpace(statusChange.GetErrorMessage()), "cd2 remote upload failed")))
+		}
+	}
+}
+
+func (session *remoteUploadSession) markRead(key string) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if _, exists := session.reads[key]; exists {
+		return false
+	}
+	session.reads[key] = struct{}{}
+	return true
+}
+
+func (session *remoteUploadSession) unmarkRead(key string) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	delete(session.reads, key)
+}
+
+func (session *remoteUploadSession) markHash(key string) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if _, exists := session.hashes[key]; exists {
+		return false
+	}
+	session.hashes[key] = struct{}{}
+	return true
+}
+
+func (session *remoteUploadSession) unmarkHash(key string) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	delete(session.hashes, key)
+}
+
+func (service *Service) finishRemoteUploadSession(session *remoteUploadSession, bytesWritten uint64, err error) {
+	if session == nil {
+		return
+	}
+
+	session.result.Do(func() {
+		service.remoteUploadMu.Lock()
+		if existing := service.remoteUploadSessions[session.uploadID]; existing == session {
+			delete(service.remoteUploadSessions, session.uploadID)
+		}
+		delete(service.remoteUploadPending, session.uploadID)
+		service.remoteUploadMu.Unlock()
+
+		session.cancel()
+		session.resultCh <- remoteUploadResult{
+			bytesWritten: bytesWritten,
+			err:          err,
+		}
+		close(session.resultCh)
+	})
+}
+
+func (service *Service) remoteUploadRead(ctx context.Context, uploadID string, source *uploadSource, request *cd2pb.RemoteReadDataRequest) error {
 	if request == nil {
-		return 0, false, nil
+		return nil
+	}
+	if source == nil || source.readerAt == nil {
+		return errors.New("upload source is not initialized")
+	}
+
+	client, _, err := service.authorizedClient(ctx)
+	if err != nil {
+		return err
 	}
 
 	offset := request.GetOffset()
 	if offset > source.size {
-		return 0, false, fmt.Errorf("cd2 requested invalid upload offset %d beyond file size %d", offset, source.size)
+		return fmt.Errorf("cd2 requested invalid upload offset %d beyond file size %d", offset, source.size)
 	}
 
 	requestedLength := request.GetLength()
 	if requestedLength == 0 || offset+requestedLength > source.size {
 		requestedLength = source.size - offset
 	}
+
+	log.Printf("cd2 remote upload read request upload_id=%s offset=%d length=%d normalized_length=%d lazy=%t file_size=%d", uploadID, offset, request.GetLength(), requestedLength, request.GetLazyRead(), source.size)
 
 	if requestedLength == 0 {
 		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -760,46 +1038,52 @@ func (service *Service) remoteUploadRead(ctx context.Context, client cd2pb.Cloud
 			IsLastChunk: true,
 		})
 		if err != nil {
-			return 0, false, err
+			return err
 		}
 		if !reply.GetSuccess() {
-			return 0, false, errors.New(defaultString(strings.TrimSpace(reply.GetErrorMessage()), "cd2 rejected zero-length upload chunk"))
+			return errors.New(defaultString(strings.TrimSpace(reply.GetErrorMessage()), "cd2 rejected zero-length upload chunk"))
 		}
-		return 0, true, nil
+		return nil
 	}
 
-	const chunkSize = 4 * 1024 * 1024
+	const chunkSize = 1 * 1024 * 1024
 	buffer := make([]byte, chunkSize)
-	var sent uint64
+	for sent := uint64(0); sent < requestedLength; {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-	for sent < requestedLength {
 		nextSize := minUint64(chunkSize, requestedLength-sent)
 		n, readErr := source.readerAt.ReadAt(buffer[:nextSize], int64(offset+sent))
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return sent, false, readErr
+			return readErr
 		}
 		if n <= 0 {
-			return sent, false, io.ErrUnexpectedEOF
+			return io.ErrUnexpectedEOF
 		}
 
 		payload := make([]byte, n)
 		copy(payload, buffer[:n])
 
 		requestCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		isLastChunk := sent+uint64(n) >= requestedLength
+		log.Printf("cd2 remote upload send chunk upload_id=%s chunk_offset=%d chunk_length=%d request_length=%d is_last_chunk=%t file_complete=%t", uploadID, offset+sent, n, requestedLength, isLastChunk, offset+sent+uint64(n) >= source.size)
 		reply, err := client.RemoteReadData(requestCtx, &cd2pb.RemoteReadDataUpload{
 			UploadId:    uploadID,
 			Offset:      offset + sent,
 			Length:      uint64(n),
 			LazyRead:    request.GetLazyRead(),
 			Data:        payload,
-			IsLastChunk: sent+uint64(n) >= requestedLength,
+			IsLastChunk: isLastChunk,
 		})
 		cancel()
 		if err != nil {
-			return sent, false, err
+			return err
 		}
 		if !reply.GetSuccess() {
-			return sent, false, errors.New(defaultString(strings.TrimSpace(reply.GetErrorMessage()), "cd2 rejected uploaded data"))
+			return errors.New(defaultString(strings.TrimSpace(reply.GetErrorMessage()), "cd2 rejected uploaded data"))
 		}
 
 		sent += uint64(n)
@@ -808,37 +1092,16 @@ func (service *Service) remoteUploadRead(ctx context.Context, client cd2pb.Cloud
 		}
 	}
 
-	return sent, offset+requestedLength >= source.size, nil
+	return nil
 }
 
-func (service *Service) remoteUploadFileCommitted(ctx context.Context, client cd2pb.CloudDriveFileSrvClient, filePath string, expectedSize uint64) (bool, error) {
-	if client == nil {
-		return false, errors.New("cd2 upload client is not initialized")
-	}
-
-	parentPath, fileName := splitPath(filePath)
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	file, err := client.FindFileByPath(requestCtx, &cd2pb.FindFileByPathRequest{
-		ParentPath: parentPath,
-		Path:       fileName,
-	})
-	if err != nil {
-		return false, err
-	}
-	if file == nil {
-		return false, nil
-	}
-	if expectedSize == 0 {
-		return true, nil
-	}
-	return uint64(file.GetSize()) == expectedSize, nil
-}
-
-func (service *Service) remoteUploadHash(ctx context.Context, client cd2pb.CloudDriveFileSrvClient, uploadID string, source *uploadSource, request *cd2pb.RemoteHashDataRequest) error {
+func (service *Service) remoteUploadHash(ctx context.Context, uploadID string, source *uploadSource, request *cd2pb.RemoteHashDataRequest) error {
 	if request == nil {
 		return nil
+	}
+	client, _, err := service.authorizedClient(ctx)
+	if err != nil {
+		return err
 	}
 
 	hashType := cd2pb.CloudDriveFile_HashType(request.GetHashType())
@@ -960,7 +1223,29 @@ func prepareUploadSource(reader io.Reader) (*uploadSource, error) {
 	}, nil
 }
 
-func remoteUploadDeviceID() string {
+func loadOrCreateRemoteUploadDeviceID() string {
+	configDir, err := os.UserConfigDir()
+	if err == nil {
+		deviceDir := path.Join(configDir, "mam")
+		deviceFile := path.Join(deviceDir, "cd2-remote-upload-device-id.txt")
+		if content, readErr := os.ReadFile(deviceFile); readErr == nil {
+			if value := strings.TrimSpace(string(content)); value != "" {
+				return value
+			}
+		}
+		if mkErr := os.MkdirAll(deviceDir, 0o755); mkErr == nil {
+			if value := newRemoteUploadDeviceID(); value != "" {
+				if writeErr := os.WriteFile(deviceFile, []byte(value), 0o600); writeErr == nil {
+					return value
+				}
+				return value
+			}
+		}
+	}
+	return newRemoteUploadDeviceID()
+}
+
+func newRemoteUploadDeviceID() string {
 	buffer := make([]byte, 12)
 	if _, err := rand.Read(buffer); err != nil {
 		return fmt.Sprintf("mam-backend-%d", time.Now().UnixNano())
@@ -968,19 +1253,34 @@ func remoteUploadDeviceID() string {
 	return "mam-backend-" + hex.EncodeToString(buffer)
 }
 
-func cancelRemoteUpload(ctx context.Context, client cd2pb.CloudDriveFileSrvClient, uploadID string) error {
-	if client == nil || strings.TrimSpace(uploadID) == "" {
+func (service *Service) cancelRemoteUpload(ctx context.Context, uploadID string) error {
+	if strings.TrimSpace(uploadID) == "" {
 		return nil
+	}
+	client, _, err := service.authorizedClient(ctx)
+	if err != nil {
+		return err
 	}
 
 	cancelCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	_, err := client.RemoteUploadControl(cancelCtx, &cd2pb.RemoteUploadControlRequest{
+	_, err = client.RemoteUploadControl(cancelCtx, &cd2pb.RemoteUploadControlRequest{
 		UploadId: uploadID,
 		Control:  &cd2pb.RemoteUploadControlRequest_Cancel{Cancel: &cd2pb.CancelRemoteUpload{}},
 	})
 	return err
+}
+
+func sleepWithContext(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func minUint64(left, right uint64) uint64 {

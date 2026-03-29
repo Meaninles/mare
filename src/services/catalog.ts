@@ -136,6 +136,17 @@ function normalizeCatalogEndpointPayload(payload: CatalogEndpointPayload): Catal
           sharePath: String((connectionConfig as Record<string, unknown>).sharePath ?? payload.rootPath ?? "").trim()
         }
       };
+    case "CD2":
+      return {
+        ...payload,
+        endpointType: normalizedType,
+        connectionConfig: {
+          ...connectionConfig,
+          rootPath: String((connectionConfig as Record<string, unknown>).rootPath ?? payload.rootPath ?? "").trim(),
+          cloudName: String((connectionConfig as Record<string, unknown>).cloudName ?? "").trim(),
+          userName: String((connectionConfig as Record<string, unknown>).userName ?? "").trim()
+        }
+      };
     case "REMOVABLE":
     case "NETWORK_STORAGE":
       return {
@@ -164,6 +175,16 @@ function inferCatalogEndpointType(payload: CatalogEndpointPayload): string {
       : {};
 
   if (
+    "cloudName" in connectionConfig ||
+    "cloud_name" in connectionConfig ||
+    "cloudUserName" in connectionConfig ||
+    "cloud_user_name" in connectionConfig ||
+    "cd2RootPath" in connectionConfig ||
+    "cd2_root_path" in connectionConfig
+  ) {
+    return "CD2";
+  }
+  if (
     "provider" in connectionConfig ||
     "loginMethod" in connectionConfig ||
     "rootFolderId" in connectionConfig ||
@@ -177,6 +198,9 @@ function inferCatalogEndpointType(payload: CatalogEndpointPayload): string {
   }
   if ("sharePath" in connectionConfig) {
     return "QNAP_SMB";
+  }
+  if (explicitType === "CD2") {
+    return "CD2";
   }
   if (payload.rootPath?.trim()) {
     return "LOCAL";

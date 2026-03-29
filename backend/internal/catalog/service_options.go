@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 
+	cd2fs "mam/backend/internal/cd2/fs"
 	"mam/backend/internal/credentials"
 	"mam/backend/internal/store"
 )
@@ -18,6 +19,7 @@ type serviceOptions struct {
 	autoQueueSearchJobs   bool
 	searchBridge          SearchAIBridge
 	cloud115UploadFactory cloud115UploadClientFactory
+	cd2fsService          *cd2fs.Service
 }
 
 func (config MediaConfig) apply(options *serviceOptions) {
@@ -84,4 +86,16 @@ func WithCloud115UploadFactory(
 	factory func(context.Context, store.StorageEndpoint) (cloud115UploadClient, cloud115UploadTarget, error),
 ) ServiceOption {
 	return cloud115UploadFactoryOption{factory: factory}
+}
+
+type cd2fsServiceOption struct {
+	service *cd2fs.Service
+}
+
+func (option cd2fsServiceOption) apply(options *serviceOptions) {
+	options.cd2fsService = option.service
+}
+
+func WithCD2FSService(service *cd2fs.Service) ServiceOption {
+	return cd2fsServiceOption{service: service}
 }

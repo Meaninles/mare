@@ -47,6 +47,7 @@ const (
 	EndpointTypeQNAP      EndpointType = "QNAP_SMB"
 	EndpointTypeNetwork   EndpointType = "NETWORK_STORAGE"
 	EndpointTypeRemovable EndpointType = "REMOVABLE"
+	EndpointTypeCD2       EndpointType = "CD2"
 )
 
 type EntryKind string

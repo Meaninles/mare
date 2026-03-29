@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"mam/backend/internal/catalog"
 	"mam/backend/internal/buildinfo"
 	cd2auth "mam/backend/internal/cd2/auth"
 	cd2client "mam/backend/internal/cd2/client"
@@ -48,7 +49,7 @@ func New(_ context.Context) (*App, error) {
 	cd2State := cd2RuntimeManager.Probe(context.Background())
 	cd2ClientState := cd2ClientManager.Probe(context.Background())
 
-	session := librarysession.NewManager(cfg.AppName, cfg.FFmpegPath)
+	session := librarysession.NewManager(cfg.AppName, cfg.FFmpegPath, catalog.WithCD2FSService(cd2FileService))
 	system := platform.NewSystemState(
 		cfg,
 		buildinfo.Get(),

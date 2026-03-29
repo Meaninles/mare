@@ -66,6 +66,7 @@ func New(cfg config.Config, system platform.SystemState, session *librarysession
 	mux.HandleFunc("/api/v1/cd2/files/stat", server.handleCD2FileStat)
 	mux.HandleFunc("/api/v1/cd2/files/detail", server.handleCD2FileDetail)
 	mux.HandleFunc("/api/v1/cd2/files/download-url", server.handleCD2FileDownloadURL)
+	mux.HandleFunc("/api/v1/cd2/files/download", server.handleCD2FileDownload)
 	mux.HandleFunc("/api/v1/cd2/files/folders", server.handleCD2CreateFolder)
 	mux.HandleFunc("/api/v1/cd2/files/rename", server.handleCD2RenameFile)
 	mux.HandleFunc("/api/v1/cd2/files/move", server.handleCD2MoveFiles)

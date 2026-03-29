@@ -59,10 +59,11 @@ type Manager struct {
 	appName         string
 	ffmpegPath      string
 	credentialVault *credentials.Vault
+	catalogOptions  []catalog.ServiceOption
 	current         *runtime
 }
 
-func NewManager(appName, ffmpegPath string) *Manager {
+func NewManager(appName, ffmpegPath string, options ...catalog.ServiceOption) *Manager {
 	vault, err := credentials.NewVault("")
 	if err != nil {
 		slog.Warn("failed to initialize credential vault", "error", err)
@@ -72,6 +73,7 @@ func NewManager(appName, ffmpegPath string) *Manager {
 		appName:         appName,
 		ffmpegPath:      ffmpegPath,
 		credentialVault: vault,
+		catalogOptions:  append([]catalog.ServiceOption(nil), options...),
 	}
 }
 
@@ -194,6 +196,7 @@ func (manager *Manager) buildRuntime(path string, create bool) (*runtime, error)
 	if manager.credentialVault != nil {
 		options = append(options, catalog.WithCredentialVault(manager.credentialVault))
 	}
+	options = append(options, manager.catalogOptions...)
 
 	catalogService := catalog.NewService(dataStore, nil, options...)
 	if err := catalogService.MigrateEndpointCredentials(context.Background()); err != nil {

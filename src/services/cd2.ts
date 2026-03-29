@@ -281,6 +281,30 @@ export async function uploadCD2Files(
   return postFormData(`${normalizeBaseUrl(baseUrl)}/api/v1/cd2/files/upload`, formData);
 }
 
+export async function downloadCD2File(baseUrl: string, path: string, fileName?: string): Promise<void> {
+  const params = new URLSearchParams({ path });
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/api/v1/cd2/files/download?${params.toString()}`);
+  if (!response.ok) {
+    const text = await response.text();
+    let errorMessage = text.trim();
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      errorMessage = parsed.error?.trim() || errorMessage;
+    } catch {
+      // ignore non-JSON errors here
+    }
+    throw new Error(errorMessage || `下载失败（HTTP ${response.status}）`);
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName?.trim() || "cd2-download.bin";
+  anchor.click();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function listCD2Transfers(baseUrl: string): Promise<CD2TransfersResponse> {
   return getJson(`${normalizeBaseUrl(baseUrl)}/api/v1/cd2/transfers`);
 }

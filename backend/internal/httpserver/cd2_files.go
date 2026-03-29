@@ -2,8 +2,12 @@ package httpserver
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 
 	cd2fs "mam/backend/internal/cd2/fs"
@@ -186,6 +190,115 @@ func (server *Server) handleCD2FileDownloadURL(w http.ResponseWriter, r *http.Re
 		"success": true,
 		"info":    info,
 	})
+}
+
+func (server *Server) handleCD2FileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		server.writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if server.cd2fs == nil {
+		server.writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"error":   "cd2 file service is not configured",
+		})
+		return
+	}
+
+	filePath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if filePath == "" {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "path is required",
+		})
+		return
+	}
+
+	entry, err := server.cd2fs.Stat(r.Context(), filePath)
+	if err != nil {
+		server.writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	if entry.IsDirectory {
+		server.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "directories are not supported for direct download test",
+		})
+		return
+	}
+
+	info, err := server.cd2fs.GetDownloadURL(r.Context(), cd2fs.DownloadURLRequest{
+		Path:      filePath,
+		GetDirect: true,
+	})
+	if err != nil {
+		server.writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	downloadURL, err := server.resolveCD2DownloadURL(info)
+	if err != nil {
+		server.writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, downloadURL, nil)
+	if err != nil {
+		server.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	if userAgent := strings.TrimSpace(info.UserAgent); userAgent != "" {
+		request.Header.Set("User-Agent", userAgent)
+	}
+	for key, value := range info.AdditionalHeader {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		request.Header.Set(key, value)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		server.writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+		server.writeJSON(w, http.StatusBadGateway, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("download source returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body))),
+		})
+		return
+	}
+
+	if contentType := strings.TrimSpace(response.Header.Get("Content-Type")); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	if contentLength := strings.TrimSpace(response.Header.Get("Content-Length")); contentLength != "" {
+		w.Header().Set("Content-Length", contentLength)
+	}
+	w.Header().Set("Content-Disposition", buildAttachmentDisposition(entry.Name))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, response.Body)
 }
 
 func (server *Server) handleCD2CreateFolder(w http.ResponseWriter, r *http.Request) {
@@ -478,4 +591,49 @@ func normalizeMultipartFileHeaders(r *http.Request) []*multipart.FileHeader {
 		headers = append(headers, r.MultipartForm.File["file"]...)
 	}
 	return headers
+}
+
+func (server *Server) resolveCD2DownloadURL(info cd2fs.DownloadURLInfo) (string, error) {
+	if directURL := strings.TrimSpace(info.DirectURL); directURL != "" {
+		return directURL, nil
+	}
+
+	downloadPath := strings.TrimSpace(info.DownloadURLPath)
+	if downloadPath == "" {
+		return "", fmt.Errorf("cd2 did not return a downloadable URL")
+	}
+	if strings.HasPrefix(downloadPath, "http://") || strings.HasPrefix(downloadPath, "https://") {
+		return downloadPath, nil
+	}
+
+	if server.cd2 == nil {
+		return "", fmt.Errorf("cd2 runtime is not configured")
+	}
+	runtimeState := server.cd2.Snapshot()
+	baseURL := strings.TrimSpace(runtimeState.BaseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("cd2 runtime base URL is not configured")
+	}
+
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+
+	resolvedPath := strings.ReplaceAll(downloadPath, "{SCHEME}", parsedBase.Scheme)
+	resolvedPath = strings.ReplaceAll(resolvedPath, "{HOST}", parsedBase.Host)
+	resolvedPath = strings.ReplaceAll(resolvedPath, "{PREVIEW}", "")
+	if strings.HasPrefix(resolvedPath, "http://") || strings.HasPrefix(resolvedPath, "https://") {
+		return resolvedPath, nil
+	}
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(resolvedPath, "/"), nil
+}
+
+func buildAttachmentDisposition(fileName string) string {
+	name := strings.TrimSpace(fileName)
+	if name == "" {
+		name = "cd2-download.bin"
+	}
+	safeName := strings.ReplaceAll(name, "\"", "_")
+	return fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", safeName, url.PathEscape(path.Base(name)))
 }
