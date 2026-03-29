@@ -8,29 +8,72 @@ import (
 	"time"
 
 	"mam/backend/internal/catalog"
+	cd2auth "mam/backend/internal/cd2/auth"
+	cd2client "mam/backend/internal/cd2/client"
+	cd2cloudapi "mam/backend/internal/cd2/cloudapi"
+	cd2fs "mam/backend/internal/cd2/fs"
+	cd2runtime "mam/backend/internal/cd2/runtime"
+	cd2transfers "mam/backend/internal/cd2/transfers"
 	"mam/backend/internal/config"
 	"mam/backend/internal/librarysession"
 	"mam/backend/internal/platform"
 )
 
 type Server struct {
-	config  config.Config
-	system  platform.SystemState
-	session *librarysession.Manager
-	http    *http.Server
+	config       config.Config
+	system       platform.SystemState
+	session      *librarysession.Manager
+	cd2          *cd2runtime.Manager
+	cd2grpc      *cd2client.Manager
+	cd2auth      *cd2auth.Service
+	cd2cloud     *cd2cloudapi.Service
+	cd2fs        *cd2fs.Service
+	cd2transfers *cd2transfers.Service
+	http         *http.Server
 }
 
-func New(cfg config.Config, system platform.SystemState, session *librarysession.Manager) *Server {
+func New(cfg config.Config, system platform.SystemState, session *librarysession.Manager, cd2 *cd2runtime.Manager, cd2grpc *cd2client.Manager, cd2auth *cd2auth.Service, cd2cloud *cd2cloudapi.Service, cd2fsService *cd2fs.Service, cd2transferService *cd2transfers.Service) *Server {
 	server := &Server{
-		config:  cfg,
-		system:  system,
-		session: session,
+		config:       cfg,
+		system:       system,
+		session:      session,
+		cd2:          cd2,
+		cd2grpc:      cd2grpc,
+		cd2auth:      cd2auth,
+		cd2cloud:     cd2cloud,
+		cd2fs:        cd2fsService,
+		cd2transfers: cd2transferService,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.HandleFunc("/readyz", server.handleReady)
 	mux.HandleFunc("/api/v1/system/bootstrap", server.handleBootstrap)
+	mux.HandleFunc("/api/v1/cd2/runtime/status", server.handleCD2RuntimeStatus)
+	mux.HandleFunc("/api/v1/cd2/client/status", server.handleCD2ClientStatus)
+	mux.HandleFunc("/api/v1/cd2/auth/profile", server.handleCD2AuthProfile)
+	mux.HandleFunc("/api/v1/cd2/auth/refresh", server.handleCD2AuthRefresh)
+	mux.HandleFunc("/api/v1/cd2/auth/register", server.handleCD2AuthRegister)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts", server.handleCD2CloudAccounts)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/", server.handleCD2CloudAccountResource)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/config", server.handleCD2CloudAccountConfig)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/115/cookie-import", server.handleCD2115CookieImport)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/115/qrcode/start", server.handleCD2115QRCodeStart)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/115open/qrcode/start", server.handleCD2115OpenQRCodeStart)
+	mux.HandleFunc("/api/v1/cd2/cloud-accounts/115/qrcode/sessions/", server.handleCD2115QRCodeSession)
+	mux.HandleFunc("/api/v1/cd2/files/list", server.handleCD2FileList)
+	mux.HandleFunc("/api/v1/cd2/files/search", server.handleCD2FileSearch)
+	mux.HandleFunc("/api/v1/cd2/files/stat", server.handleCD2FileStat)
+	mux.HandleFunc("/api/v1/cd2/files/detail", server.handleCD2FileDetail)
+	mux.HandleFunc("/api/v1/cd2/files/download-url", server.handleCD2FileDownloadURL)
+	mux.HandleFunc("/api/v1/cd2/files/folders", server.handleCD2CreateFolder)
+	mux.HandleFunc("/api/v1/cd2/files/rename", server.handleCD2RenameFile)
+	mux.HandleFunc("/api/v1/cd2/files/move", server.handleCD2MoveFiles)
+	mux.HandleFunc("/api/v1/cd2/files/copy", server.handleCD2CopyFiles)
+	mux.HandleFunc("/api/v1/cd2/files/delete", server.handleCD2DeleteFiles)
+	mux.HandleFunc("/api/v1/cd2/files/upload", server.handleCD2UploadFiles)
+	mux.HandleFunc("/api/v1/cd2/transfers", server.handleCD2Transfers)
+	mux.HandleFunc("/api/v1/cd2/transfers/actions", server.handleCD2TransferActions)
 	mux.HandleFunc("/api/v1/libraries/current", server.handleLibraryCurrent)
 	mux.HandleFunc("/api/v1/libraries/create", server.handleLibraryCreate)
 	mux.HandleFunc("/api/v1/libraries/open", server.handleLibraryOpen)
@@ -102,7 +145,18 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, server.config.HTTPShutdownTimeout)
 	defer cancel()
 
-	return server.http.Shutdown(shutdownCtx)
+	if err := server.http.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if server.cd2grpc != nil {
+		if err := server.cd2grpc.Close(); err != nil {
+			slog.Warn("close cd2 gRPC client failed", "error", err)
+		}
+	}
+	if server.cd2transfers != nil {
+		server.cd2transfers.Close()
+	}
+	return nil
 }
 
 func (server *Server) requireCatalog(w http.ResponseWriter) (*catalog.Service, bool) {

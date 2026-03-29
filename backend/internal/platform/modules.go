@@ -6,8 +6,10 @@ type ModuleStatus struct {
 	Ready       bool   `json:"ready"`
 }
 
-func DefaultModules() []ModuleStatus {
+func DefaultModules(cd2RuntimeReady bool, cd2ClientReady bool) []ModuleStatus {
 	return []ModuleStatus{
+		{Name: "cd2-runtime", Description: "CloudDrive2 external runtime connection", Ready: cd2RuntimeReady},
+		{Name: "cd2-client", Description: "CloudDrive2 gRPC client and token auth", Ready: cd2ClientReady},
 		{Name: "asset", Description: "Asset catalog and metadata aggregation", Ready: true},
 		{Name: "storage", Description: "Storage endpoint registry and connection management", Ready: true},
 		{Name: "sync", Description: "Replica reconciliation and transfer orchestration", Ready: true},

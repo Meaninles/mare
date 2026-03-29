@@ -1,0 +1,22 @@
+services:
+  clouddrive2-dev:
+    image: cloudnas/clouddrive2:${CD2_IMAGE_TAG:-latest}
+    container_name: ${CD2_CONTAINER_NAME:-clouddrive2-dev}
+    restart: unless-stopped
+    environment:
+      TZ: ${CD2_TIMEZONE:-Asia/Shanghai}
+      CLOUDDRIVE_HOME: /Config
+    ports:
+      - "${CD2_WEB_PORT:-29798}:19798"
+    volumes:
+      - clouddrive2-dev-config:/Config
+      - clouddrive2-dev-cloudnas:/CloudNAS
+      - clouddrive2-dev-media:/media
+
+volumes:
+  clouddrive2-dev-config:
+    name: ${CD2_CONFIG_VOLUME:-clouddrive2-dev-config}
+  clouddrive2-dev-cloudnas:
+    name: ${CD2_CLOUDNAS_VOLUME:-clouddrive2-dev-cloudnas}
+  clouddrive2-dev-media:
+    name: ${CD2_MEDIA_VOLUME:-clouddrive2-dev-media}

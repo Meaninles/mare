@@ -4,6 +4,7 @@ import { useLibraryContext } from "./context/LibraryContext";
 import { AppShell } from "./layouts/AppShell";
 import { StandaloneShell } from "./layouts/StandaloneShell";
 import { CollectionsPage } from "./pages/CollectionsPage";
+import { CD2AuthTestPage } from "./pages/CD2AuthTestPage";
 import { ImportCenterPage } from "./pages/ImportCenterPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { MediaLabPage } from "./pages/MediaLabPage";
@@ -24,6 +25,7 @@ export function App() {
         <Route path="/library-manager" element={<Navigate to="/welcome" replace />} />
         <Route path="/system-tasks" element={<SystemTasksPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/cd2-auth-test" element={<CD2AuthTestPage />} />
       </Route>
 
       <Route element={<RequireLibrary />}>

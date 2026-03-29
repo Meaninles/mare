@@ -674,6 +674,35 @@ export function SettingsPage() {
         </article>
       ) : null}
 
+      <article className="detail-card">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">CD2 开发调试</p>
+            <h4>CD2 认证测试页</h4>
+          </div>
+        </div>
+
+        <div className="settings-card-list">
+          <div className="settings-action-card">
+            <div className="settings-action-head">
+              <div className="theme-option-icon">
+                <ServerCog size={18} />
+              </div>
+              <span className="status-pill subtle">开发测试</span>
+            </div>
+
+            <strong>前往 CD2 认证与注册测试页面</strong>
+            <p>用于手动测试 Docker CD2 开发环境的账号注册、账号密码认证和 API Token 认证。</p>
+
+            <div className="action-row">
+              <Link to="/settings/cd2-auth-test" className="primary-button">
+                打开测试页
+              </Link>
+            </div>
+          </div>
+        </div>
+      </article>
+
     </section>
   );
 }

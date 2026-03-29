@@ -106,6 +106,25 @@ func (vault *Vault) Resolve(ref string) (StoredCredential, error) {
 	return vault.load(normalizedRef)
 }
 
+func (vault *Vault) Delete(ref string) error {
+	if vault == nil {
+		return errors.New("credential vault is not configured")
+	}
+
+	normalizedRef := strings.TrimSpace(ref)
+	if normalizedRef == "" {
+		return errors.New("credential ref is required")
+	}
+	if !credentialRefPattern.MatchString(normalizedRef) {
+		return fmt.Errorf("invalid credential ref: %s", normalizedRef)
+	}
+
+	if err := os.Remove(vault.filePath(normalizedRef)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("delete credential record: %w", err)
+	}
+	return nil
+}
+
 func (vault *Vault) load(ref string) (StoredCredential, error) {
 	if !credentialRefPattern.MatchString(ref) {
 		return StoredCredential{}, fmt.Errorf("invalid credential ref: %s", ref)

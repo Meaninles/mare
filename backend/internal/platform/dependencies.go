@@ -13,7 +13,7 @@ type DependencySnapshot struct {
 }
 
 func NewDependencySnapshot(cfg config.Config) DependencySnapshot {
-	return DependencySnapshot{
+	snapshot := DependencySnapshot{
 		Items: []DependencyState{
 			{Name: "postgres", Configured: cfg.PostgresDSN != "", Target: cfg.PostgresDSN},
 			{Name: "redis", Configured: cfg.RedisAddr != "", Target: cfg.RedisAddr},
@@ -22,6 +22,9 @@ func NewDependencySnapshot(cfg config.Config) DependencySnapshot {
 			{Name: "minio", Configured: cfg.MinIOEndpoint != "", Target: cfg.MinIOEndpoint},
 			{Name: "ffmpeg", Configured: cfg.FFmpegPath != "", Target: cfg.FFmpegPath},
 			{Name: "ai-service", Configured: cfg.AIServiceURL != "", Target: cfg.AIServiceURL},
+			{Name: "clouddrive2", Configured: cfg.CD2Enabled, Target: cfg.CD2BaseURL},
+			{Name: "clouddrive2-grpc", Configured: cfg.CD2Enabled, Target: cfg.CD2GRPCTarget},
 		},
 	}
+	return snapshot
 }
